@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────
+# ghostty-config — master Ghostty customization hub
+# usage: just type `gg` in your terminal
+# ─────────────────────────────────────────────────
+set -euo pipefail
+
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+
+if ! command -v fzf &>/dev/null; then
+  echo "fzf not found. install with: brew install fzf"
+  exit 1
+fi
+
+# Read current settings
+cur_theme=$(grep '^theme = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/theme = //')
+cur_font=$(grep '^font-family = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/font-family = //')
+cur_cursor=$(grep '^cursor-style = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/cursor-style = //')
+cur_opacity=$(grep '^background-opacity = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/background-opacity = //')
+
+options="🎨  Theme          current: $cur_theme
+🔤  Font           current: $cur_font
+✏️   Cursor         current: $cur_cursor
+🪟  Opacity        current: $cur_opacity
+📝  Edit Config    open in editor
+♻️   Reload         ⌘+Shift+,"
+
+selected=$(echo "$options" | fzf \
+  --prompt="⚙️  ghostty > " \
+  --header="ghostty configuration hub" \
+  --header-first \
+  --no-preview \
+  --height=50% \
+  --border=rounded \
+  --border-label=" ghostty config " \
+  --color="bg+:#2e3450,fg+:#82aaff,hl:#c099ff,hl+:#c099ff,pointer:#ff757f,marker:#c3e88d,header:#ffc777,prompt:#82aaff,border:#444a73" \
+  --no-scrollbar)
+
+case "$selected" in
+  *"Theme"*)
+    exec gtheme
+    ;;
+  *"Font"*)
+    exec gfont
+    ;;
+  *"Cursor"*)
+    exec gcursor
+    ;;
+  *"Opacity"*)
+    echo ""
+    echo "  current opacity: $cur_opacity"
+    echo ""
+    echo "  presets:"
+    echo "    1) 1.0   — solid (no transparency)"
+    echo "    2) 0.95  — barely there"
+    echo "    3) 0.92  — subtle glass ◀ default"
+    echo "    4) 0.88  — frosted"
+    echo "    5) 0.82  — see-through"
+    echo "    6) 0.75  — very transparent"
+    echo "    7) custom"
+    echo ""
+    read -p "  pick [1-7]: " choice
+    case "$choice" in
+      1) val="1.0" ;;
+      2) val="0.95" ;;
+      3) val="0.92" ;;
+      4) val="0.88" ;;
+      5) val="0.82" ;;
+      6) val="0.75" ;;
+      7) read -p "  enter value (0.0-1.0): " val ;;
+      *) echo "  cancelled"; exit 0 ;;
+    esac
+    sed -i '' "s/^background-opacity = .*/background-opacity = $val/" "$CONFIG"
+    echo ""
+    echo "  ✅ Opacity → $val"
+    echo "  press ⌘+Shift+, to reload ghostty"
+    echo ""
+    ;;
+  *"Edit Config"*)
+    ${EDITOR:-open} "$CONFIG"
+    ;;
+  *"Reload"*)
+    echo ""
+    echo "  press ⌘+Shift+, in Ghostty to reload"
+    echo "  (or Ghostty may auto-detect config changes)"
+    echo ""
+    ;;
+esac

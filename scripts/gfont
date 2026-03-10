@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────
+# gfont — LIVE Ghostty font switcher
+# ─────────────────────────────────────────────────
+set -euo pipefail
+
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+
+original_font=$(grep '^font-family = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/font-family = //')
+original_size=$(grep '^font-size = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/font-size = //')
+
+# helper script for live apply on focus
+APPLY_SCRIPT="$HOME/.local/bin/.gfont-apply"
+cat > "$APPLY_SCRIPT" << 'INNER'
+#!/usr/bin/env bash
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+font="$1"
+size=14
+if [ "$font" = "Victor Mono" ]; then size=15; fi
+sed -i '' "s/^font-family = .*/font-family = $font/" "$CONFIG"
+sed -i '' "s/^font-size = .*/font-size = $size/" "$CONFIG"
+osascript -e '
+  tell application "System Events"
+    tell process "Ghostty"
+      keystroke "," using {command down, shift down}
+    end tell
+  end tell
+' 2>/dev/null
+INNER
+chmod +x "$APPLY_SCRIPT"
+
+fonts="JetBrains Mono
+Geist Mono
+Fira Code
+Cascadia Code
+Monaspace Neon
+Monaspace Argon
+Monaspace Radon
+Victor Mono
+Maple Mono
+Commit Mono
+Iosevka"
+
+preview_script='
+font="{}"
+size=14
+case "$font" in
+  "JetBrains Mono") desc="sharp, clean, best all-rounder · ligatures" ;;
+  "Geist Mono") desc="vercel — ultra minimal & modern" ;;
+  "Fira Code") desc="the OG ligature font — wide & readable" ;;
+  "Cascadia Code") desc="microsoft — friendly curves" ;;
+  "Monaspace Neon") desc="github — techy, texture healing" ;;
+  "Monaspace Argon") desc="github — softer, rounder" ;;
+  "Monaspace Radon") desc="github — handwritten feel" ;;
+  "Victor Mono") desc="thin elegant · cursive italics"; size=15 ;;
+  "Maple Mono") desc="playful but clean · rounded" ;;
+  "Commit Mono") desc="neutral & balanced · marathons" ;;
+  "Iosevka") desc="ultra-narrow · max columns" ;;
+  *) desc="unknown" ;;
+esac
+
+echo ""
+echo "  ╔═══════════════════════════════════════╗"
+echo "  ║  $font"
+echo "  ║  $desc"
+echo "  ║  size: ${size}pt"
+echo "  ╚═══════════════════════════════════════╝"
+echo ""
+echo "  ── sample ────────────────────────────"
+echo ""
+echo "  ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+echo "  abcdefghijklmnopqrstuvwxyz"
+echo "  0123456789  !@#$%^&*()"
+echo ""
+echo "  ── ligatures ─────────────────────────"
+echo ""
+echo "  => -> !== === >= <= +- .."
+echo "  // /* */ :: ... <> >>= |>"
+echo ""
+echo "  ── code ──────────────────────────────"
+echo ""
+echo "  const fn = (x: number) => {"
+echo "    if (x !== 0) return x ** 2"
+echo "    return null ?? fallback"
+echo "  }"
+echo ""
+echo "  type Result<T> = Ok<T> | Err"
+'
+
+selected=$(echo "$fonts" | fzf \
+  --prompt="🔤 font > " \
+  --header="  current: $original_font  │  LIVE preview  │  esc=revert" \
+  --header-first \
+  --preview="bash -c '$preview_script'" \
+  --preview-window=right:55%:wrap \
+  --bind="focus:execute-silent($APPLY_SCRIPT {})" \
+  --height=80% \
+  --border=rounded \
+  --border-label=" ghostty fonts — live " \
+  --color="bg+:#2e3450,fg+:#82aaff,hl:#c099ff,hl+:#c099ff,pointer:#ff757f,marker:#c3e88d,header:#ffc777,prompt:#82aaff,border:#444a73" \
+  --no-scrollbar \
+  --cycle)
+
+if [ -n "$selected" ]; then
+  echo ""
+  echo "  ✅ Font → $selected"
+  echo ""
+else
+  sed -i '' "s/^font-family = .*/font-family = $original_font/" "$CONFIG"
+  sed -i '' "s/^font-size = .*/font-size = $original_size/" "$CONFIG"
+  osascript -e '
+    tell application "System Events"
+      tell process "Ghostty"
+        keystroke "," using {command down, shift down}
+      end tell
+    end tell
+  ' 2>/dev/null &
+  echo ""
+  echo "  ↩ Reverted to: $original_font"
+  echo ""
+fi

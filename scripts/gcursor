@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────
+# gcursor — LIVE Ghostty cursor style switcher
+# ─────────────────────────────────────────────────
+set -euo pipefail
+
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+
+orig_style=$(grep '^cursor-style = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/cursor-style = //')
+orig_blink=$(grep '^cursor-style-blink = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/cursor-style-blink = //')
+
+APPLY_SCRIPT="$HOME/.local/bin/.gcursor-apply"
+cat > "$APPLY_SCRIPT" << 'INNER'
+#!/usr/bin/env bash
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+choice="$1"
+case "$choice" in
+  *"bar + blink"*)       style="bar"; blink="true" ;;
+  *"block + blink"*)     style="block"; blink="true" ;;
+  *"underline + blink"*) style="underline"; blink="true" ;;
+  *"bar + static"*)      style="bar"; blink="false" ;;
+  *"block + static"*)    style="block"; blink="false" ;;
+  *"underline + static"*) style="underline"; blink="false" ;;
+  *) exit 0 ;;
+esac
+sed -i '' "s/^cursor-style = .*/cursor-style = $style/" "$CONFIG"
+sed -i '' "s/^cursor-style-blink = .*/cursor-style-blink = $blink/" "$CONFIG"
+osascript -e '
+  tell application "System Events"
+    tell process "Ghostty"
+      keystroke "," using {command down, shift down}
+    end tell
+  end tell
+' 2>/dev/null
+INNER
+chmod +x "$APPLY_SCRIPT"
+
+options="▏ bar + blink        sleek modern (vscode style)
+█ block + blink      classic terminal
+▁ underline + blink  minimal low-profile
+▏ bar + static       clean no-blink
+█ block + static     retro solid
+▁ underline + static subtle steady"
+
+selected=$(echo "$options" | fzf \
+  --prompt="✏️  cursor > " \
+  --header="  current: $orig_style + blink=$orig_blink  │  LIVE  │  esc=revert" \
+  --header-first \
+  --no-preview \
+  --bind="focus:execute-silent($APPLY_SCRIPT {})" \
+  --height=50% \
+  --border=rounded \
+  --border-label=" ghostty cursor — live " \
+  --color="bg+:#2e3450,fg+:#82aaff,hl:#c099ff,hl+:#c099ff,pointer:#ff757f,marker:#c3e88d,header:#ffc777,prompt:#82aaff,border:#444a73" \
+  --no-scrollbar \
+  --cycle)
+
+if [[ -n "$selected" ]]; then
+  echo ""
+  echo "  ✅ Cursor updated"
+  echo ""
+else
+  sed -i '' "s/^cursor-style = .*/cursor-style = $orig_style/" "$CONFIG"
+  sed -i '' "s/^cursor-style-blink = .*/cursor-style-blink = $orig_blink/" "$CONFIG"
+  osascript -e '
+    tell application "System Events"
+      tell process "Ghostty"
+        keystroke "," using {command down, shift down}
+      end tell
+    end tell
+  ' 2>/dev/null &
+  echo ""
+  echo "  ↩ Reverted to: $orig_style"
+  echo ""
+fi

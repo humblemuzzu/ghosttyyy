@@ -1,0 +1,123 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  ghostty config — curated by pi                                ║
+# ║  hot-reload: ⌘ + Shift + ,                                    ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# ══════════════════════════════════════════════════════════════════
+# 🎨 THEME — uncomment ONE line to switch
+# ══════════════════════════════════════════════════════════════════
+theme = gruvbox-dark
+# theme = catppuccin-macchiato
+# theme = dracula-pro
+# theme = vesper
+# theme = kanagawa
+# theme = rosepine
+# theme = gruvbox-dark
+# theme = nord-frost
+# theme = opencode
+# theme = synthwave
+
+# ══════════════════════════════════════════════════════════════════
+# 🔤 FONT — uncomment ONE block to switch
+# ══════════════════════════════════════════════════════════════════
+
+# ── JetBrains Mono ── (clean, sharp, great ligatures — the default)
+font-family = Fira Code
+font-size = 14
+
+# ── Geist Mono ── (vercel's font, minimal & modern)
+# font-family = Geist Mono
+# font-size = 14
+
+# ── Fira Code ── (the OG ligature font, wide & readable)
+# font-family = Fira Code
+# font-size = 14
+
+# ── Cascadia Code ── (microsoft's terminal font, friendly curves)
+# font-family = Cascadia Code
+# font-size = 14
+
+# ── Monaspace Neon ── (github's font family, texture healing)
+# font-family = Monaspace Neon
+# font-size = 14
+
+# ── Monaspace Argon ── (github's, softer & rounder variant)
+# font-family = Monaspace Argon
+# font-size = 14
+
+# ── Monaspace Radon ── (github's, handwritten feel for italics)
+# font-family = Monaspace Radon
+# font-size = 14
+
+# ── Victor Mono ── (elegant cursive italics, thin strokes)
+# font-family = Victor Mono
+# font-size = 15
+
+# ── Maple Mono ── (playful but clean, rounded terminals)
+# font-family = Maple Mono
+# font-size = 14
+
+# ── Commit Mono ── (neutral & balanced, great for long sessions)
+# font-family = Commit Mono
+# font-size = 14
+
+# ── Iosevka ── (ultra-narrow, fits tons of columns)
+# font-family = Iosevka
+# font-size = 14
+
+# ══════════════════════════════════════════════════════════════════
+# ✏️  CURSOR — uncomment ONE style
+# ══════════════════════════════════════════════════════════════════
+
+# ── Blinking bar (sleek, modern)
+cursor-style = block
+cursor-style-blink = false
+
+# ── Blinking block (classic terminal)
+# cursor-style = block
+# cursor-style-blink = true
+
+# ── Blinking underline (minimal, low-profile)
+# cursor-style = underline
+# cursor-style-blink = true
+
+# ── Static block (no blink, retro)
+# cursor-style = block
+# cursor-style-blink = false
+
+# ══════════════════════════════════════════════════════════════════
+# 🪟 WINDOW
+# ══════════════════════════════════════════════════════════════════
+window-padding-x = 16
+window-padding-y = 12
+window-padding-balance = true
+window-decoration = true
+macos-titlebar-style = tabs
+window-theme = dark
+
+# ══════════════════════════════════════════════════════════════════
+# ✨ OPACITY & BLUR — the vibes
+# ══════════════════════════════════════════════════════════════════
+background-opacity = 0.92
+background-blur = 20
+unfocused-split-opacity = 0.85
+
+# Want more transparent? try 0.80
+# Want solid? set to 1.0
+# Want frosted glass? keep blur at 20+ with opacity 0.85-0.92
+
+# ══════════════════════════════════════════════════════════════════
+# ⚙️  BEHAVIOR
+# ══════════════════════════════════════════════════════════════════
+font-thicken = true
+adjust-cell-height = 3
+shell-integration = zsh
+shell-integration-features = cursor,sudo,title
+mouse-hide-while-typing = true
+copy-on-select = clipboard
+focus-follows-mouse = true
+scrollback-limit = 100000
+clipboard-paste-bracketed-safe = true
+bold-is-bright = false
+minimum-contrast = 1.1
+confirm-close-surface = false

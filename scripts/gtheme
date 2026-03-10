@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────
+# gtheme — LIVE Ghostty theme switcher
+# scrolling through themes applies them in real-time
+# ─────────────────────────────────────────────────
+set -euo pipefail
+
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+THEMES_DIR="$HOME/.config/ghostty/themes"
+
+original=$(grep '^theme = ' "$CONFIG" 2>/dev/null | head -1 | sed 's/theme = //')
+
+apply() {
+  sed -i '' "s/^theme = .*/theme = $1/" "$CONFIG"
+  # tell ghostty to reload
+  osascript -e '
+    tell application "System Events"
+      tell process "Ghostty"
+        keystroke "," using {command down, shift down}
+      end tell
+    end tell
+  ' 2>/dev/null &
+}
+
+# helper script that fzf calls on every focus change
+APPLY_SCRIPT="$HOME/.local/bin/.gtheme-apply"
+cat > "$APPLY_SCRIPT" << 'INNER'
+#!/usr/bin/env bash
+CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
+theme="$1"
+sed -i '' "s/^theme = .*/theme = $theme/" "$CONFIG"
+osascript -e '
+  tell application "System Events"
+    tell process "Ghostty"
+      keystroke "," using {command down, shift down}
+    end tell
+  end tell
+' 2>/dev/null
+INNER
+chmod +x "$APPLY_SCRIPT"
+
+themes=$(ls "$THEMES_DIR" 2>/dev/null | sort)
+[[ -z "$themes" ]] && echo "No themes found" && exit 1
+
+# preview shows colored ANSI blocks from theme file
+preview_script='
+theme={}
+file="'"$THEMES_DIR"'/$theme"
+if [[ -f "$file" ]]; then
+  bg=$(grep "^background = " "$file" | head -1 | awk "{print \$3}")
+  fg=$(grep "^foreground = " "$file" | head -1 | awk "{print \$3}")
+  cursor=$(grep "^cursor-color = " "$file" | head -1 | awk "{print \$3}")
+
+  hex_to_rgb() {
+    local hex="${1#\#}"
+    printf "%d %d %d" "0x${hex:0:2}" "0x${hex:2:2}" "0x${hex:4:2}"
+  }
+
+  color_block() {
+    local r g b
+    read r g b <<< $(hex_to_rgb "$1")
+    printf "\033[48;2;%d;%d;%dm    \033[0m" "$r" "$g" "$b"
+  }
+
+  echo ""
+  echo "  ╔═══════════════════════════════════╗"
+  echo "  ║  $theme"
+  echo "  ╚═══════════════════════════════════╝"
+  echo ""
+  printf "  bg:     %s  " "$bg"; color_block "$bg"; echo ""
+  printf "  fg:     %s  " "$fg"; color_block "$fg"; echo ""
+  printf "  cursor: %s  " "$cursor"; color_block "$cursor"; echo ""
+  echo ""
+  echo "  ── palette ─────────────────────────"
+  echo ""
+
+  for i in $(seq 0 15); do
+    c=$(grep "^palette = $i=" "$file" | sed "s/palette = $i=//")
+    if [[ -n "$c" ]]; then
+      local r g b
+      read r g b <<< $(hex_to_rgb "$c")
+      printf "  \033[48;2;%d;%d;%dm  %2d  \033[0m" "$r" "$g" "$b" "$i"
+    fi
+    if [[ $i -eq 7 ]]; then echo ""; fi
+  done
+  echo ""
+  echo ""
+  echo "  ── sample ──────────────────────────"
+  echo ""
+  # show sample with actual ANSI colors
+  printf "  \033[31merror\033[0m \033[32msuccess\033[0m \033[33mwarn\033[0m "
+  printf "\033[34minfo\033[0m \033[35mpurple\033[0m \033[36mcyan\033[0m\n"
+  printf "  \033[1;31mbold\033[0m \033[1;32mbold\033[0m \033[1;33mbold\033[0m "
+  printf "\033[1;34mbold\033[0m \033[1;35mbold\033[0m \033[1;36mbold\033[0m\n"
+  echo ""
+  echo "  const x = await fetch(url)"
+  echo "  if (x.ok) return x.json()"
+fi
+'
+
+selected=$(echo "$themes" | fzf \
+  --prompt="🎨 theme > " \
+  --header="  current: $original  │  LIVE preview  │  esc=revert" \
+  --header-first \
+  --preview="bash -c '$preview_script'" \
+  --preview-window=right:50%:wrap \
+  --bind="focus:execute-silent($APPLY_SCRIPT {})" \
+  --height=80% \
+  --border=rounded \
+  --border-label=" ghostty themes — live " \
+  --color="bg+:#2e3450,fg+:#82aaff,hl:#c099ff,hl+:#c099ff,pointer:#ff757f,marker:#c3e88d,header:#ffc777,prompt:#82aaff,border:#444a73" \
+  --no-scrollbar \
+  --cycle \
+  --ansi)
+
+if [[ -n "$selected" ]]; then
+  # already applied via focus, just confirm
+  echo ""
+  echo "  ✅ Theme → $selected"
+  echo ""
+else
+  # user pressed esc — revert to original
+  sed -i '' "s/^theme = .*/theme = $original/" "$CONFIG"
+  osascript -e '
+    tell application "System Events"
+      tell process "Ghostty"
+        keystroke "," using {command down, shift down}
+      end tell
+    end tell
+  ' 2>/dev/null &
+  echo ""
+  echo "  ↩ Reverted to: $original"
+  echo ""
+fi
