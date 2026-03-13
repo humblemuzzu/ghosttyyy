@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 11 extensions, 16 skills, a multi-agent system, and custom TUI.
+A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 11 extensions, 17 skills, a multi-agent system, and custom TUI.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -333,7 +333,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Everything in `pi-setup/` is a portable backup of my full [pi](https://github.com/badlogic/pi-mono) coding agent environment — the custom TUI, all extensions, the multi-agent system (oracle, finder, librarian, task), 16 skills, 2 themes, and all the config that makes it work the way I want.
+Everything in `pi-setup/` is a portable backup of my full [pi](https://github.com/badlogic/pi-mono) coding agent environment — the custom TUI, all extensions, the multi-agent system (oracle, finder, librarian, task), 17 skills, 2 themes, and all the config that makes it work the way I want.
 
 ## 🚀 Pi Setup Installation
 
@@ -558,7 +558,7 @@ Dark blue palette inspired by Sarah Drasner's Night Owl theme.
 
 ---
 
-## 🧠 Skills (16)
+## 🧠 Skills (17)
 
 Skills are loadable instruction files (markdown) that inject domain-specific workflows and rules into the agent's context when activated. The agent loads them with the `skill` tool — e.g., `skill: git` before committing.
 
@@ -579,6 +579,7 @@ Skills are loadable instruction files (markdown) that inject domain-specific wor
 | **report** | Report back to a coordinator when spawned as a sub-agent |
 | **shepherd** | Watchdog for long autonomous runs — supervises tmux agents, respawns on death, orchestrates handoffs |
 | **nexus-fix** | Investigation-to-PR workflow for Linear issues — hypothesis-driven debugging with browser validation |
+| **chrome-cdp** | Interact with your live Chrome browser — screenshots, accessibility tree, click, type, eval JS, navigate. Connects to tabs you already have open via Chrome DevTools Protocol. Requires Chrome remote debugging enabled (`chrome://inspect/#remote-debugging`) and Node.js 22+. |
 | **handoff** | Context management via handoff instead of compaction (complements the handoff extension) |
 
 ---
@@ -655,7 +656,7 @@ pi-setup/
 │   ├── prompt.amp.code-review-*.md   ← code review system + report
 │   ├── prompt.amp.handoff-*.md       ← handoff extraction
 │   └── prompt.harness-docs.pi.md     ← pi harness documentation
-├── config-skills/          ← 15 skills
+├── config-skills/          ← 16 skills
 │   ├── git/                ← git workflows
 │   ├── review/             ← epistemic standards
 │   ├── spawn/              ← parallel agent spawning
@@ -670,7 +671,8 @@ pi-setup/
 │   ├── spar/               ← adversarial review
 │   ├── report/             ← sub-agent reporting
 │   ├── shepherd/           ← autonomous run watchdog
-│   └── nexus-fix/          ← issue-to-PR workflow
+│   ├── nexus-fix/          ← issue-to-PR workflow
+│   └── chrome-cdp/         ← Chrome browser interaction via DevTools Protocol
 └── pi-skills/              ← 1 pi-level skill
     └── handoff/            ← handoff context management
 ```

@@ -37,8 +37,8 @@ That's it. The script backs up any existing config before overwriting.
 - **gruvbox** (active) — warm retro colors
 - **nightowl** — dark blue Night Owl
 
-### Skills (16)
-`git`, `review`, `spawn`, `tmux`, `dig`, `document`, `write`, `remember`, `coordinate`, `rounds`, `spar`, `report`, `shepherd`, `nexus-fix`, `amp-voice`, `handoff`
+### Skills (17)
+`git`, `review`, `spawn`, `tmux`, `dig`, `document`, `write`, `remember`, `coordinate`, `rounds`, `spar`, `report`, `shepherd`, `nexus-fix`, `amp-voice`, `chrome-cdp`, `handoff`
 
 ### Settings
 - Model: `claude-opus-4-6` (Anthropic)

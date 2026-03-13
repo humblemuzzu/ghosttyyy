@@ -97,7 +97,10 @@ cp -R "$SCRIPT_DIR/config-skills" "$CONFIG_SKILLS"
 if [ -f "$CONFIG_SKILLS/spawn/scripts/spawn-amp" ]; then
     chmod +x "$CONFIG_SKILLS/spawn/scripts/spawn-amp"
 fi
-ok "Config skills installed (15 skills)"
+if [ -f "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs" ]; then
+    chmod +x "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs"
+fi
+ok "Config skills installed (16 skills)"
 
 # ── Settings ──
 info "Installing settings..."
@@ -124,7 +127,7 @@ echo "│                                         │"
 echo "│   Installed:                            │"
 echo "│   • 11 extensions                       │"
 echo "│   • 2 themes (gruvbox active)           │"
-echo "│   • 15 config skills + 1 pi skill       │"
+echo "│   • 16 config skills + 1 pi skill       │"
 echo "│   • Agent prompts                       │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│                                         │"
