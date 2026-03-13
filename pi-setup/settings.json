@@ -1,0 +1,31 @@
+{
+  "lastChangelogVersion": "0.57.1",
+  "hideThinkingBlock": false,
+  "defaultThinkingLevel": "high",
+  "theme": "gruvbox",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "skills": [
+    "~/.config/agents/skills"
+  ],
+  "extensions": [
+    "~/.pi/agent/extensions/editor",
+    "~/.pi/agent/extensions/handoff.ts",
+    "~/.pi/agent/extensions/session-name.ts",
+    "~/.pi/agent/extensions/tool-harness.ts",
+    "~/.pi/agent/extensions/system-prompt.ts",
+    "~/.pi/agent/extensions/tools",
+    "~/.pi/agent/extensions/command-palette",
+    "~/.pi/agent/extensions/session-breakdown.ts",
+    "~/.pi/agent/extensions/btw.ts",
+    "~/.pi/agent/extensions/notify.ts",
+    "~/.pi/agent/extensions/todos.ts"
+  ],
+  "compaction": {
+    "enabled": false
+  },
+  "steeringMode": "all",
+  "followUpMode": "all",
+  "doubleEscapeAction": "tree",
+  "quietStartup": true
+}
