@@ -108,6 +108,14 @@ backup_if_exists "$PI_AGENT/settings.json"
 cp "$SCRIPT_DIR/settings.json" "$PI_AGENT/settings.json"
 ok "Settings installed"
 
+# ── Models (context window override) ──
+if [ -f "$SCRIPT_DIR/models.json" ]; then
+    info "Installing model overrides..."
+    backup_if_exists "$PI_AGENT/models.json"
+    cp "$SCRIPT_DIR/models.json" "$PI_AGENT/models.json"
+    ok "Model overrides installed (Opus 1M context window)"
+fi
+
 # ── Keybindings ──
 info "Installing keybindings..."
 backup_if_exists "$PI_AGENT/keybindings.json"

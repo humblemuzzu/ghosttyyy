@@ -9,7 +9,7 @@ compaction is **disabled** in this environment. context is managed via handoff â
 
 ## what you need to know
 
-- you have ~200k tokens of context. that's plenty for focused work.
+- you have ~1M tokens of context. that's plenty for focused work.
 - at ~85% usage, the handoff extension auto-generates a transfer prompt and stages `/handoff` in the editor. the user just presses Enter to continue in a new session.
 - you will NOT be compacted. if you exhaust context, you hit a wall. plan accordingly.
 
