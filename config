@@ -116,8 +116,18 @@ shell-integration-features = cursor,sudo,title
 mouse-hide-while-typing = true
 copy-on-select = clipboard
 focus-follows-mouse = true
-scrollback-limit = 100000
+scrollback-limit = 10000000
 clipboard-paste-bracketed-safe = true
 bold-is-bright = false
 minimum-contrast = 1.1
 confirm-close-surface = false
+
+# ══════════════════════════════════════════════════════════════════
+# 📜 SCROLLBACK — fixes for long AI chat sessions (pi, claude code)
+# ══════════════════════════════════════════════════════════════════
+# 10M lines ≈ enough for marathon coding sessions
+# memory is lazy-allocated — only uses RAM as lines are written
+# ⌘+F to search scrollback, ⌘+Shift+J to export buffer to file
+# if you're in alternate screen (pi/claude code) and can't scroll:
+#   use the tool's built-in scroll (shift+up/down, mouse wheel)
+#   or ⌘+Shift+J to dump buffer for review

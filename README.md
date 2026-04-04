@@ -333,7 +333,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Everything in `pi-setup/` is a portable backup of my full [pi](https://github.com/badlogic/pi-mono) coding agent environment — the custom TUI, all extensions, the multi-agent system (oracle, finder, librarian, task), 17 skills, 2 themes, and all the config that makes it work the way I want.
+Everything in `pi-setup/` is a portable backup of my full [pi](https://github.com/badlogic/pi-mono) coding agent environment — the custom TUI, all 13 extensions, the multi-agent system (oracle, finder, librarian, task), 17 skills, 6 community packages, 2 themes, and all the config that makes it work the way I want.
 
 ## 🚀 Pi Setup Installation
 
@@ -343,11 +343,26 @@ chmod +x install.sh
 ./install.sh
 ```
 
-One command. It backs up your existing pi config, copies everything into the right places (`~/.pi/agent/` and `~/.config/agents/skills/`), and installs npm dependencies. Restart pi after.
+One command. It backs up your existing pi config, copies everything into the right places (`~/.pi/agent/` and `~/.config/agents/skills/`), installs npm dependencies, and installs 6 community packages. Restart pi after.
 
 ---
 
-## 🧩 Extensions (11)
+## 📦 Community Packages (6)
+
+Installed automatically by `install.sh` via `pi install`:
+
+| Package | What it does |
+|---------|-------------|
+| [`pi-web-access`](https://pi.dev/packages) | Web search, URL fetching, GitHub cloning, PDF extraction, YouTube transcripts |
+| [`pi-context`](https://pi.dev/packages) | Context window awareness — agent knows how full its context is |
+| [`pi-powerline-footer`](https://pi.dev/packages) | Powerline status bar — model, tokens, cost, git branch in the footer |
+| [`pi-anycopy`](https://pi.dev/packages) | Enhanced `/tree` with syntax-highlighted preview and clipboard copy |
+| [`pi-token-burden`](https://pi.dev/packages) | `/token-burden` — shows which tools/skills/extensions eat your context |
+| [`lsp-pi`](https://pi.dev/packages) | LSP diagnostics for TypeScript, Dart/Flutter, Python, Go, Kotlin, Swift, Rust, Vue, Svelte |
+
+---
+
+## 🧩 Extensions (13)
 
 Extensions are TypeScript files that hook into pi's extension API to add commands, modify the TUI, register tools, and react to agent events.
 
@@ -430,6 +445,16 @@ A full todo system stored as markdown files in `.pi/todos/`. Each todo is a stan
 ### `command-palette/` — Command Palette
 
 `Ctrl+Shift+P` opens a VS Code-style command palette overlay. Shows all available commands (built-in, extension, and skill commands) with fuzzy search, source badges `[cmd]` `[ext]` `[skill]`, and descriptions.
+
+### `local-model.ts` — Local LLM Server Manager
+
+`/local` — manage a local llama.cpp server for offline/free model usage. Supports Gemma 4 26B, Qwen3.5 35B MoE, and Qwen 27B Opus with configurable context windows (64k/128k/256k). Start, stop, check status, and switch models without leaving pi.
+
+### `md-export.ts` — Session Markdown Export
+
+`/md` — export the current session as clean, readable Markdown. Saves to your **current working directory** (not a buried system path). Supports exporting the current branch or full session, last N turns, optional tool call and thinking block inclusion, and clipboard copy.
+
+**Flags:** `/md tc` (include tool calls), `/md t` (include thinking), `/md all` (full file), `/md 3` (last 3 turns). Combine freely: `/md tc t all 3`.
 
 ### `tools/` — Full Replacement Tool Suite
 

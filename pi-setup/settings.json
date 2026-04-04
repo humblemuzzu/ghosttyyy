@@ -1,7 +1,7 @@
 {
-  "lastChangelogVersion": "0.57.1",
+  "lastChangelogVersion": "0.65.0",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "minimal",
   "theme": "gruvbox",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-4-6",
@@ -19,7 +19,9 @@
     "~/.pi/agent/extensions/session-breakdown.ts",
     "~/.pi/agent/extensions/btw.ts",
     "~/.pi/agent/extensions/notify.ts",
-    "~/.pi/agent/extensions/todos.ts"
+    "~/.pi/agent/extensions/todos.ts",
+    "~/.pi/agent/extensions/local-model.ts",
+    "~/.pi/agent/extensions/md-export.ts"
   ],
   "compaction": {
     "enabled": false
@@ -27,5 +29,13 @@
   "steeringMode": "all",
   "followUpMode": "all",
   "doubleEscapeAction": "tree",
-  "quietStartup": true
+  "quietStartup": true,
+  "packages": [
+    "npm:pi-web-access",
+    "npm:pi-context",
+    "npm:pi-powerline-footer",
+    "npm:pi-anycopy",
+    "npm:pi-token-burden",
+    "npm:lsp-pi"
+  ]
 }

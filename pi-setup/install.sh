@@ -9,7 +9,7 @@
 #   ./install.sh
 #
 # What it installs:
-#   ~/.pi/agent/extensions/     — 11 extensions (editor, btw, handoff, notify, etc.)
+#   ~/.pi/agent/extensions/     — 13 extensions (editor, btw, handoff, notify, etc.)
 #   ~/.pi/agent/themes/         — gruvbox + nightowl themes
 #   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, etc.)
 #   ~/.pi/agent/skills/         — handoff skill
@@ -17,6 +17,7 @@
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/permissions.json
 #   ~/.config/agents/skills/    — 15 skills (git, review, spawn, tmux, dig, etc.)
+#   6 pi packages               — web-access, context, powerline-footer, anycopy, token-burden, lsp
 #
 # Safe: backs up existing files before overwriting.
 
@@ -64,7 +65,7 @@ if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/nul
     info "Installing tool extension dependencies (npm install)..."
     (cd "$PI_AGENT/extensions/tools" && npm install --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
 fi
-ok "Extensions installed (11 extensions)"
+ok "Extensions installed (13 extensions)"
 
 # ── Themes ──
 info "Installing themes..."
@@ -128,16 +129,37 @@ backup_if_exists "$PI_AGENT/permissions.json"
 cp "$SCRIPT_DIR/permissions.json" "$PI_AGENT/permissions.json"
 ok "Permissions installed"
 
+# ── Packages (npm) ──
+info "Installing pi packages..."
+if command -v pi &>/dev/null; then
+    packages=(
+        "npm:pi-web-access"
+        "npm:pi-context"
+        "npm:pi-powerline-footer"
+        "npm:pi-anycopy"
+        "npm:pi-token-burden"
+        "npm:lsp-pi"
+    )
+    for pkg in "${packages[@]}"; do
+        info "  Installing $pkg..."
+        pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"
+    done
+    ok "Pi packages installed (6 packages)"
+else
+    warn "pi not found — skip package install. Install packages manually after installing pi."
+fi
+
 echo ""
 echo "╭─────────────────────────────────────────╮"
 echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
-echo "│   • 11 extensions                       │"
+echo "│   • 13 extensions                       │"
 echo "│   • 2 themes (gruvbox active)           │"
 echo "│   • 16 config skills + 1 pi skill       │"
 echo "│   • Agent prompts                       │"
 echo "│   • Settings, keybindings, permissions  │"
+echo "│   • 6 pi packages                       │"
 echo "│                                         │"
 echo "│   Restart pi to load everything.        │"
 echo "╰─────────────────────────────────────────╯"
