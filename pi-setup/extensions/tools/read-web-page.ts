@@ -207,6 +207,7 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 					cwd: ctx.cwd,
 					task,
 					model: PROMPT_MODEL,
+					parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
 					builtinTools: [],
 					extensionTools: [],
 					systemPromptBody: promptSystem,

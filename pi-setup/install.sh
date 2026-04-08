@@ -9,15 +9,17 @@
 #   ./install.sh
 #
 # What it installs:
-#   ~/.pi/agent/extensions/     — 13 extensions (editor, btw, handoff, notify, etc.)
+#   ~/.pi/agent/extensions/     — 14 extensions (editor, tools, handoff, brain-loader, etc.)
 #   ~/.pi/agent/themes/         — gruvbox + nightowl themes
-#   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, etc.)
+#   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, sub-agents, etc.)
 #   ~/.pi/agent/skills/         — handoff skill
-#   ~/.pi/agent/settings.json   — settings (gruvbox theme, opus model, compaction off, etc.)
+#   ~/.pi/agent/settings.json   — settings (zai default, gruvbox theme, compaction off, etc.)
 #   ~/.pi/agent/keybindings.json
+#   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
-#   ~/.config/agents/skills/    — 15 skills (git, review, spawn, tmux, dig, etc.)
-#   6 pi packages               — web-access, context, powerline-footer, anycopy, token-burden, lsp
+#   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
+#   4 pi packages (npm)         — web-access, context, token-burden, claude-agent-sdk-pi
+#   1 global npm package        — claude-agent-sdk-pi (Claude Code auth provider)
 #
 # Safe: backs up existing files before overwriting.
 
@@ -49,10 +51,30 @@ echo "│   Extensions, themes, skills & config   │"
 echo "╰─────────────────────────────────────────╯"
 echo ""
 
+# ── Prerequisites ──
+info "Checking prerequisites..."
+if ! command -v pi &>/dev/null; then
+    warn "pi not found. Install it first: npm install -g @mariozechner/pi-coding-agent"
+    echo "  Then re-run this script."
+    exit 1
+fi
+ok "pi found: $(pi --version 2>/dev/null || echo 'version unknown')"
+
 # ── Create directories ──
 info "Creating directories..."
 mkdir -p "$PI_AGENT"
 mkdir -p "$CONFIG_SKILLS"
+
+# ── Global npm packages ──
+info "Installing global npm packages..."
+# claude-agent-sdk-pi must be installed globally for pi to discover it as a provider
+if ! npm list -g claude-agent-sdk-pi &>/dev/null 2>&1; then
+    info "  Installing claude-agent-sdk-pi globally (Claude Code auth provider)..."
+    npm install -g claude-agent-sdk-pi 2>/dev/null || warn "Failed to install claude-agent-sdk-pi globally (install manually: npm install -g claude-agent-sdk-pi)"
+else
+    info "  claude-agent-sdk-pi already installed globally"
+fi
+ok "Global packages checked"
 
 # ── Extensions ──
 info "Installing extensions..."
@@ -65,7 +87,7 @@ if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/nul
     info "Installing tool extension dependencies (npm install)..."
     (cd "$PI_AGENT/extensions/tools" && npm install --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
 fi
-ok "Extensions installed (13 extensions)"
+ok "Extensions installed (14 extensions)"
 
 # ── Themes ──
 info "Installing themes..."
@@ -94,7 +116,7 @@ backup_if_exists "$CONFIG_SKILLS"
 rm -rf "$CONFIG_SKILLS"
 cp -R "$SCRIPT_DIR/config-skills" "$CONFIG_SKILLS"
 
-# Make spawn script executable
+# Make scripts executable
 if [ -f "$CONFIG_SKILLS/spawn/scripts/spawn-amp" ]; then
     chmod +x "$CONFIG_SKILLS/spawn/scripts/spawn-amp"
 fi
@@ -129,38 +151,38 @@ backup_if_exists "$PI_AGENT/permissions.json"
 cp "$SCRIPT_DIR/permissions.json" "$PI_AGENT/permissions.json"
 ok "Permissions installed"
 
-# ── Packages (npm) ──
+# ── Pi packages (npm, discovered by pi at runtime) ──
 info "Installing pi packages..."
-if command -v pi &>/dev/null; then
-    packages=(
-        "npm:pi-web-access"
-        "npm:pi-context"
-        "npm:pi-powerline-footer"
-        "npm:pi-anycopy"
-        "npm:pi-token-burden"
-        "npm:lsp-pi"
-    )
-    for pkg in "${packages[@]}"; do
-        info "  Installing $pkg..."
-        pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"
-    done
-    ok "Pi packages installed (6 packages)"
-else
-    warn "pi not found — skip package install. Install packages manually after installing pi."
-fi
+packages=(
+    "npm:pi-web-access"
+    "npm:pi-context"
+    "npm:pi-token-burden"
+    "npm:claude-agent-sdk-pi"
+)
+for pkg in "${packages[@]}"; do
+    info "  Installing $pkg..."
+    pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"
+done
+ok "Pi packages installed (${#packages[@]} packages)"
 
 echo ""
 echo "╭─────────────────────────────────────────╮"
 echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
-echo "│   • 13 extensions                       │"
+echo "│   • 14 extensions                       │"
+echo "│   • 25 custom tools (10 replaced + 15)  │"
 echo "│   • 2 themes (gruvbox active)           │"
 echo "│   • 16 config skills + 1 pi skill       │"
-echo "│   • Agent prompts                       │"
+echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
-echo "│   • 6 pi packages                       │"
+echo "│   • 4 pi packages                       │"
+echo "│   • claude-agent-sdk-pi (global npm)    │"
 echo "│                                         │"
-echo "│   Restart pi to load everything.        │"
+echo "│   Claude auth:                          │"
+echo "│   Run 'claude-agent-sdk-pi auth'        │"
+echo "│   to authenticate with Claude Pro/Max   │"
+echo "│                                         │"
+echo "│   Then restart pi.                      │"
 echo "╰─────────────────────────────────────────╯"
 echo ""

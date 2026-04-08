@@ -131,9 +131,24 @@ export function createGrepTool(): ToolDefinition {
 					description: "Whether to search case-sensitively (default: true).",
 				}),
 			),
+			ignoreCase: Type.Optional(
+				Type.Boolean({
+					description: "Case-insensitive search (alias — pi default param name).",
+				}),
+			),
 			literal: Type.Optional(
 				Type.Boolean({
 					description: "Whether to treat the pattern as a literal string instead of a regex.",
+				}),
+			),
+			context: Type.Optional(
+				Type.Number({
+					description: "Number of context lines around matches.",
+				}),
+			),
+			limit: Type.Optional(
+				Type.Number({
+					description: "Maximum number of results.",
 				}),
 			),
 		}),
@@ -164,7 +179,7 @@ export function createGrepTool(): ToolDefinition {
 					"--context", String(RG_CONTEXT_LINES),
 				];
 
-				if (params.caseSensitive === false) {
+				if (params.caseSensitive === false || params.ignoreCase === true) {
 					args.push("--ignore-case");
 				}
 				if (params.literal) {

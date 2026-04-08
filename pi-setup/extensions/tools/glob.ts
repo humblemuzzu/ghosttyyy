@@ -42,9 +42,15 @@ export function createGlobTool(): ToolDefinition {
 			"- `**/*.{js,ts}` — JavaScript and TypeScript files\n",
 
 		parameters: Type.Object({
-			filePattern: Type.String({
+			filePattern: Type.Optional(Type.String({
 				description: 'Glob pattern like "**/*.js" or "src/**/*.ts" to match files.',
-			}),
+			})),
+			pattern: Type.Optional(Type.String({
+				description: 'Glob pattern (alias for filePattern — pi default param name).',
+			})),
+			path: Type.Optional(Type.String({
+				description: "Directory to search in (default: current directory).",
+			})),
 			limit: Type.Optional(
 				Type.Number({
 					description: "Maximum number of results to return.",
@@ -58,7 +64,7 @@ export function createGlobTool(): ToolDefinition {
 		}),
 
 		renderCall(args: any, theme: any) {
-			const pattern = args.filePattern || "...";
+			const pattern = args.filePattern || args.pattern || "...";
 			return new Text(
 				theme.fg("toolTitle", theme.bold("Find ")) + theme.fg("dim", pattern),
 				0, 0,
@@ -75,7 +81,10 @@ export function createGlobTool(): ToolDefinition {
 		},
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const searchPath = ctx.cwd;
+			const globPattern = params.filePattern ?? params.pattern;
+			const searchPath = params.path
+				? (path.isAbsolute(params.path) ? params.path : path.resolve(ctx.cwd, params.path))
+				: ctx.cwd;
 			const limit = params.limit ?? DEFAULT_LIMIT;
 			const offset = params.offset ?? 0;
 
@@ -91,7 +100,7 @@ export function createGlobTool(): ToolDefinition {
 					"--glob",
 					"!.jj",
 					"--glob",
-					params.filePattern,
+					globPattern,
 					searchPath,
 				];
 
@@ -174,7 +183,7 @@ export function createGlobTool(): ToolDefinition {
 						output = allPaths.join("\n");
 					}
 
-					resolve({ content: [{ type: "text" as const, text: output }], details: { header: params.filePattern } } as any);
+					resolve({ content: [{ type: "text" as const, text: output }], details: { header: globPattern } } as any);
 				});
 			});
 		},

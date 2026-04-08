@@ -65,6 +65,10 @@ export function createTaskTool(): ToolDefinition {
 			let sessionId = "";
 			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { /* graceful */ }
 
+			// inherit parent's model so the sub-agent uses the same provider
+			// (e.g. claude-agent-sdk instead of defaultProvider from settings)
+			const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+
 			const singleResult: SingleResult = {
 				agent: "Task",
 				task: params.description,
@@ -76,6 +80,8 @@ export function createTaskTool(): ToolDefinition {
 			const result = await piSpawn({
 				cwd: ctx.cwd,
 				task: params.prompt,
+				model: parentModel,
+				parentModel,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				signal,

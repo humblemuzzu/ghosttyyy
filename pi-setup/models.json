@@ -6,6 +6,53 @@
           "contextWindow": 1000000
         }
       }
+    },
+    "local-llama": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "local",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "supportsUsageInStreaming": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "gemma-moe-local",
+          "name": "⚡ Gemma 4 26B-A4B MoE — 49 tok/s",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        },
+        {
+          "id": "qwen-moe-local",
+          "name": "⚡ Qwen3.5 35B-A3B MoE — 42 tok/s",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
+        }
+      ]
     }
   }
 }

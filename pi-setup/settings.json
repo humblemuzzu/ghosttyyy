@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.65.0",
+  "lastChangelogVersion": "0.65.2",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "minimal",
+  "defaultThinkingLevel": "high",
   "theme": "gruvbox",
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
+  "defaultProvider": "zai",
+  "defaultModel": "glm-5.1",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -21,7 +21,7 @@
     "~/.pi/agent/extensions/notify.ts",
     "~/.pi/agent/extensions/todos.ts",
     "~/.pi/agent/extensions/local-model.ts",
-    "~/.pi/agent/extensions/md-export.ts"
+    "~/.pi/agent/extensions/brain-loader.ts"
   ],
   "compaction": {
     "enabled": false
@@ -33,9 +33,7 @@
   "packages": [
     "npm:pi-web-access",
     "npm:pi-context",
-    "npm:pi-powerline-footer",
-    "npm:pi-anycopy",
     "npm:pi-token-burden",
-    "npm:lsp-pi"
+    "npm:claude-agent-sdk-pi"
   ]
 }

@@ -25,9 +25,18 @@ const PAGES_CACHE = '/tmp/cdp-pages.json';
 function sockPath(targetId) { return `${SOCK_PREFIX}${targetId}.sock`; }
 
 function getWsUrl() {
-  const portFile = resolve(homedir(), 'Library/Application Support/Google/Chrome/DevToolsActivePort');
-  const lines = readFileSync(portFile, 'utf8').trim().split('\n');
-  return `ws://127.0.0.1:${lines[0]}${lines[1]}`;
+  const candidates = [
+    process.env.CDP_PORT_FILE,
+    resolve(homedir(), 'Library/Application Support/Dia/User Data/DevToolsActivePort'),
+    resolve(homedir(), 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
+  ].filter(Boolean);
+  for (const portFile of candidates) {
+    if (existsSync(portFile)) {
+      const lines = readFileSync(portFile, 'utf8').trim().split('\n');
+      return `ws://127.0.0.1:${lines[0]}${lines[1]}`;
+    }
+  }
+  throw new Error('No DevToolsActivePort found. Enable remote debugging in your browser.');
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));

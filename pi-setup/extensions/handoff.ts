@@ -11,15 +11,14 @@
  *   /handoff check other places that need this fix
  */
 
-import { complete, type Api, type Model, type Message, type Tool, type ToolCall } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@mariozechner/pi-coding-agent";
-import { BorderedLoader, convertToLlm, serializeConversation, SessionManager } from "@mariozechner/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, SessionEntry } from "@mariozechner/pi-coding-agent";
+import { BorderedLoader, SessionManager } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { readAgentPrompt } from "./tools/lib/pi-spawn";
+import { readAgentPrompt, piSpawn, type PiSpawnResult } from "./tools/lib/pi-spawn";
 
 const HANDOFF_THRESHOLD = 0.85;
-const HANDOFF_MODEL = { provider: "anthropic", id: "claude-haiku-4-5" } as const;
+const HANDOFF_MODEL = "claude-haiku-4-5";
 const MAX_RELEVANT_FILES = 10;
 
 function parsePromptSections(content: string): Record<string, string> {
@@ -37,52 +36,16 @@ function parsePromptSections(content: string): Record<string, string> {
 
 const handoffSections = parsePromptSections(readAgentPrompt("prompt.amp.handoff-extraction.md"));
 
-const HANDOFF_TOOL: Tool = {
-	name: "create_handoff_context",
-	description: handoffSections["tool-description"] || "Extract context for handoff",
-	parameters: Type.Object({
-		relevantInformation: Type.String({
-			description: handoffSections["field-relevant-information"] || "Extract relevant context",
-		}),
-		relevantFiles: Type.Array(Type.String(), {
-			description: handoffSections["field-relevant-files"] || "Relevant file paths",
-		}),
-	}),
-};
-
-function buildExtractionPrompt(conversationText: string, goal: string): string {
+function buildExtractionTask(conversationText: string, goal: string): string {
 	const body = handoffSections["extraction-prompt"] ?? "";
-	return `${conversationText}\n\n${body}\n${goal}\n\nUse the create_handoff_context tool to extract relevant information and files.`;
+	return `${body}\n${goal}\n\n<conversation>\n${conversationText.slice(-80000)}\n</conversation>\n\nRespond with a concise handoff summary: key discoveries, decisions, current state, remaining work. Then list relevant file paths. Keep it under 400 words.`;
 }
 
-interface HandoffExtraction {
-	relevantInformation: string;
-	relevantFiles: string[];
-}
-
-function extractToolCallArgs(response: { content: ({ type: string } | ToolCall)[] }): HandoffExtraction | null {
-	const toolCall = response.content.find((c): c is ToolCall => c.type === "toolCall" && c.name === "create_handoff_context");
-	if (!toolCall) return null;
-	const args = toolCall.arguments as Record<string, unknown>;
-	return {
-		relevantInformation: (args.relevantInformation as string) ?? "",
-		relevantFiles: (Array.isArray(args.relevantFiles) ? args.relevantFiles : []).slice(0, MAX_RELEVANT_FILES) as string[],
-	};
-}
-
-function assembleHandoffPrompt(sessionId: string, extraction: HandoffExtraction, goal: string): string {
+function assembleHandoffPrompt(sessionId: string, extraction: string, goal: string): string {
 	const parts: string[] = [];
 
 	parts.push(`Continuing work from session ${sessionId}. Use read_session to retrieve details if needed.`);
-
-	if (extraction.relevantFiles.length > 0) {
-		parts.push(extraction.relevantFiles.map((f) => `@${f}`).join(" "));
-	}
-
-	if (extraction.relevantInformation) {
-		parts.push(extraction.relevantInformation);
-	}
-
+	parts.push(extraction);
 	parts.push(goal);
 
 	return parts.join("\n\n");
@@ -139,14 +102,26 @@ export default function (pi: ExtensionAPI) {
 	let parentSessionFile: string | undefined;
 	let generating = false;
 
-	/** resolve the dedicated handoff model, fall back to ctx.model */
-	function getHandoffModel(ctx: { modelRegistry: { find(p: string, id: string): Model<Api> | undefined }; model: Model<Api> | undefined }): Model<Api> | undefined {
-		return ctx.modelRegistry.find(HANDOFF_MODEL.provider, HANDOFF_MODEL.id) ?? ctx.model;
+	/** get the final text output from a piSpawn result */
+	function getOutputText(result: PiSpawnResult): string {
+		const lastAssistant = [...result.messages]
+			.reverse()
+			.find((m: any) => m.role === "assistant");
+		if (!lastAssistant) return "";
+		const content = (lastAssistant as any).content;
+		if (typeof content === "string") return content;
+		if (Array.isArray(content)) {
+			return content
+				.filter((c: any) => c.type === "text")
+				.map((c: any) => c.text)
+				.join("\n")
+				.trim();
+		}
+		return "";
 	}
 
 	async function generateHandoffPrompt(
-		ctx: { sessionManager: any; modelRegistry: any },
-		handoffModel: Model<Api>,
+		ctx: any,
 		goal: string,
 		signal?: AbortSignal,
 	): Promise<string | null> {
@@ -157,33 +132,41 @@ export default function (pi: ExtensionAPI) {
 
 		if (messages.length === 0) return null;
 
-		const llmMessages = convertToLlm(messages);
-		const conversationText = serializeConversation(llmMessages);
+		// serialize conversation for the extraction prompt
+		const conversationParts: string[] = [];
+		for (const msg of messages) {
+			const role = msg.role;
+			const text = Array.isArray(msg.content)
+				? msg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
+				: typeof msg.content === "string" ? msg.content : "";
+			if (!text.trim()) continue;
+			conversationParts.push(`${role}: ${text.slice(0, 2000)}`);
+		}
+		const conversationText = conversationParts.join("\n\n");
 		const sessionId = ctx.sessionManager.getSessionId();
 
-		const apiKey = await ctx.modelRegistry.getApiKey(handoffModel);
-		const userMessage: Message = {
-			role: "user",
-			content: [{ type: "text", text: buildExtractionPrompt(conversationText, goal) }],
-			timestamp: Date.now(),
-		};
+		const task = buildExtractionTask(conversationText, goal);
 
-		const response = await complete(
-			handoffModel,
-			{ messages: [userMessage], tools: [HANDOFF_TOOL] },
-			{ apiKey, signal, toolChoice: "any" },
-		);
+		const result = await piSpawn({
+			cwd: ctx.cwd,
+			task,
+			model: HANDOFF_MODEL,
+			parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+			builtinTools: [],
+			extensionTools: [],
+			signal,
+			sessionId,
+		});
 
-		if (response.stopReason === "aborted") return null;
-
-		if (response.stopReason === "error") {
-			throw new Error(response.errorMessage ?? "API request failed");
+		const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
+		if (isError) {
+			throw new Error(result.errorMessage || result.stderr || "handoff extraction failed");
 		}
 
-		const extraction = extractToolCallArgs(response);
-		if (!extraction) return null;
+		const output = getOutputText(result);
+		if (!output) return null;
 
-		return assembleHandoffPrompt(sessionId, extraction, goal);
+		return assembleHandoffPrompt(sessionId, output, goal);
 	}
 
 	/** switch to a new session and send the handoff prompt */
@@ -221,8 +204,6 @@ export default function (pi: ExtensionAPI) {
 		const usage = ctx.getContextUsage();
 		if (!usage || usage.percent === null) return;
 		if (usage.percent < HANDOFF_THRESHOLD * 100) return;
-		const handoffModel = getHandoffModel(ctx);
-		if (!handoffModel) return;
 
 		generating = true;
 		parentSessionFile = ctx.sessionManager.getSessionFile();
@@ -230,7 +211,6 @@ export default function (pi: ExtensionAPI) {
 		try {
 			const prompt = await generateHandoffPrompt(
 				ctx,
-				handoffModel,
 				"continue the most specific pending task from the conversation",
 			);
 
@@ -270,19 +250,13 @@ export default function (pi: ExtensionAPI) {
 
 			// manual invocation with a goal — generate fresh handoff
 			if (goal && !handoffPending) {
-				const handoffModel = getHandoffModel(ctx);
-				if (!handoffModel) {
-					ctx.ui.notify("no model available for handoff", "error");
-					return;
-				}
-
 				parentSessionFile = ctx.sessionManager.getSessionFile();
 
 				const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-					const loader = new BorderedLoader(tui, theme, `generating handoff prompt (${handoffModel.name})...`);
+					const loader = new BorderedLoader(tui, theme, `generating handoff prompt (${ctx.model?.id ?? HANDOFF_MODEL})...`);
 					loader.onAbort = () => done(null);
 
-					generateHandoffPrompt(ctx, handoffModel, goal, loader.signal)
+					generateHandoffPrompt(ctx, goal, loader.signal)
 						.then(done)
 						.catch((err) => {
 							console.error("handoff generation failed:", err);
@@ -348,17 +322,9 @@ export default function (pi: ExtensionAPI) {
 		}),
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const handoffModel = getHandoffModel(ctx);
-			if (!handoffModel) {
-				return {
-					content: [{ type: "text", text: "no model available for handoff extraction" }],
-					isError: true,
-				};
-			}
-
 			parentSessionFile = ctx.sessionManager.getSessionFile();
 
-			const prompt = await generateHandoffPrompt(ctx, handoffModel, params.goal, signal ?? undefined);
+			const prompt = await generateHandoffPrompt(ctx, params.goal, signal ?? undefined);
 			if (!prompt) {
 				return {
 					content: [{ type: "text", text: "handoff generation failed: could not extract context" }],

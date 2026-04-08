@@ -202,6 +202,16 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 					maxItems: 2,
 				}),
 			),
+			offset: Type.Optional(
+				Type.Number({
+					description: "Line number to start reading from (1-indexed) — pi default param name.",
+				}),
+			),
+			limit: Type.Optional(
+				Type.Number({
+					description: "Maximum number of lines to read — pi default param name.",
+				}),
+			),
 		}),
 
 		renderCall(args: any, theme: any) {
@@ -212,6 +222,10 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			let context = shortened;
 			if (Array.isArray(readRange) && readRange.length === 2) {
 				context += `:${readRange[0]}-${readRange[1]}`;
+			} else if (args.offset || args.limit) {
+				const start = args.offset || 1;
+				const end = args.limit ? start + args.limit - 1 : undefined;
+				context += `:${start}${end ? `-${end}` : '+'}`;
 			}
 			const linked = filePath.startsWith("/") ? osc8Link(`file://${filePath}`, context) : context;
 			return new Text(
@@ -273,7 +287,13 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 
 			// --- text file ---
 			try {
-				const readRange = params.read_range as [number, number] | undefined;
+				// resolve range: prefer read_range, fall back to offset/limit (pi default)
+				let readRange = params.read_range as [number, number] | undefined;
+				if (!readRange && (params.offset || params.limit)) {
+					const start = params.offset ?? 1;
+					const end = params.limit ? start + params.limit - 1 : start + limits.maxLines - 1;
+					readRange = [start, end];
+				}
 				const { text, totalLines, shownStart, shownEnd } = readFileContent(resolved, limits, readRange);
 
 				let output = text;

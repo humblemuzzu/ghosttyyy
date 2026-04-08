@@ -309,17 +309,26 @@ export function createEditFileTool(): ToolDefinition {
 			path: Type.String({
 				description: "The absolute path to the file (MUST be absolute, not relative). File must exist.",
 			}),
-			old_str: Type.String({
+			old_str: Type.Optional(Type.String({
 				description: "Text to search for. Must match exactly.",
-			}),
-			new_str: Type.String({
+			})),
+			new_str: Type.Optional(Type.String({
 				description: "Text to replace old_str with.",
-			}),
+			})),
 			replace_all: Type.Optional(
 				Type.Boolean({
 					description:
 						"Set to true to replace all occurrences of old_str. Otherwise, old_str must be unique.",
 					default: false,
+				}),
+			),
+			// pi default format: edits array with oldText/newText pairs
+			edits: Type.Optional(
+				Type.Array(Type.Object({
+					oldText: Type.String({ description: "Text to search for in the file." }),
+					newText: Type.String({ description: "Text to replace it with." }),
+				}), {
+					description: "One or more edits (pi default format). Each edit matches independently against the original file.",
 				}),
 			),
 		}),
@@ -329,8 +338,9 @@ export function createEditFileTool(): ToolDefinition {
 			const home = os.homedir();
 			const shortened = filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
 			const linked = filePath.startsWith("/") ? osc8Link(`file://${filePath}`, shortened) : shortened;
+			const editCount = Array.isArray(args.edits) ? ` (${args.edits.length} edit${args.edits.length > 1 ? 's' : ''})` : "";
 			return new Text(
-				theme.fg("toolTitle", theme.bold("Edit ")) + theme.fg("dim", linked),
+				theme.fg("toolTitle", theme.bold("Edit ")) + theme.fg("dim", linked + editCount),
 				0, 0,
 			);
 		},
@@ -353,7 +363,83 @@ export function createEditFileTool(): ToolDefinition {
 				} as any;
 			}
 
-			const redactionMarker = hasNewRedactionMarkers(params.old_str, params.new_str);
+			// normalize params: convert edits[] to old_str/new_str, or use directly
+			// edits[] = pi default format (multiple independent edits against original file)
+			// old_str/new_str = custom format (single edit)
+			if (Array.isArray(params.edits) && params.edits.length > 0) {
+				return withFileLock(resolved, async () => {
+					const rawContent = fs.readFileSync(resolved, "utf-8");
+					const { bom, text: bomStripped } = stripBom(rawContent);
+					const originalEnding = detectLineEnding(bomStripped);
+					let normalized = normalizeToLF(bomStripped);
+
+					for (const edit of params.edits) {
+						const oldStr = normalizeToLF(edit.oldText);
+						const newStr = normalizeToLF(edit.newText);
+
+						if (oldStr === newStr) continue;
+
+						const redactionMarker = hasNewRedactionMarkers(oldStr, newStr);
+						if (redactionMarker) {
+							return {
+								content: [{ type: "text" as const, text: `rejected: edit contains a redaction marker ("${redactionMarker}"). provide the actual content.` }],
+								isError: true,
+							} as any;
+						}
+
+						const idx = normalized.indexOf(oldStr);
+						if (idx === -1) {
+							return {
+								content: [{ type: "text" as const, text: `could not find oldText in ${path.basename(resolved)}. the text must match exactly.` }],
+								isError: true,
+							} as any;
+						}
+
+						normalized = normalized.substring(0, idx) + newStr + normalized.substring(idx + oldStr.length);
+					}
+
+					const finalContent = bom + restoreLineEndings(normalized, originalEnding);
+					if (rawContent === finalContent) {
+						return {
+							content: [{ type: "text" as const, text: "no changes made — replacement produced identical content." }],
+							isError: true,
+						} as any;
+					}
+
+					fs.writeFileSync(resolved, finalContent, "utf-8");
+
+					// track change for undo_edit
+					const sessionId = ctx.sessionManager.getSessionId();
+					const trackingDiff = simpleDiff(resolved, rawContent, finalContent);
+					saveChange(sessionId, toolCallId, {
+						uri: `file://${resolved}`,
+						before: rawContent,
+						after: finalContent,
+						diff: trackingDiff,
+						isNewFile: false,
+						timestamp: Date.now(),
+					});
+
+					const text = simpleDiff(resolved, normalizeToLF(bomStripped), normalized);
+					return {
+						content: [{ type: "text" as const, text }],
+						details: { filePath: resolved },
+					} as any;
+				});
+			}
+
+			// old_str / new_str format (custom)
+			const oldStr_param = params.old_str ?? params.oldText;
+			const newStr_param = params.new_str ?? params.newText;
+
+			if (!oldStr_param || !newStr_param) {
+				return {
+					content: [{ type: "text" as const, text: "no edits provided. pass old_str/new_str or edits array." }],
+					isError: true,
+				} as any;
+			}
+
+			const redactionMarker = hasNewRedactionMarkers(oldStr_param, newStr_param);
 			if (redactionMarker) {
 				return {
 					content: [
@@ -371,8 +457,8 @@ export function createEditFileTool(): ToolDefinition {
 				const { bom, text: bomStripped } = stripBom(rawContent);
 				const originalEnding = detectLineEnding(bomStripped);
 				const normalized = normalizeToLF(bomStripped);
-				const oldStr = normalizeToLF(params.old_str);
-				const newStr = normalizeToLF(params.new_str);
+				const oldStr = normalizeToLF(oldStr_param);
+				const newStr = normalizeToLF(newStr_param);
 
 				if (oldStr === newStr) {
 					return {

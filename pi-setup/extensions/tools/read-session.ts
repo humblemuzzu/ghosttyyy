@@ -341,6 +341,7 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 				cwd: ctx.cwd,
 				task,
 				model: MODEL,
+				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
 				builtinTools: [],
 				extensionTools: [],
 				systemPromptBody: systemPrompt,

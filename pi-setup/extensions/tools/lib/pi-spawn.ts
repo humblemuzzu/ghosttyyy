@@ -42,6 +42,12 @@ export interface PiSpawnConfig {
 	cwd: string;
 	task: string;
 	model?: string;
+	/**
+	 * the parent session's full model string (e.g. "claude-agent-sdk/claude-haiku-4-5").
+	 * when set, takes priority over `model` so child processes use the same
+	 * provider+auth route as the parent session.
+	 */
+	parentModel?: string;
 	builtinTools?: string[];
 	extensionTools?: string[];
 	systemPromptBody?: string;
@@ -101,7 +107,13 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		? ["--mode", "rpc", "--no-session"]
 		: ["--mode", "json", "-p", "--no-session"];
 
-	if (config.model) args.push("--model", config.model);
+	// resolve model: use parent's full model if the preferred model isn't available
+	// on the parent's provider. ensures sub-agents work regardless of which
+	// provider the user is currently on (claude-agent-sdk, zai, openai, etc).
+	if (config.model) {
+		const resolvedModel = config.parentModel ?? config.model;
+		args.push("--model", resolvedModel);
+	}
 	if (config.builtinTools && config.builtinTools.length > 0) {
 		args.push("--tools", config.builtinTools.join(","));
 	}

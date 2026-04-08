@@ -76,6 +76,7 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 				cwd: ctx.cwd,
 				task: params.query,
 				model: MODEL,
+				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				systemPromptBody: config.systemPrompt,

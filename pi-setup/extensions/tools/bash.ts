@@ -127,9 +127,12 @@ export function createBashTool(): ToolDefinition {
 			"- Only run `git commit` and `git push` if explicitly instructed by the user.",
 
 		parameters: Type.Object({
-			cmd: Type.String({
+			cmd: Type.Optional(Type.String({
 				description: "The shell command to execute.",
-			}),
+			})),
+			command: Type.Optional(Type.String({
+				description: "The shell command to execute (alias for cmd).",
+			})),
 			cwd: Type.Optional(
 				Type.String({
 					description:
@@ -141,6 +144,8 @@ export function createBashTool(): ToolDefinition {
 					description: "Timeout in seconds.",
 				}),
 			),
+		}, {
+			// at least one of cmd/command must be present
 		}),
 
 		renderCall(args: any, theme: any) {
@@ -195,7 +200,8 @@ export function createBashTool(): ToolDefinition {
 		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			let command = stripBackground(params.cmd);
+			// accept both `cmd` (our schema) and `command` (pi default / Claude convention)
+			let command = stripBackground(params.cmd ?? params.command);
 			let effectiveCwd = params.cwd
 				? resolveToAbsolute(params.cwd, ctx.cwd)
 				: ctx.cwd;

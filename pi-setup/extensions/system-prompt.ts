@@ -1,7 +1,7 @@
 /**
  * system-prompt — injects interpolated prompt.amp.system.md into the agent's system prompt.
  *
- * pi's built-in system prompt only provides date + cwd. this extension appends
+ * muzz's built-in system prompt only provides date + cwd. this extension appends
  * the full amp system prompt with runtime-interpolated template vars: workspace root,
  * OS info, git remote, session ID, and directory listing.
  *

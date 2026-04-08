@@ -100,6 +100,7 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 				cwd: ctx.cwd,
 				task: fullTask,
 				model: MODEL,
+				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				systemPromptBody: config.systemPrompt,
