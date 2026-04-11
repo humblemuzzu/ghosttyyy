@@ -18,8 +18,11 @@
 #   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
-#   4 pi packages (npm)         — web-access, context, token-burden, claude-agent-sdk-pi
-#   1 global npm package        — claude-agent-sdk-pi (Claude Code auth provider)
+#   4 pi packages (npm)         — web-access, context, token-burden, pi-claude-bridge
+#   2 global npm packages       — claude-agent-sdk-pi (legacy), pi-claude-bridge (active)
+#
+# After install, re-apply pi-claude-bridge patches if needed:
+#   See README.md → "pi-claude-bridge Local Modifications"
 #
 # Safe: backs up existing files before overwriting.
 
@@ -67,12 +70,19 @@ mkdir -p "$CONFIG_SKILLS"
 
 # ── Global npm packages ──
 info "Installing global npm packages..."
-# claude-agent-sdk-pi must be installed globally for pi to discover it as a provider
+# claude-agent-sdk-pi (legacy, may still be needed)
 if ! npm list -g claude-agent-sdk-pi &>/dev/null 2>&1; then
-    info "  Installing claude-agent-sdk-pi globally (Claude Code auth provider)..."
+    info "  Installing claude-agent-sdk-pi globally..."
     npm install -g claude-agent-sdk-pi 2>/dev/null || warn "Failed to install claude-agent-sdk-pi globally (install manually: npm install -g claude-agent-sdk-pi)"
 else
     info "  claude-agent-sdk-pi already installed globally"
+fi
+# pi-claude-bridge (active Claude bridge)
+if ! npm list -g pi-claude-bridge &>/dev/null 2>&1; then
+    info "  Installing pi-claude-bridge globally (Claude Code Agent SDK bridge)..."
+    npm install -g pi-claude-bridge 2>/dev/null || warn "Failed to install pi-claude-bridge globally (install manually: npm install -g pi-claude-bridge)"
+else
+    info "  pi-claude-bridge already installed globally"
 fi
 ok "Global packages checked"
 
@@ -157,13 +167,23 @@ packages=(
     "npm:pi-web-access"
     "npm:pi-context"
     "npm:pi-token-burden"
-    "npm:claude-agent-sdk-pi"
+    "npm:pi-claude-bridge"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
     pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"
 done
 ok "Pi packages installed (${#packages[@]} packages)"
+
+# ── pi-claude-bridge patches ──
+BRIDGE_INDEX="/opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts"
+if [ -f "$BRIDGE_INDEX" ] && [ -f "$SCRIPT_DIR/claude-bridge-patches/index.ts" ]; then
+    info "Applying pi-claude-bridge system prompt patches..."
+    cp "$SCRIPT_DIR/claude-bridge-patches/index.ts" "$BRIDGE_INDEX"
+    ok "pi-claude-bridge patches applied (custom system prompt)"
+else
+    warn "pi-claude-bridge not found or patch file missing — apply patches manually"
+fi
 
 echo ""
 echo "╭─────────────────────────────────────────╮"
@@ -173,16 +193,17 @@ echo "│   Installed:                            │"
 echo "│   • 14 extensions                       │"
 echo "│   • 25 custom tools (10 replaced + 15)  │"
 echo "│   • 2 themes (gruvbox active)           │"
-echo "│   • 16 config skills + 1 pi skill       │"
+echo "│   • 18 config skills + 3 pi skills      │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • 4 pi packages                       │"
-echo "│   • claude-agent-sdk-pi (global npm)    │"
+echo "│   • pi-claude-bridge (global npm)       │"
+echo "│   • Bridge patches applied              │"
 echo "│                                         │"
-echo "│   Claude auth:                          │"
-echo "│   Run 'claude-agent-sdk-pi auth'        │"
-echo "│   to authenticate with Claude Pro/Max   │"
+echo "│   Claude usage:                         │"
+echo "│   /model claude-sonnet-4-6              │"
 echo "│                                         │"
+echo "│   Debug: CLAUDE_BRIDGE_DEBUG=1 pi       │"
 echo "│   Then restart pi.                      │"
 echo "╰─────────────────────────────────────────╯"
 echo ""

@@ -31,8 +31,8 @@ function readBrainFile(relativePath: string): string {
 
 function getProjectName(cwd: string): string {
   // Derive a project identifier from the workspace path
-  // /Users/you/projects/myapp → myapp
-  // /Users/you/work/some project → some-project
+  // /Users/muzammil/StudioProjects/broski → broski
+  // /Users/muzammil/Documents/Code stuff/Local models → local-models
   return basename(cwd).toLowerCase().replace(/\s+/g, "-");
 }
 
