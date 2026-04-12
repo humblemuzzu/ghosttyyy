@@ -27,14 +27,15 @@
     "claude-bridge2.png"
   ],
   "scripts": {
-    "test:unit": "node --test tests/test-queue.mjs tests/test-import.mjs tests/test-skills.mjs",
-    "test": "set -a && [ -f .env.test ] && . .env.test; set +a && npm run test:unit && tests/smoke-test.sh && tests/multi-turn-test.sh && tests/cache-test.sh && node --test tests/tool-message-test.mjs && tests/session-resume-test.mjs"
+    "test:unit": "node --test tests/unit-*.mjs",
+    "test": "set -a && [ -f .env.test ] && . .env.test; set +a && npm run test:unit && tests/int-smoke.sh && tests/int-multi-turn.sh && tests/int-cache.sh && node --test tests/int-*.mjs",
+    "test:usage": "tests/usage-test.sh"
   },
   "type": "module",
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.84",
     "@anthropic-ai/sdk": "^0.73.0",
-    "cc-session-io": "^0.1.2",
+    "cc-session-io": "^0.2.0",
     "change-case": "^5.4.4"
   },
   "peerDependencies": {

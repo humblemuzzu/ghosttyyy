@@ -7,8 +7,8 @@ import { z } from "zod";
 import { pascalCase } from "change-case";
 import { Type } from "@sinclair/typebox";
 import { Text } from "@mariozechner/pi-tui";
-import { createSession } from "cc-session-io";
-import { appendFileSync, existsSync, readFileSync } from "fs";
+import { createSession, deleteSession } from "cc-session-io";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve } from "path";
 
@@ -32,8 +32,39 @@ const moduleInstanceId = Math.random().toString(36).slice(2, 8);
 function debug(...args: unknown[]) {
 	if (!DEBUG) return;
 	const ts = new Date().toISOString();
-	const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+	const fmt = (a: unknown): string => {
+		if (typeof a === "string") return a;
+		if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
+		return JSON.stringify(a);
+	};
+	const msg = args.map(fmt).join(" ");
 	appendFileSync(DEBUG_LOG_PATH, `[${ts}] [${moduleInstanceId}] ${msg}\n`);
+}
+
+// Per-query CLI debug capture. When CLAUDE_BRIDGE_DEBUG=1, ask the Claude Code
+// CLI subprocess to write its own debug log to a file we choose, and also
+// forward its stderr into our debug stream. Drops straight into the real SDK's
+// Options — see @anthropic-ai/claude-agent-sdk sdk.d.ts:1245 (debug, debugFile,
+// stderr). Without this, CC's internal view of the world is invisible to us
+// and "No conversation found" / empty-error reports are unactionable.
+let nextCliDebugSeq = 1;
+function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?: string; stderr?: (data: string) => void } {
+	if (!DEBUG) return {};
+	const seq = nextCliDebugSeq++;
+	const ts = new Date().toISOString().replace(/[:.]/g, "-");
+	const logDir = join(dirname(DEBUG_LOG_PATH), "cc-cli-logs");
+	try { mkdirSync(logDir, { recursive: true }); } catch { /* ignore */ }
+	const debugFile = join(logDir, `${ts}-${tag}-${seq}.log`);
+	debug(`cli-debug: ${tag} #${seq} → ${debugFile}`);
+	return {
+		debug: true,
+		debugFile,
+		stderr: (data: string) => {
+			for (const line of data.split(/\r?\n/)) {
+				if (line) debug(`[cli-stderr ${tag}#${seq}] ${line}`);
+			}
+		},
+	};
 }
 
 /** Unconditional diagnostic dump — for "should never happen" paths */
@@ -117,7 +148,6 @@ interface Config {
 		label?: string;
 		description?: string;
 		defaultMode?: "full" | "read" | "none";
-		defaultBackground?: boolean;
 		defaultIsolated?: boolean;
 		allowFullMode?: boolean;
 		appendSkills?: boolean;
@@ -288,6 +318,11 @@ interface SessionState {
 	sessionId: string;
 	cursor: number;
 	cwd: string;
+	// Set after an abort: the session file on disk may be in an indeterminate
+	// state (CC partially wrote assistant output before the interrupt), so
+	// REUSE must not fire. REBUILD still preserves the sessionId via
+	// deleteSession+createSession, which wipes the partial state cleanly.
+	needsRebuild?: boolean;
 }
 
 let sharedSession: SessionState | null = null;
@@ -381,7 +416,89 @@ function convertAndImportMessages(
 		debug(`convertAndImportMessages: sanitized ${sanitizedIds.size} tool IDs:`,
 			[...sanitizedIds.entries()].map(([orig, clean]) => orig === clean ? orig : `${orig}→${clean}`).join(", "));
 	}
-	if (anthropicMessages.length) session.importMessages(anthropicMessages as any);
+	const repaired = repairToolPairing(anthropicMessages);
+	if (repaired.length !== anthropicMessages.length) {
+		debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} → ${repaired.length} msgs`);
+	}
+	if (repaired.length) session.importMessages(repaired as any);
+}
+
+// Repairs orphaned tool_use/tool_result pairs before handing history to
+// cc-session-io. Handles (1) leading tool_result with no preceding assistant
+// (history starts mid-turn, e.g. after a provider switch or Case-4 sync), and
+// (2) assistant tool_use with no matching tool_result in the following user message.
+function repairToolPairing(
+	messages: Array<{ role: string; content: unknown }>,
+): Array<{ role: string; content: unknown }> {
+	const result: Array<{ role: string; content: unknown }> = [];
+	let pending: Set<string> | null = null; // tool_use ids from preceding assistant
+
+	const synthetic = (id: string) => ({
+		type: "tool_result",
+		tool_use_id: id,
+		content: "[no tool result recorded]",
+		is_error: true,
+	});
+	const flushPending = () => {
+		if (pending && pending.size > 0) {
+			result.push({ role: "user", content: [...pending].map(synthetic) });
+		}
+		pending = null;
+	};
+
+	for (const msg of messages) {
+		if (msg.role === "assistant") {
+			flushPending();
+			const ids = new Set<string>();
+			if (Array.isArray(msg.content)) {
+				for (const b of msg.content as any[]) {
+					if (b?.type === "tool_use" && typeof b.id === "string") ids.add(b.id);
+				}
+			}
+			result.push(msg);
+			pending = ids.size > 0 ? ids : null;
+			continue;
+		}
+
+		// user message
+		const blocks = Array.isArray(msg.content) ? (msg.content as any[]) : null;
+		const hasToolResults = blocks?.some((b) => b?.type === "tool_result") ?? false;
+
+		// Fast path: nothing to repair — preserve original shape
+		if (!pending && !hasToolResults) {
+			result.push(msg);
+			continue;
+		}
+
+		const input = blocks
+			?? (typeof msg.content === "string" && msg.content ? [{ type: "text", text: msg.content }] : []);
+		const provided = new Set<string>();
+		const kept = input.filter((b) => {
+			if (b?.type !== "tool_result") return true;
+			if (pending?.has(b.tool_use_id)) {
+				provided.add(b.tool_use_id);
+				return true;
+			}
+			return false; // orphan: drop
+		});
+		if (pending) {
+			const missing = [...pending].filter((id) => !provided.has(id)).map(synthetic);
+			kept.unshift(...missing);
+			pending = null;
+		}
+		if (kept.length === 0) {
+			// Only insert a placeholder if this would otherwise leave the payload
+			// with no leading user message (API rejects payloads not starting with user).
+			if (result.length === 0) {
+				result.push({ role: "user", content: [{ type: "text", text: "[orphaned tool result removed]" }] });
+			}
+			continue;
+		}
+		result.push({ ...msg, content: kept });
+	}
+
+	flushPending();
+	return result;
 }
 
 type McpContent = Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
@@ -487,6 +604,106 @@ interface SyncResult {
  * Ensure the shared session has all messages up to (but not including) the last user message.
  * Returns session ID to resume from, or null if no resume needed.
  */
+// Read the session file we just wrote and sanity-check it. Warns instead of
+// throwing — CC may be more tolerant than our checks, so a false positive
+// shouldn't block the user. The warning lands in the debug log with enough
+// context for diagnosis from a single user report.
+function verifyWrittenSession(
+	jsonlPath: string,
+	expectedSessionId: string,
+	expectedRecordCount: number,
+	cwd: string,
+): void {
+	const warn = (msg: string) => {
+		debug(`WARNING session verify: ${msg}`);
+		piUI?.notify(
+			`Session file issue: ${msg}\n` +
+			`cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"}\n` +
+			`Please copy and paste this message into a new issue at https://github.com/elidickinson/pi-claude-bridge/issues/new` +
+			(DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
+			"warning",
+		);
+		diagDump("session_verify_fail", { msg, jsonlPath, cwd, realpath: safeRealpath(cwd), claudeConfigDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+	};
+	let st: ReturnType<typeof statSync>;
+	try {
+		st = statSync(jsonlPath);
+	} catch (e) {
+		warn(`file missing after save — path=${jsonlPath} cwd=${cwd} realpath(cwd)=${safeRealpath(cwd)} err=${(e as Error).message}`);
+		return;
+	}
+	let content: string;
+	try {
+		content = readFileSync(jsonlPath, "utf8");
+	} catch (e) {
+		warn(`file unreadable — path=${jsonlPath} size=${st.size} err=${(e as Error).message}`);
+		return;
+	}
+	const lines = content.split("\n").filter((l) => l.trim().length > 0);
+	if (lines.length !== expectedRecordCount) {
+		warn(`record count mismatch — expected=${expectedRecordCount} actual=${lines.length} path=${jsonlPath} bytes=${content.length}`);
+		return;
+	}
+	try {
+		const firstRec = JSON.parse(lines[0]);
+		const lastRec = JSON.parse(lines[lines.length - 1]);
+		if (firstRec.sessionId !== expectedSessionId || lastRec.sessionId !== expectedSessionId) {
+			warn(`sessionId drift — expected=${expectedSessionId} first=${firstRec.sessionId} last=${lastRec.sessionId}`);
+		}
+	} catch (e) {
+		warn(`malformed JSONL — path=${jsonlPath} err=${(e as Error).message}`);
+	}
+}
+
+function safeRealpath(p: string): string {
+	try { return realpathSync(p); } catch (e) { return `<failed: ${(e as Error).message}>`; }
+}
+
+// Diagnostic snapshot of where a session file was just written. Catches the
+// class of bugs where pi writes to ~/.claude/projects/<X> but CC SDK reads
+// from ~/.claude/projects/<Y> (symlinks, CLAUDE_CONFIG_DIR, hash mismatch).
+function debugSessionPaths(label: string, cwd: string, jsonlPath: string): void {
+	let realCwd: string | null = null;
+	try { realCwd = realpathSync(cwd); } catch (e) { realCwd = `<realpath failed: ${(e as Error).message}>`; }
+	let fileSize: number | null = null;
+	let fileExists = false;
+	try {
+		const st = statSync(jsonlPath);
+		fileExists = true;
+		fileSize = st.size;
+	} catch { /* file may not exist yet */ }
+	debug(`${label}: cwd=${cwd}`);
+	if (realCwd !== cwd) debug(`${label}: realpath(cwd)=${realCwd} ${realCwd === cwd ? "" : "(DIFFERS — symlink-resolved path is what CC SDK uses)"}`);
+	debug(`${label}: jsonlPath=${jsonlPath}`);
+	debug(`${label}: fileExists=${fileExists}${fileSize != null ? ` size=${fileSize}` : ""}`);
+	debug(`${label}: env.CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
+}
+
+// Two semantic paths:
+//   REUSE — pi's history is in sync with the existing sharedSession (or drifted
+//     only by the trailing final-assistant message that pi appends after
+//     streamSimple returns, which CC's own persisted session already has).
+//     Returns the existing sessionId. Keeps CC's prompt cache warm.
+//   REBUILD — no session yet, or pi's history has diverged (non-trailing
+//     missed messages, e.g. another provider took a turn). Wipes the existing
+//     session file (if any) and writes a fresh one containing all prior
+//     messages, reusing the same sessionId across rebuilds so UUIDs stay
+//     stable for the lifetime of pi's session.
+//
+// Why a full rebuild rather than patching:
+//   Injecting deltas into an existing session creates a branch that CC's
+//   --resume doesn't follow (documented attempt prior to this). A complete
+//   overwrite at the same path is simpler and correct.
+//
+// Why reuse the sessionId across rebuilds:
+//   CC re-reads the JSONL on every --resume call — no in-process UUID
+//   caching. Validated in tests/exp-session-clear.mjs, including the case
+//   where CC had appended its own tool_use/tool_result records between
+//   rebuilds. Preserving the UUID means stable log correlation across
+//   provider switches and no orphaned session files.
+//
+// Log strings still say "Case 1/2/3/4" so existing diagnostics (int-cache.sh,
+// int-session-resume.mjs) keep grepping the same anchors.
 function syncSharedSession(
 	messages: Context["messages"],
 	cwd: string,
@@ -495,42 +712,61 @@ function syncSharedSession(
 ): SyncResult {
 	const priorMessages = messages.slice(0, -1); // everything before the new user prompt
 
-	if (!sharedSession) {
-		if (priorMessages.length === 0) {
-			debug(`Case 1: clean start, ${messages.length} total messages`);
-			return { sessionId: null };
+	// REUSE path
+	if (sharedSession && !sharedSession.needsRebuild) {
+		const missed = priorMessages.slice(sharedSession.cursor);
+		const trailingAssistantOnly =
+			missed.length === 1 && (missed[0] as { role?: string }).role === "assistant";
+		if (missed.length === 0 || trailingAssistantOnly) {
+			if (trailingAssistantOnly) {
+				sharedSession = { ...sharedSession, cursor: priorMessages.length, cwd };
+			}
+			debug(`Case 3: ${trailingAssistantOnly ? "advanced cursor past trailing assistant, " : ""}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${sharedSession.cursor}`);
+			debug(`syncResult: path=reuse sessionId=${sharedSession.sessionId} cursor=${sharedSession.cursor}`);
+			return { sessionId: sharedSession.sessionId };
 		}
-		const session = createSession({ projectPath: cwd, ...(modelId ? { model: modelId } : {}) });
-		convertAndImportMessages(session, priorMessages, customToolNameToSdk);
-		session.save();
-		sharedSession = { sessionId: session.sessionId, cursor: priorMessages.length, cwd };
-		debug(`Case 2: first turn with ${priorMessages.length} prior messages → session ${session.sessionId.slice(0, 8)}, ${session.messages.length} records`);
-		return { sessionId: session.sessionId };
 	}
 
-	const missed = priorMessages.slice(sharedSession.cursor);
-	// Case 3: no missed messages, OR just the trailing final-assistant from the previous turn.
-	// pi appends the final assistant message after streamSimple returns, so our cursor is always
-	// 1 behind by exactly that one message. It's already in CC's own session JSONL (the SDK
-	// persisted it when the query ended), so a plain resume is safe — no need to rebuild.
-	const isTrailingAssistantOnly =
-		missed.length === 1 && (missed[0] as { role?: string }).role === "assistant";
-	if (missed.length === 0 || isTrailingAssistantOnly) {
-		if (isTrailingAssistantOnly) {
-			sharedSession = { ...sharedSession, cursor: priorMessages.length, cwd };
-		}
-		debug(`Case 3: ${isTrailingAssistantOnly ? "advanced cursor past trailing assistant, " : ""}resuming session ${sharedSession.sessionId.slice(0, 8)}, cursor=${sharedSession.cursor}`);
-		return { sessionId: sharedSession.sessionId };
+	// REBUILD path
+	if (priorMessages.length === 0) {
+		debug(`Case 1: clean start, ${messages.length} total messages`);
+		debug(`syncResult: path=clean-start`);
+		return { sessionId: null };
 	}
-
-	// Case 4: create fresh session with ALL prior messages (injecting into existing session
-	// creates a branch that Claude Code doesn't follow on resume)
-	const session = createSession({ projectPath: cwd, ...(modelId ? { model: modelId } : {}) });
+	const previousSessionId = sharedSession?.sessionId;
+	const previousCursor = sharedSession?.cursor ?? 0;
+	// After an abort, the killed CC subprocess may still be flushing its
+	// interrupt cleanup (including a stray "[Request interrupted by user]"
+	// record with a parentUuid from its in-memory state). If we reuse the
+	// same sessionId → same file path, those late writes race with our
+	// rebuild and append an orphan record that breaks CC's parent-uuid
+	// chain on the next resume. Take a fresh UUID in this one case to
+	// sidestep the race; normal rebuilds still preserve the sessionId.
+	const preserveId = previousSessionId !== undefined && !sharedSession?.needsRebuild;
+	if (preserveId) {
+		// Wipe prior jsonl + companion dir (no-op if nothing to wipe).
+		deleteSession(previousSessionId!, cwd, process.env.CLAUDE_CONFIG_DIR);
+	}
+	const session = createSession({
+		projectPath: cwd,
+		claudeDir: process.env.CLAUDE_CONFIG_DIR,
+		...(preserveId ? { sessionId: previousSessionId } : {}),
+		...(modelId ? { model: modelId } : {}),
+	});
 	convertAndImportMessages(session, priorMessages, customToolNameToSdk);
 	session.save();
-	const oldSessionId = sharedSession.sessionId;
+	verifyWrittenSession(session.jsonlPath, session.sessionId, session.messages.length, cwd);
 	sharedSession = { sessionId: session.sessionId, cursor: priorMessages.length, cwd };
-	debug(`Case 4: ${missed.length} missed messages, ${priorMessages.length} total → new session ${session.sessionId.slice(0, 8)} (was ${oldSessionId.slice(0, 8)}), ${session.messages.length} records`);
+	if (previousSessionId === undefined) {
+		debug(`Case 2: first turn with ${priorMessages.length} prior messages → session ${session.sessionId.slice(0, 8)}, ${session.messages.length} records`);
+	} else if (preserveId) {
+		const missedCount = priorMessages.length - previousCursor;
+		debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total → rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
+	} else {
+		debug(`Case 4 post-abort: ${priorMessages.length} total → new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
+	}
+	debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath);
+	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
 	return { sessionId: session.sessionId };
 }
 
@@ -743,22 +979,6 @@ const queryStateStack: SavedQueryState[] = [];
 
 // Stashed UI reference for notifying users from the provider (which has no ctx).
 let piUI: ExtensionUIContext | null = null;
-
-// --- Background AskClaude tasks ---
-interface BackgroundTask {
-	id: string;
-	prompt: string;
-	status: "running" | "completed" | "error";
-	toolCalls: Map<string, ToolCallState>;
-	result?: string;
-	error?: string;
-	startedAt: number;
-	completedAt?: number;
-	abortController: AbortController;
-	progressInterval?: ReturnType<typeof setInterval>;
-}
-const backgroundTasks = new Map<string, BackgroundTask>();
-let nextBgId = 1;
 
 // Per-turn output state (reset on each streamSimple call that starts a new pi turn)
 let turnOutput: AssistantMessage | null = null;
@@ -1344,6 +1564,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		...(settingSources ? { settingSources } : {}),
 		...(mcpServers ? { mcpServers } : {}),
 		...(resumeSessionId ? { resume: resumeSessionId } : {}),
+		...makeCliDebugOptions("provider"),
 	};
 
 	debug("provider: fresh query",
@@ -1380,12 +1601,14 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			debug(`provider: consumeQuery completed, stopReason=${turnOutput?.stopReason}, error=${turnOutput?.errorMessage}, aborted=${wasAborted}`);
 
 			// Check abort FIRST — don't update sharedSession with a session ID
-			// from a query that was force-killed. The SDK subprocess may not have
-			// persisted the session, so resuming it later → "conversation not found".
+			// from a query that was force-killed. Instead, mark the existing
+			// session dirty so the next turn takes the REBUILD path (which
+			// wipes the partial file via deleteSession and rewrites in place,
+			// preserving the sessionId).
 			if (wasAborted || options?.signal?.aborted) {
-				sharedSession = null;
+				if (sharedSession) sharedSession = { ...sharedSession, needsRebuild: true };
 				deferredUserMessages = [];
-				debug(`provider: abort detected, cleared sharedSession`);
+				debug(`provider: abort detected, marked sharedSession needsRebuild`);
 				if (turnOutput) {
 					turnOutput.stopReason = "aborted";
 					turnOutput.errorMessage = "Operation aborted";
@@ -1423,7 +1646,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 					break;
 				}
 
-				const contOptions = { ...queryOptions, resume: resumeId };
+				const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
 				const contQuery = query({ prompt: steerPrompt, options: contOptions });
 				activeQuery = contQuery;
 
@@ -1449,7 +1672,13 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		})
 		.catch((error) => {
 			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
-			if (wasAborted || options?.signal?.aborted) sharedSession = null; // don't resume a killed session
+			// Mark the session dirty so the next turn takes the REBUILD path,
+			// which will deleteSession+createSession and wipe any partial state
+			// CC wrote before the abort. The sessionId is preserved across this
+			// — rebuild uses it via createSession({sessionId: previousId}).
+			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
+				sharedSession = { ...sharedSession, needsRebuild: true };
+			}
 			deferredUserMessages = [];
 			if (turnOutput) {
 				turnOutput.stopReason = options?.signal?.aborted ? "aborted" : "error";
@@ -1559,6 +1788,7 @@ async function promptAndWait(
 			extraArgs,
 			...(resumeSessionId ? { resume: resumeSessionId } : {}),
 			...(options?.isolated ? { persistSession: false } : {}),
+			...makeCliDebugOptions("askclaude"),
 		},
 	});
 
@@ -1711,7 +1941,6 @@ export default function (pi: ExtensionAPI) {
 	const askConf = config.askClaude;
 	const allowFull = askConf?.allowFullMode !== false;
 	const defaultMode = askConf?.defaultMode ?? "read";
-	const defaultBackground = askConf?.defaultBackground ?? false;
 	const defaultIsolated = askConf?.defaultIsolated ?? false;
 	askClaudeToolName = askConf?.name ?? "AskClaude";
 
@@ -1730,7 +1959,6 @@ export default function (pi: ExtensionAPI) {
 				model: Type.Optional(Type.String({ description: 'Claude model (e.g. "opus", "sonnet", "haiku", or full ID). Defaults to "opus".' })),
 				thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, { description: "Thinking effort level. Omit to use Claude Code's default." })),
 				isolated: Type.Optional(Type.Boolean({ description: "When true, Claude sees only this prompt (clean session). When false (default), Claude sees the full conversation history." })),
-				background: Type.Optional(Type.Boolean({ description: "When true, Claude runs in the background and you continue working. The result is delivered as a follow-up message when done. Use for tasks that don't block your current work." })),
 			}),
 			renderCall(args, theme) {
 				let text = theme.fg("mdLink", theme.bold("AskClaude "));
@@ -1740,7 +1968,6 @@ export default function (pi: ExtensionAPI) {
 				if (args.model) tags.push(`model=${args.model}`);
 				if (args.thinking) tags.push(`thinking=${args.thinking}`);
 				if (args.isolated) tags.push("isolated");
-				if (args.background) tags.push("background");
 				if (tags.length) text += `${theme.fg("accent", `[${tags.join(", ")}]`)} `;
 				const truncated = args.prompt.length > PREVIEW_MAX_CHARS ? args.prompt.substring(0, PREVIEW_MAX_CHARS) : args.prompt;
 				const lines = truncated.split("\n").slice(0, PREVIEW_MAX_LINES);
@@ -1790,79 +2017,9 @@ export default function (pi: ExtensionAPI) {
 
 				const mode = (params.mode ?? defaultMode) as "full" | "read" | "none";
 				const isolated = params.isolated ?? defaultIsolated;
-				const background = params.background ?? defaultBackground;
 				const toolCalls = new Map<string, ToolCallState>();
 				const start = Date.now();
 
-				// --- Background mode: fire-and-forget, deliver result via sendMessage ---
-				if (background) {
-					const bgId = `claude-bg-${nextBgId++}`;
-					debug(`askClaude bg ${bgId}: starting, mode=${mode}, model=${params.model ?? "default"}, isolated=${isolated}`);
-					const ac = new AbortController();
-					const task: BackgroundTask = {
-						id: bgId,
-						prompt: params.prompt,
-						status: "running",
-						toolCalls,
-						startedAt: start,
-						abortController: ac,
-					};
-					backgroundTasks.set(bgId, task);
-
-					// Footer progress
-					const statusKey = `ask-claude-${bgId}`;
-					task.progressInterval = setInterval(() => {
-						const elapsed = ((Date.now() - start) / 1000).toFixed(0);
-						const summary = buildActionSummary(toolCalls);
-						const status = summary ? `${elapsed}s — ${summary}` : `${elapsed}s — working...`;
-						piUI?.setStatus(statusKey, piUI.theme.fg("mdLink", `◉ ${bgId}: `) + piUI.theme.fg("muted", status));
-					}, 1000);
-
-					// Run detached — result delivered via sendMessage
-					promptAndWait(params.prompt, mode, toolCalls, ac.signal, {
-						systemPrompt: ctx.getSystemPrompt(),
-						appendSkills: askConf?.appendSkills,
-						model: params.model,
-						thinking: params.thinking,
-						isolated,
-						context: isolated ? undefined : buildSessionContext(ctx.sessionManager.getBranch()).messages as Context["messages"],
-					}).then((result) => {
-						clearInterval(task.progressInterval);
-						piUI?.setStatus(statusKey, undefined);
-						task.status = "completed";
-						task.result = result.responseText;
-						task.completedAt = Date.now();
-						const elapsed = ((task.completedAt - start) / 1000).toFixed(1);
-						const actions = buildActionSummary(toolCalls);
-						const body = actions
-							? `${result.responseText}\n\n[Claude Code actions: ${actions}]`
-							: result.responseText;
-						debug(`askClaude bg ${bgId}: completed in ${elapsed}s, actions=${actions || "none"}`);
-						pi.sendMessage(
-							{ customType: "ask-claude-bg-result", content: `Background AskClaude task ${bgId} completed (${elapsed}s):\n\n${body}`, display: true },
-							{ triggerTurn: true, deliverAs: "followUp" },
-						);
-					}).catch((err) => {
-						clearInterval(task.progressInterval);
-						piUI?.setStatus(statusKey, undefined);
-						task.status = "error";
-						task.error = errorMessage(err);
-						task.completedAt = Date.now();
-						const elapsed = ((task.completedAt - start) / 1000).toFixed(1);
-						debug(`askClaude bg ${bgId}: error in ${elapsed}s:`, err);
-						pi.sendMessage(
-							{ customType: "ask-claude-bg-result", content: `Background AskClaude task ${bgId} failed (${elapsed}s): ${task.error}`, display: true },
-							{ triggerTurn: true, deliverAs: "followUp" },
-						);
-					});
-
-					return {
-						content: [{ type: "text" as const, text: `Background task ${bgId} started. You'll receive the result when it completes.` }],
-						details: { prompt: params.prompt, backgroundId: bgId },
-					};
-				}
-
-				// --- Foreground mode (default) ---
 				const progressInterval = setInterval(() => {
 					const elapsed = ((Date.now() - start) / 1000).toFixed(0);
 					const summary = buildActionSummary(toolCalls);
