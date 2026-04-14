@@ -34,6 +34,7 @@
     "npm:pi-web-access",
     "npm:pi-context",
     "npm:pi-token-burden",
-    "npm:pi-claude-bridge"
+    "npm:pi-claude-bridge",
+    "npm:@marckrenn/pi-sub-bar"
   ]
 }

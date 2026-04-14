@@ -116,8 +116,9 @@ The latest upstream (as of our patched version) includes these critical fixes:
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill |
 | `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout |
 | `pi-token-burden` | 0.5.0 | Token usage tracking and display |
+| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`, `@marckrenn/pi-sub-bar`
 
 **Installed but inactive:** `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`, `claude-agent-sdk-pi` (legacy, no longer in packages list)
 
