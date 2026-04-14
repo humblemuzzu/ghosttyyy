@@ -26,6 +26,7 @@ import { withFileLock } from "./lib/mutex";
 import { evaluatePermission, loadPermissions } from "./lib/permissions";
 import { resolveToAbsolute } from "./read";
 import { OutputBuffer } from "./lib/output-buffer";
+import { loadSecrets } from "./lib/psst";
 
 const HEAD_LINES = 50;
 const TAIL_LINES = 50;
@@ -233,7 +234,14 @@ export function createBashTool(): ToolDefinition {
 			const sessionId = ctx.sessionManager.getSessionId();
 			command = injectGitTrailers(command, sessionId);
 
-			const run = () => runCommand(command, effectiveCwd, params.timeout, signal, onUpdate);
+			// inject psst vault secrets into subprocess environment
+			const secrets = await loadSecrets();
+			const secretEnv: Record<string, string> = {};
+			for (const secret of secrets) {
+				secretEnv[secret.name] = secret.value;
+			}
+
+			const run = () => runCommand(command, effectiveCwd, params.timeout, signal, onUpdate, secretEnv);
 
 			if (isGitCommand(command)) {
 				const gitLockKey = path.join(effectiveCwd, ".git", "__pi_git_lock__");
@@ -253,14 +261,18 @@ async function runCommand(
 	timeout: number | undefined,
 	signal: AbortSignal | undefined,
 	onUpdate: ((update: any) => void) | undefined,
+	secretEnv: Record<string, string> = {},
 ): Promise<any> {
 	const { shell, args } = getShell();
+
+	// merge secrets into process env — values available as $NAME in commands
+	const env = { ...process.env, ...secretEnv };
 
 	return new Promise((resolve) => {
 		const child = spawn(shell, [...args, command], {
 			cwd,
 			detached: true,
-			env: process.env,
+			env,
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 

@@ -43,6 +43,16 @@ import {
 	createCommitSearchTool,
 	createDiffTool,
 } from "./github";
+import {
+	loadSecrets,
+	scrubOutput,
+	scrubAll,
+	setActiveTags,
+	getActiveTags,
+	invalidateCache,
+	type SecretEntry,
+} from "./lib/psst";
+import { Vault } from "psst-cli";
 
 export { withFileLock } from "./lib/mutex";
 export { saveChange, loadChanges, revertChange, findLatestChange, simpleDiff } from "./lib/file-tracker";
@@ -92,4 +102,156 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createGlobGithubTool());
 	pi.registerTool(createCommitSearchTool());
 	pi.registerTool(createDiffTool());
+
+	// ── psst secret management hooks ──────────────────────────
+
+	// scrub ALL sensitive values from tool output — vault secrets, auth.json tokens, env var keys
+	pi.on("tool_result", async (event) => {
+		const allText = event.content
+			.filter((c: any) => c.type === "text")
+			.map((c: any) => c.text)
+			.join("");
+
+		// quick check — if no content, skip
+		if (!allText) return;
+
+		// load vault secrets for named redaction
+		const vaultSecrets = await loadSecrets();
+
+		// if no vault secrets, check if there are any auth/env values to scrub
+		// (always scrub comprehensively — even if vault is empty)
+		const scrubbed = await Promise.all(event.content.map(async (c: any) =>
+			c.type === "text"
+				? { ...c, text: await scrubAll(c.text) }
+				: c,
+		));
+
+		return { content: scrubbed };
+	});
+
+	// inject secret names into system prompt so the agent knows what's available
+	pi.on("before_agent_start", async (event) => {
+		const secrets = await loadSecrets();
+		if (secrets.length === 0) return;
+
+		const names = secrets.map((s: SecretEntry) => s.name).join(", ");
+		const tagNote = getActiveTags().length > 0
+			? ` (filtered by tags: ${getActiveTags().join(", ")})`
+			: "";
+		const instruction = [
+			"\n## psst — Secret Management",
+			`Available secrets (injected as env vars in bash)${tagNote}: ${names}`,
+			"Use $SECRET_NAME in bash commands to reference secrets. Never ask the user for secret values.",
+			"Secret values are automatically scrubbed from command output.",
+		].join("\n");
+
+		return { systemPrompt: event.systemPrompt + instruction };
+	});
+
+	// /psst — list loaded secret names (never values)
+	pi.registerCommand("psst", {
+		description: "Show psst vault secret names and tags",
+		handler: async (_args, ctx) => {
+			const secrets = await loadSecrets();
+			if (secrets.length === 0) {
+				const hint = getActiveTags().length > 0
+					? `No secrets matching tags: ${getActiveTags().join(", ")}`
+					: "No psst secrets found. Run 'psst set <NAME>' to add secrets.";
+				ctx.ui.notify(hint, "info");
+				return;
+			}
+
+			const tagNote = getActiveTags().length > 0
+				? ` (filtered by: ${getActiveTags().join(", ")})`
+				: "";
+			const formatLine = (s: SecretEntry) => {
+				const tagStr = s.tags.length > 0 ? ` [${s.tags.join(", ")}]` : "";
+				return `  • ${s.name}${tagStr}`;
+			};
+			const list = secrets.map(formatLine).join("\n");
+			ctx.ui.notify(`Vault secrets${tagNote}:\n${list}`, "info");
+		},
+	});
+
+	// /psst-set — add or update a secret in the vault
+	pi.registerCommand("psst-set", {
+		description: "Set a secret: /psst-set NAME [value] [tag1,tag2,...]",
+		handler: async (args, ctx) => {
+			const parts = (args ?? "").trim().split(/\s+/).filter(Boolean);
+			let name = parts[0];
+			let value = parts[1];
+			let tagsRaw = parts[2];
+
+			if (!name) {
+				name = (await ctx.ui.input("Secret name (e.g. API_KEY):")) ?? "";
+				if (!name) return ctx.ui.notify("Cancelled", "info");
+			}
+
+			if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+				return ctx.ui.notify(`Invalid name: ${name}. Must match [A-Z][A-Z0-9_]*`, "error");
+			}
+
+			if (!value) {
+				value = (await ctx.ui.input(`Value for ${name}:`)) ?? "";
+				if (!value) return ctx.ui.notify("Cancelled", "info");
+			}
+
+			if (tagsRaw === undefined) {
+				tagsRaw = (await ctx.ui.input("Tags (comma-separated, optional):")) ?? "";
+			}
+
+			const tags = tagsRaw.split(",").map((t: string) => t.trim()).filter(Boolean);
+
+			try {
+				// resolve vault — try local first, then global
+				const vaultPath = Vault.findVaultPath({ global: false })
+					?? Vault.findVaultPath({ global: true });
+				if (!vaultPath) {
+					return ctx.ui.notify("No vault found. Run 'psst init' or 'psst init --global' first.", "error");
+				}
+
+				const vault = new Vault(vaultPath);
+				const unlocked = await vault.unlock();
+				if (!unlocked) {
+					vault.close();
+					return ctx.ui.notify("Vault is locked — unlock keychain or set PSST_PASSWORD", "error");
+				}
+
+				await vault.setSecret(name, value, tags.length > 0 ? tags : undefined);
+				vault.close();
+
+				invalidateCache();
+
+				const tagSuffix = tags.length > 0 ? ` [${tags.join(", ")}]` : "";
+				ctx.ui.notify(`Secret ${name} saved${tagSuffix}`, "success");
+			} catch (e: any) {
+				ctx.ui.notify(`Failed to set secret: ${e.message}`, "error");
+			}
+		},
+	});
+
+	// /psst-tag — filter which secrets are loaded by tag
+	pi.registerCommand("psst-tag", {
+		description: "Filter secrets by tag: /psst-tag [tag1,tag2] (no args = clear filter)",
+		handler: async (args, ctx) => {
+			const raw = (args ?? "").trim();
+
+			if (!raw) {
+				setActiveTags([]);
+				invalidateCache();
+				ctx.ui.notify("psst: tag filter cleared — all vault secrets available", "info");
+				return;
+			}
+
+			const tags = raw.split(",").map((t: string) => t.trim()).filter(Boolean);
+			setActiveTags(tags);
+			invalidateCache();
+
+			const matched = await loadSecrets();
+			ctx.ui.notify(
+				`psst: filtering by [${tags.join(", ")}] — ${matched.length} secret(s) match`,
+				matched.length > 0 ? "success" : "info",
+			);
+		},
+	});
 }

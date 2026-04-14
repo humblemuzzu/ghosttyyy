@@ -1,11 +1,12 @@
 {
   "dependencies": {
     "cheerio": "^1.0.0",
-    "diff": "^8.0.0"
+    "diff": "^8.0.0",
+    "psst-cli": "^0.6.6"
   },
   "devDependencies": {
-    "@sinclair/typebox": "^0.34.0",
+    "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
-    "@mariozechner/pi-coding-agent": "*"
+    "@sinclair/typebox": "^0.34.0"
   }
 }

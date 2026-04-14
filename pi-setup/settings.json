@@ -34,7 +34,6 @@
     "npm:pi-web-access",
     "npm:pi-context",
     "npm:pi-token-burden",
-    "npm:claude-agent-sdk-pi",
     "npm:pi-claude-bridge"
   ]
 }

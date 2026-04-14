@@ -938,54 +938,43 @@ interface PendingToolCall {
 	resolve: (result: McpResult) => void;
 }
 
-// Module-level state for the push-based streaming pattern.
-// WARNING: pi loads extensions in-process via jiti. Despite moduleCache:false,
-// Node's native import cache (tryNative:true) can cause extensions that spawn
-// their own pi sessions (subagents, AskClaude, etc.) to share this module instance.
-// The queryStateStack below protects the parent query's state from reentrant corruption.
-// FIXME: All module-level state must be manually saved/restored in queryStateStack.
-// Adding a new variable without updating save/restore corrupts reentrant queries.
+// Module-level mutable state. Shared across reentrant queries via queryStateStack.
+// New variable? Update: declaration, SavedQueryState, push, pop, fresh-query reset.
+// See TODO.md "Module-level mutable state" for known gaps and cleanup plan.
+
+// Query-scoped (saved/restored via queryStateStack):
 let activeQuery: ReturnType<typeof query> | null = null;
 let currentPiStream: AssistantMessageEventStream | null = null;
+let latestCursor = 0;       // highest context.messages.length seen during tool-result deliveries (issue #4)
+let pendingToolCalls = new Map<string, PendingToolCall>();  // MCP handlers waiting for tool results
+let pendingResults = new Map<string, McpResult>();           // tool results waiting for MCP handlers
+let turnToolCallIds: string[] = [];  // tool_use block IDs from the current assistant message
+let nextHandlerIdx = 0;              // next MCP handler index to assign a toolCallId
 
-// ID-based matching for MCP handlers ↔ tool results.
-// Maps are keyed by toolCallId. At any time, at most ONE map has entries:
-//   pendingToolCalls — MCP handlers blocked on a Promise, waiting for a result
-//   pendingResults   — tool results delivered by pi, waiting for an MCP handler
-let pendingToolCalls = new Map<string, PendingToolCall>();
-let pendingResults = new Map<string, McpResult>();
-
-// IDs from the current turn's tool_use blocks, used to assign IDs to MCP handlers.
-// The SDK calls handlers in the same order as tool_use blocks in the assistant message.
-let turnToolCallIds: string[] = [];
-let nextHandlerIdx = 0;
-
-// User messages (steers/followUps) injected by pi during an active query.
-// These can't be forwarded mid-query — they're saved here and replayed as
-// continuation queries after consumeQuery finishes.
+// Query-scoped but NOT saved/restored (potential reentrant bug):
 let deferredUserMessages: string[] = [];
 
-// State stack: when a subagent starts a fresh query while the main query is active,
-// we save the main's state and restore it when the subagent's query ends.
+// Per-turn (reset by resetTurnState, not saved/restored):
+let turnOutput: AssistantMessage | null = null;
+let turnBlocks: Array<any> = [];
+let turnStarted = false;
+let turnSawStreamEvent = false;
+let turnSawToolCall = false;
+
+// Global (not saved/restored):
+let piUI: ExtensionUIContext | null = null;
+
+// Reentrant state stack:
 interface SavedQueryState {
 	activeQuery: typeof activeQuery;
 	currentPiStream: typeof currentPiStream;
+	latestCursor: number;
 	pendingToolCalls: Map<string, PendingToolCall>;
 	pendingResults: Map<string, McpResult>;
 	turnToolCallIds: string[];
 	nextHandlerIdx: number;
 }
 const queryStateStack: SavedQueryState[] = [];
-
-// Stashed UI reference for notifying users from the provider (which has no ctx).
-let piUI: ExtensionUIContext | null = null;
-
-// Per-turn output state (reset on each streamSimple call that starts a new pi turn)
-let turnOutput: AssistantMessage | null = null;
-let turnBlocks: Array<any> = [];
-let turnStarted = false;
-let turnSawStreamEvent = false;
-let turnSawToolCall = false;
 
 function resolveMcpTools(context: Context, excludeToolName?: string): {
 	mcpTools: Tool[];
@@ -1459,6 +1448,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		}
 
 		if (sharedSession) sharedSession.cursor = context.messages.length;
+		latestCursor = Math.max(latestCursor, context.messages.length);
 		return stream;
 	}
 
@@ -1493,6 +1483,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 			pendingResults: new Map(pendingResults),
 			turnToolCallIds: [...turnToolCallIds],
 			nextHandlerIdx,
+			latestCursor,
 		});
 		debug(`provider: saving state (stack depth ${queryStateStack.length}), reentrant fresh query`);
 	}
@@ -1501,6 +1492,8 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	pendingToolCalls.clear();
 	pendingResults.clear();
 	resetTurnState(model);
+
+	latestCursor = 0;
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context, askClaudeToolName);
 	const cwd = (options as { cwd?: string } | undefined)?.cwd ?? process.cwd();
@@ -1619,15 +1612,15 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 				return;
 			}
 
-			// Capture the SDK session ID for future resume. The `context` closure is
-			// from the initial streamSimple call and is stale — tool result deliveries
-			// advanced sharedSession.cursor past it. We keep whichever is higher.
+			// Capture the SDK session ID for future resume. latestCursor tracks
+			// the highest context.messages.length across tool-result deliveries,
+			// which is always >= the stale closure's context.messages.length.
 			// Note: pi appends the final assistant message AFTER streamSimple returns,
 			// so cursor is 1 behind by exactly that message — syncSharedSession's
 			// trailing-assistant tolerance handles it on the next turn (no rebuild).
 			const sessionId = capturedSessionId ?? sharedSession?.sessionId;
 			if (sessionId) {
-				const cursor = Math.max(context.messages.length, sharedSession?.cursor ?? 0);
+				const cursor = Math.max(context.messages.length, latestCursor, sharedSession?.cursor ?? 0);
 				debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}`);
 				sharedSession = { sessionId, cursor, cwd };
 			}
@@ -1672,12 +1665,13 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		})
 		.catch((error) => {
 			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
-			// Mark the session dirty so the next turn takes the REBUILD path,
-			// which will deleteSession+createSession and wipe any partial state
-			// CC wrote before the abort. The sessionId is preserved across this
-			// — rebuild uses it via createSession({sessionId: previousId}).
 			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
+				// Abort: mark dirty so REBUILD fires but sessionId is preserved.
 				sharedSession = { ...sharedSession, needsRebuild: true };
+			} else {
+				// Non-abort error: clear entirely so next turn gets a clean start.
+				// Without this, every subsequent turn tries to resume a broken session.
+				sharedSession = null;
 			}
 			deferredUserMessages = [];
 			if (turnOutput) {
@@ -1705,6 +1699,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 					pendingResults = new Map(saved.pendingResults);
 					turnToolCallIds = saved.turnToolCallIds;
 					nextHandlerIdx = saved.nextHandlerIdx;
+					latestCursor = saved.latestCursor;
 					debug(`provider: restored state (stack depth ${queryStateStack.length})`);
 				} else {
 					debug(`provider: clearing activeQuery (non-reentrant), pending handlers=${pendingToolCalls.size}, pendingResults=${pendingResults.size}`);

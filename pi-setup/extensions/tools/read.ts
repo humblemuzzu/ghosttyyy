@@ -46,6 +46,7 @@ export const COMPACT_LIMITS: ReadLimits = {
 };
 
 const SECRET_PATTERNS = [/^\.env$/, /^\.env\..+$/];
+const SECRET_FILENAMES = new Set(["auth.json"]);
 const SECRET_EXCEPTIONS = new Set([".env.example", ".env.sample", ".env.template"]);
 
 const IMAGE_MIME: Record<string, string> = {
@@ -92,6 +93,10 @@ export function resolveWithVariants(filePath: string, cwd: string): string {
 export function isSecretFile(filePath: string): boolean {
 	const basename = path.basename(filePath);
 	if (SECRET_EXCEPTIONS.has(basename)) return false;
+	if (SECRET_FILENAMES.has(basename)) return true;
+	// block auth.json anywhere under ~/.pi/
+	const normalized = path.resolve(filePath);
+	if (basename === "auth.json" && normalized.includes(".pi")) return true;
 	return SECRET_PATTERNS.some((p) => p.test(basename));
 }
 

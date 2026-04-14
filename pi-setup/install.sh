@@ -19,7 +19,7 @@
 #   ~/.pi/agent/permissions.json
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
 #   4 pi packages (npm)         — web-access, context, token-burden, pi-claude-bridge
-#   2 global npm packages       — claude-agent-sdk-pi (legacy), pi-claude-bridge (active)
+#   1 global npm package        — pi-claude-bridge (active Claude bridge)
 #
 # After install, re-apply pi-claude-bridge patches if needed:
 #   See README.md → "pi-claude-bridge Local Modifications"
@@ -70,13 +70,6 @@ mkdir -p "$CONFIG_SKILLS"
 
 # ── Global npm packages ──
 info "Installing global npm packages..."
-# claude-agent-sdk-pi (legacy, may still be needed)
-if ! npm list -g claude-agent-sdk-pi &>/dev/null 2>&1; then
-    info "  Installing claude-agent-sdk-pi globally..."
-    npm install -g claude-agent-sdk-pi 2>/dev/null || warn "Failed to install claude-agent-sdk-pi globally (install manually: npm install -g claude-agent-sdk-pi)"
-else
-    info "  claude-agent-sdk-pi already installed globally"
-fi
 # pi-claude-bridge (active Claude bridge)
 if ! npm list -g pi-claude-bridge &>/dev/null 2>&1; then
     info "  Installing pi-claude-bridge globally (Claude Code Agent SDK bridge)..."
