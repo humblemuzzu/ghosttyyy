@@ -114,21 +114,24 @@ The latest upstream (as of our patched version) includes these critical fixes:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@mariozechner/pi-coding-agent` | 0.67.3 | The pi agent itself (installed via homebrew npm) |
-| `pi-claude-bridge` | 0.2.0 | Custom provider wrapping Claude Code Agent SDK |
+| `@mariozechner/pi-coding-agent` | 0.67.6 | The pi agent itself (installed via homebrew npm) |
+| `pi-claude-bridge` | 0.2.0 | Custom provider wrapping Claude Code Agent SDK (legacy, kept as fallback) |
+| `@benvargas/pi-claude-code-use` | 1.0.1 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) |
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill |
 | `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout |
 | `pi-token-burden` | 0.5.0 | Token usage tracking and display |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar |
 | `pi-autoresearch` | latest | Autonomous experiment loop for optimization targets (GitHub install) |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`
+
+**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
 **Installed but inactive:** `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`, `claude-agent-sdk-pi` (legacy, no longer in packages list)
 
 ---
 
-## Extensions (14)
+## Extensions (15)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
@@ -138,6 +141,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` template with variable interpolation |
 | Tool Harness | `tool-harness.ts` | Env-gated tool filtering per workspace |
 | Handoff | `handoff.ts` | LLM-driven context transfer with provenance tracking (replaces compaction) |
+| Mentions | `mentions.ts` | @mention resolution (sessions, commits, handoffs) with hidden context injection |
 | Session Name | `session-name.ts` | Auto session naming |
 | Session Breakdown | `session-breakdown.ts` | `/session-breakdown` analytics command |
 | BTW | `btw.ts` | `/btw` side conversations |
@@ -210,6 +214,10 @@ Shared code used by multiple tools:
 | `mutex.ts` | File-based mutex locking |
 | `permissions.ts` | Permission evaluation |
 | `output-buffer.ts` | Buffered output handling |
+| `config.ts` | Shared config reader with schema validation, deep merge, project-local opt-in (ported from @bds_pi/config) |
+| `prompt-patch.ts` | Auto-derive promptSnippet/promptGuidelines from tool descriptions (ported from @bds_pi/prompt-patch) |
+| `fs.ts` | Path resolution and directory walking utilities (ported from @bds_pi/fs) |
+| `mentions/` | @mention system — parse, resolve, render, session/commit indexing, autocomplete provider (ported from @bds_pi/mentions) |
 
 ---
 
@@ -231,10 +239,16 @@ Shared code used by multiple tools:
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `anthropic` | `claude-opus-4-6` (1M context override) | Direct Anthropic API |
-| `claude-bridge` | `claude-opus-4`, `claude-sonnet-4`, etc. | Via pi-claude-bridge → Claude Code Agent SDK |
+| `anthropic` | `claude-opus-4-6` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
+| `claude-bridge` | `claude-opus-4`, `claude-sonnet-4`, etc. | Via pi-claude-bridge → Claude Code Agent SDK (legacy fallback) |
 | `local-llama` | Gemma 4 26B-A4B MoE, Qwen3.5 35B-A3B MoE | llama-server on localhost:8080 |
 | `zai` | `glm-5.1` | Current default provider/model |
+
+### Sub-agent Models
+- **finder**: `claude-haiku-4-5` (cheapest, fast parallel search)
+- **librarian**: `claude-haiku-4-5` (cheapest, GitHub API exploration)
+- **oracle**: `claude-sonnet-4-6` (strong reasoning for architecture/review)
+- **handoff extraction**: `claude-haiku-4-5` (cheap context transfer)
 
 ### Active Settings
 
@@ -273,8 +287,9 @@ pi-setup/
 ├── pi-skills/                  # 3 pi-level skills
 ├── config-skills/              # 16 config-level skills (symlinked)
 └── extensions/
-    ├── tools/                  # 25 custom tools + lib/
-    └── *.ts                    # 13 other extensions
+    ├── tools/                  # 25 custom tools + lib/ (config, prompt-patch, fs, mentions)
+    ├── mentions.ts             # @mention resolution extension
+    └── *.ts                    # 14 other extensions
 ```
 
 ---

@@ -9,7 +9,7 @@
 #   ./install.sh
 #
 # What it installs:
-#   ~/.pi/agent/extensions/     — 14 extensions (editor, tools, handoff, brain-loader, etc.)
+#   ~/.pi/agent/extensions/     — 15 extensions (editor, tools, handoff, brain-loader, mentions, etc.)
 #   ~/.pi/agent/themes/         — gruvbox + nightowl themes
 #   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, sub-agents, etc.)
 #   ~/.pi/agent/skills/         — handoff skill
@@ -18,7 +18,7 @@
 #   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
-#   4 pi packages (npm)         — web-access, context, token-burden, pi-claude-bridge
+#   6 pi packages (npm/git)     — web-access, context, token-burden, claude-bridge, claude-code-use, sub-bar, autoresearch
 #   1 global npm package        — pi-claude-bridge (active Claude bridge)
 #
 # After install, re-apply pi-claude-bridge patches if needed:
@@ -90,7 +90,7 @@ if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/nul
     info "Installing tool extension dependencies (npm install)..."
     (cd "$PI_AGENT/extensions/tools" && npm install --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
 fi
-ok "Extensions installed (14 extensions)"
+ok "Extensions installed (15 extensions)"
 
 # ── Themes ──
 info "Installing themes..."
@@ -161,6 +161,8 @@ packages=(
     "npm:pi-context"
     "npm:pi-token-burden"
     "npm:pi-claude-bridge"
+    "npm:@benvargas/pi-claude-code-use"
+    "npm:@marckrenn/pi-sub-bar"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
@@ -189,18 +191,20 @@ echo "╭───────────────────────�
 echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
-echo "│   • 14 extensions                       │"
+echo "│   • 15 extensions (incl. mentions)      │"
 echo "│   • 25 custom tools (10 replaced + 15)  │"
 echo "│   • 2 themes (gruvbox active)           │"
 echo "│   • 18 config skills + 3 pi skills      │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
-echo "│   • 4 pi packages                       │"
+echo "│   • 6 pi packages                       │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
 echo "│                                         │"
-echo "│   Claude usage:                         │"
-echo "│   /model claude-sonnet-4-6              │"
+echo "│   Claude Max (OAuth):                   │"
+echo "│   /login anthropic                      │"
+echo "│   /model anthropic/claude-opus-4-6      │"
+echo "│   (pi-claude-code-use patches payloads) │"
 echo "│                                         │"
 echo "│   Debug: CLAUDE_BRIDGE_DEBUG=1 pi       │"
 echo "│   Then restart pi.                      │"

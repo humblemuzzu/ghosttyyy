@@ -604,7 +604,8 @@ export default function (pi: ExtensionAPI) {
 		if (editor) updateStatsLabels(editor, pi, ctx, statsCacheBranchLen);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
+		if (_event.reason === "startup" || _event.reason === "reload") return;
 		// editor component persists across session switches, just update stats
 		branchUnsub?.();
 		branchUnsub = null;

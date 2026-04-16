@@ -300,8 +300,9 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// reset state on manual session switch
-	pi.on("session_switch", async (_event, ctx) => {
+	// reset state on session switch (resume/new/fork)
+	pi.on("session_start", async (_event, ctx) => {
+		if (_event.reason === "startup" || _event.reason === "reload") return;
 		storedHandoffPrompt = null;
 		handoffPending = false;
 		generating = false;

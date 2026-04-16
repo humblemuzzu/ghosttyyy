@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.67.3",
+  "lastChangelogVersion": "0.67.6",
   "hideThinkingBlock": false,
   "defaultThinkingLevel": "medium",
   "theme": "gruvbox",
@@ -21,7 +21,8 @@
     "~/.pi/agent/extensions/notify.ts",
     "~/.pi/agent/extensions/todos.ts",
     "~/.pi/agent/extensions/local-model.ts",
-    "~/.pi/agent/extensions/brain-loader.ts"
+    "~/.pi/agent/extensions/brain-loader.ts",
+    "~/.pi/agent/extensions/mentions.ts"
   ],
   "compaction": {
     "enabled": false
@@ -35,6 +36,7 @@
     "npm:pi-context",
     "npm:pi-token-burden",
     "npm:pi-claude-bridge",
+    "npm:@benvargas/pi-claude-code-use",
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch"
   ]

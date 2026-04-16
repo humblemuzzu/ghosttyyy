@@ -37,7 +37,8 @@ export default function (pi: ExtensionAPI) {
 			.catch(() => {});
 	});
 
-	pi.on("session_switch", async () => {
+	pi.on("session_start", async (event) => {
+		if (event.reason === "startup" || event.reason === "reload") return;
 		named = false;
 	});
 }
