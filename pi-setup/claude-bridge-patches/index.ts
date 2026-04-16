@@ -114,14 +114,40 @@ const DISALLOWED_BUILTIN_TOOLS = [
 	"AskUserQuestion", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
 ];
 
-const LATEST_MODEL_IDS = new Set(["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"]);
+const LATEST_MODEL_IDS = new Set(["claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"]);
 
-const MODELS = getModels("anthropic")
-	.filter((model) => LATEST_MODEL_IDS.has(model.id))
-	.map((model) => ({
-		id: model.id, name: model.name, reasoning: model.reasoning, input: model.input,
-		cost: model.cost, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
-	}));
+// Fallback definitions for models not yet in pi-ai's generated model list.
+// Once pi-ai is updated to include these, the fallbacks are silently ignored.
+const MODEL_FALLBACKS: Record<string, {
+	id: string; name: string; reasoning: boolean; input: ("text" | "image")[];
+	cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	contextWindow: number; maxTokens: number;
+}> = {
+	"claude-opus-4-7": {
+		id: "claude-opus-4-7",
+		name: "Claude Opus 4.7",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+		contextWindow: 1000000,
+		maxTokens: 128000,
+	},
+};
+
+const MODELS = (() => {
+	const fromPi = getModels("anthropic")
+		.filter((model) => LATEST_MODEL_IDS.has(model.id))
+		.map((model) => ({
+			id: model.id, name: model.name, reasoning: model.reasoning, input: model.input,
+			cost: model.cost, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
+		}));
+	// Add fallback models not found in pi-ai
+	const existing = new Set(fromPi.map((m) => m.id));
+	for (const [id, fb] of Object.entries(MODEL_FALLBACKS)) {
+		if (!existing.has(id)) fromPi.push(fb);
+	}
+	return fromPi;
+})();
 
 function resolveModelId(input: string): string {
 	const lower = input.toLowerCase();
