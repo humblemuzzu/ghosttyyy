@@ -35,8 +35,8 @@ The system prompt is assembled in layers:
 
 ## pi-claude-bridge: Custom Build
 
-**Upstream:** https://github.com/elidickinson/pi-claude-bridge (v0.1.6)
-**Our patched version:** `pi-setup/claude-bridge-patches/index.ts` (2061 lines)
+**Upstream:** https://github.com/elidickinson/pi-claude-bridge (v0.2.0)
+**Our patched version:** `pi-setup/claude-bridge-patches/index.ts` (2063 lines)
 
 ### What We Changed From Upstream
 
@@ -96,10 +96,13 @@ When pi-claude-bridge gets updated upstream:
 
 The latest upstream (as of our patched version) includes these critical fixes:
 
+- **`QueryContext` class (v0.2.0):** Replaces 12+ mutable `let` variables with a proper class and context stack. Fixes `deferredUserMessages` not being isolated across reentrant queries (subagent could consume parent's deferred steers). Adding new per-query state is now 1 property instead of 6 edit sites.
+- **Stale cursor after tool-using first turn (issue #4, v0.2.0):** `latestCursor` now correctly advances past all tool_result blocks after the first turn uses tools.
+- **Session resume on symlinked paths / CLAUDE_CONFIG_DIR (v0.2.0):** cc-session-io 0.3.1 resolves symlinks (realpathSync + NFC) and honors `CLAUDE_CONFIG_DIR`, matching how Claude Code resolves session paths. Fixes "No conversation found" on macOS symlinked dirs.
+- **MCP handler context capture (v0.2.0):** Handlers now close over captured QueryContext, ensuring they operate on the correct query's state even across pushContext/popContext calls. Abort handler captures context at the correct point after push.
+- **`repairToolPairing` moved to cc-session-io (v0.2.0):** Orphaned tool_use/tool_result pair repair is now in cc-session-io, shared with index.ts.
 - **`latestCursor` (issue #4):** Module-level cursor tracking that prevents stale closures from breaking session resume after tool-using turns
 - **`deleteSession` + `createSession`:** Session rebuild path that preserves sessionId while wiping corrupt session files
-- **`repairToolPairing()`:** Fixes orphaned `tool_use`/`tool_result` pairs before importing messages into Claude Code sessions
-- **`verifyWrittenSession()`:** Sanity-checks session files after writing (warns instead of throwing)
 - **Post-abort UUID rotation:** Fresh sessionId after abort to avoid race conditions with killed subprocess writes
 - **CLI debug capture:** `makeCliDebugOptions()` forwards CC CLI stderr and debug logs when `CLAUDE_BRIDGE_DEBUG=1`
 - **Steer message handling:** Deferred user messages during tool execution are replayed as continuation queries
@@ -111,14 +114,15 @@ The latest upstream (as of our patched version) includes these critical fixes:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@mariozechner/pi-coding-agent` | 0.67.1 | The pi agent itself (installed via homebrew npm) |
-| `pi-claude-bridge` | 0.1.6 | Custom provider wrapping Claude Code Agent SDK |
+| `@mariozechner/pi-coding-agent` | 0.67.3 | The pi agent itself (installed via homebrew npm) |
+| `pi-claude-bridge` | 0.2.0 | Custom provider wrapping Claude Code Agent SDK |
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill |
 | `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout |
 | `pi-token-burden` | 0.5.0 | Token usage tracking and display |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar |
+| `pi-autoresearch` | latest | Autonomous experiment loop for optimization targets (GitHub install) |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`, `@marckrenn/pi-sub-bar`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`
 
 **Installed but inactive:** `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`, `claude-agent-sdk-pi` (legacy, no longer in packages list)
 
@@ -215,9 +219,9 @@ Shared code used by multiple tools:
 
 `amp-voice`, `chrome-cdp`, `coordinate`, `dig`, `document`, `git`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write`
 
-### Pi-level (`~/.pi/agent/skills/`) — 3 skills
+### Pi-level (`~/.pi/agent/skills/`) — 1 skill
 
-`find-skills`, `handoff`, `userinterface-wiki`
+`handoff` (find-skills and userinterface-wiki are pi-package-managed symlinks, auto-created on install)
 
 ---
 
@@ -238,7 +242,7 @@ Shared code used by multiple tools:
 {
   "defaultProvider": "zai",
   "defaultModel": "glm-5.1",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "medium",
   "theme": "gruvbox",
   "compaction": { "enabled": false }
 }

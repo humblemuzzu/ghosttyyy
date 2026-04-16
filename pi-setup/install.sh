@@ -170,10 +170,16 @@ ok "Pi packages installed (${#packages[@]} packages)"
 
 # ── pi-claude-bridge patches ──
 BRIDGE_INDEX="/opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts"
+BRIDGE_DIR="/opt/homebrew/lib/node_modules/pi-claude-bridge"
 if [ -f "$BRIDGE_INDEX" ] && [ -f "$SCRIPT_DIR/claude-bridge-patches/index.ts" ]; then
     info "Applying pi-claude-bridge system prompt patches..."
     cp "$SCRIPT_DIR/claude-bridge-patches/index.ts" "$BRIDGE_INDEX"
     ok "pi-claude-bridge patches applied (custom system prompt)"
+
+    # Ensure cc-session-io is at latest (fixes "No conversation found" on symlinked dirs)
+    info "  Ensuring cc-session-io is at latest version..."
+    (cd "$BRIDGE_DIR" && npm install cc-session-io@latest --silent 2>/dev/null) || warn "Failed to update cc-session-io"
+    ok "cc-session-io updated"
 else
     warn "pi-claude-bridge not found or patch file missing — apply patches manually"
 fi
