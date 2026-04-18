@@ -7,9 +7,28 @@ const PID_FILE = "/tmp/llama-server.pid";
 const LOG_FILE = "/tmp/llama-server.log";
 const PORT = 8080;
 
-const MODELS: Record<string, { name: string; speed: string; id: string }> = {
-	gemma: { name: "Gemma 4 26B-A4B MoE", speed: "49 tok/s", id: "gemma-moe-local" },
-	"qwen-moe": { name: "Qwen3.5 35B-A3B MoE", speed: "42 tok/s", id: "qwen-moe-local" },
+const MODELS: Record<string, { name: string; speed: string; id: string; contexts: string[] }> = {
+	qwen36: {
+		name: "Qwen3.6-35B-A3B Uncensored MoE",
+		speed: "~50 tok/s",
+		id: "qwen36-moe-local",
+		contexts: ["32k", "64k", "128k", "256k"],
+	},
+	"gemma-e2b": {
+		name: "Gemma 4 E2B",
+		speed: "~69 tok/s",
+		id: "gemma-e2b-local",
+		contexts: ["32k", "64k", "128k"],
+	},
+};
+
+const MODEL_ALIASES: Record<string, string> = {
+	qwen: "qwen36",
+	"qwen3.6": "qwen36",
+	default: "qwen36",
+	e2b: "gemma-e2b",
+	gemma: "gemma-e2b",
+	small: "gemma-e2b",
 };
 
 // ── Anti-gaslighting prompt for local models ─────────────────
@@ -25,6 +44,11 @@ You are running as a local model. Follow these rules strictly:
 5. **Be direct.** Don't narrate what you're about to do. Just do it with tool calls.
 6. **One thing at a time.** Complete each step before moving to the next.
 `;
+
+function resolveModel(key: string): string | undefined {
+	if (MODELS[key]) return key;
+	return MODEL_ALIASES[key];
+}
 
 function isServerRunning(): { running: boolean; pid?: number; model?: string } {
 	try {
@@ -56,7 +80,7 @@ function startServer(model: string, ctx: string, thinking: string): { ok: boolea
 	try {
 		const thinkArg = thinking === "on" ? "think" : "";
 		const output = execSync(`"${SCRIPT}" ${model} ${ctx} ${thinkArg} 2>&1`, {
-			timeout: 120_000,
+			timeout: 180_000,
 			encoding: "utf-8",
 		});
 		return { ok: output.includes("✅"), output };
@@ -74,7 +98,7 @@ function detectCurrentModel(): string | undefined {
 	const status = isServerRunning();
 	if (!status.running || !status.model) return undefined;
 	for (const [key, m] of Object.entries(MODELS)) {
-		if (status.model === m.id || status.model?.includes(key.replace("-", ""))) return key;
+		if (status.model === m.id) return key;
 	}
 	return undefined;
 }
@@ -87,19 +111,21 @@ function statusLabel(model: string, ctx: string, thinking: string): string {
 }
 
 export default function (pi: ExtensionAPI) {
-	// ── /local command ──────────────────────────────────────────
-	pi.registerCommand("local", {
-		description: "Manage local model server",
+	// ── /llm command ──────────────────────────────────────────
+	pi.registerCommand("llm", {
+		description: "Manage local LLM server (start/stop/status/think)",
 		getArgumentCompletions: (prefix: string) => {
 			const items = [
-				{ value: "start", label: "start — Pick model + context + thinking interactively" },
+				{ value: "start", label: "start — Interactive picker" },
 				{ value: "stop", label: "stop — Stop the server" },
 				{ value: "status", label: "status — Check what's running" },
 				{ value: "logs", label: "logs — Show recent server logs" },
-				{ value: "gemma", label: "gemma — Gemma 4 MoE (49 tok/s)" },
-				{ value: "gemma think", label: "gemma think — Gemma 4 MoE with thinking" },
-				{ value: "qwen-moe", label: "qwen-moe — Qwen3.5 MoE (42 tok/s) — better for coding" },
-				{ value: "qwen-moe think", label: "qwen-moe think — Qwen3.5 MoE with thinking" },
+				{ value: "think", label: "think — Toggle thinking mode" },
+				{ value: "think on", label: "think on — Enable thinking" },
+				{ value: "think off", label: "think off — Disable thinking" },
+				{ value: "qwen36", label: "qwen36 — Qwen3.6 Uncensored MoE (~50 tok/s)" },
+				{ value: "qwen36 think", label: "qwen36 think — Qwen3.6 with thinking" },
+				{ value: "gemma-e2b", label: "gemma-e2b — Gemma 4 E2B (~69 tok/s, tiny/fast)" },
 			];
 			return items.filter((i) => i.value.startsWith(prefix));
 		},
@@ -117,7 +143,7 @@ export default function (pi: ExtensionAPI) {
 			const cmd = cleaned[0] || "";
 			const ctxArg = cleaned[1] || "";
 
-			// ── /local stop ───────────────────────────────────
+			// ── /llm stop ───────────────────────────────────
 			if (cmd === "stop") {
 				const { ok, output } = stopServer();
 				ctx.ui.notify(output.trim(), ok ? "success" : "warning");
@@ -126,7 +152,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// ── /local status ─────────────────────────────────
+			// ── /llm status ─────────────────────────────────
 			if (cmd === "status") {
 				const status = isServerRunning();
 				if (status.running) {
@@ -142,12 +168,12 @@ export default function (pi: ExtensionAPI) {
 						"info",
 					);
 				} else {
-					ctx.ui.notify("❌ Server not running\n\nUse /local start or /local gemma", "warning");
+					ctx.ui.notify("❌ Server not running\n\nUse /llm start or /llm qwen36", "warning");
 				}
 				return;
 			}
 
-			// ── /local logs ───────────────────────────────────
+			// ── /llm logs ───────────────────────────────────
 			if (cmd === "logs") {
 				try {
 					const logs = execSync(`tail -30 ${LOG_FILE} 2>/dev/null`, { encoding: "utf-8" });
@@ -158,30 +184,71 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// ── /local gemma [128k] [think] — direct start ───
-			if (MODELS[cmd]) {
-				const context =
-					ctxArg ||
-					(await ctx.ui.select("Context window:", ["64k — 64K tokens", "128k — 128K tokens", "256k — 256K tokens (default)"]));
-				if (!context) return;
-				const ctxKey = context.split(" ")[0].trim();
-				return await doStart(cmd, ctxKey, thinking, ctx);
+			// ── /llm think [on|off] — toggle thinking ───────
+			if (cmd === "think") {
+				if (!currentModel) {
+					const detected = detectCurrentModel();
+					if (detected) {
+						currentModel = detected;
+						currentCtx = currentCtx || "256k";
+					} else {
+						ctx.ui.notify("No local server running. Use /llm start first.", "warning");
+						return;
+					}
+				}
+
+				// If "think" was parsed as the thinking flag, it's already on
+				// But we also need to handle "/llm think on" and "/llm think off"
+				let newThinking: string;
+				if (ctxArg === "on") {
+					newThinking = "on";
+				} else if (ctxArg === "off") {
+					newThinking = "off";
+				} else {
+					// toggle
+					newThinking = currentThinking === "on" ? "off" : "on";
+				}
+
+				if (newThinking === currentThinking) {
+					ctx.ui.notify(`Thinking is already ${currentThinking}`, "info");
+					return;
+				}
+
+				ctx.ui.notify(`Switching thinking ${newThinking === "on" ? "ON 🧠" : "OFF ⚡"}...`, "info");
+				return await doStart(currentModel, currentCtx, newThinking, ctx);
 			}
 
-			// ── /local start — interactive ────────────────────
+			// ── /llm <model> [ctx] [think] — direct start ───
+			const resolved = resolveModel(cmd);
+			if (resolved) {
+				const m = MODELS[resolved];
+				let context = ctxArg;
+				if (!context) {
+					const defaultCtx = m.contexts[m.contexts.length - 1]; // largest available
+					const options = m.contexts.map((c) => {
+						const isDefault = c === defaultCtx;
+						return `${c}${isDefault ? " (default)" : ""}`;
+					});
+					const choice = await ctx.ui.select("Context window:", options);
+					if (!choice) return;
+					context = choice.split(" ")[0].trim();
+				}
+				return await doStart(resolved, context, thinking, ctx);
+			}
+
+			// ── /llm start — interactive ────────────────────
 			if (cmd === "start" || cmd === "") {
 				const modelChoice = await ctx.ui.select("Pick a model:", [
-					"gemma     — ⚡ Gemma 4 26B-A4B MoE (49 tok/s)",
-					"qwen-moe  — ⚡ Qwen3.5 35B-A3B MoE (42 tok/s) — better for coding agents",
+					"qwen36    — ⚡ Qwen3.6-35B-A3B Uncensored MoE (~50 tok/s) — best for coding",
+					"gemma-e2b — ⚡ Gemma 4 E2B (~69 tok/s, tiny/fast, vision+audio)",
 				]);
 				if (!modelChoice) return;
-				const modelKey = modelChoice.split(" ")[0].trim();
+				const modelKey = resolveModel(modelChoice.split(" ")[0].trim()) || "qwen36";
+				const m = MODELS[modelKey];
 
-				const ctxChoice = await ctx.ui.select("Context window:", [
-					"64k — 64K tokens",
-					"128k — 128K tokens",
-					"256k — 256K tokens (default)",
-				]);
+				const defaultCtx = m.contexts[m.contexts.length - 1];
+				const ctxOptions = m.contexts.map((c) => `${c}${c === defaultCtx ? " (default)" : ""}`);
+				const ctxChoice = await ctx.ui.select("Context window:", ctxOptions);
 				if (!ctxChoice) return;
 				const ctxKey = ctxChoice.split(" ")[0].trim();
 
@@ -197,62 +264,34 @@ export default function (pi: ExtensionAPI) {
 
 			ctx.ui.notify(
 				"Usage:\n" +
-					"  /local                    — Interactive picker\n" +
-					"  /local gemma              — Gemma 4 MoE, 256k, no thinking\n" +
-					"  /local qwen-moe think     — Qwen MoE, 256k, thinking on\n" +
-					"  /local gemma 128k think   — Gemma, 128K, thinking on\n" +
-					"  /local stop               — Stop server\n" +
-					"  /local status             — Check server\n" +
-					"  /local logs               — Show logs",
+					"  /llm                       — Interactive picker\n" +
+					"  /llm qwen36                — Qwen3.6 Uncensored, 256k, no thinking\n" +
+					"  /llm qwen36 128k think     — Qwen3.6, 128K, thinking on\n" +
+					"  /llm gemma-e2b             — Gemma E2B, 128k\n" +
+					"  /llm think                 — Toggle thinking (restarts server)\n" +
+					"  /llm think on/off          — Set thinking mode\n" +
+					"  /llm stop                  — Stop server\n" +
+					"  /llm status                — Check server\n" +
+					"  /llm logs                  — Show logs",
 				"info",
 			);
 		},
 	});
 
-	// ── /think toggle ────────────────────────────────────────────
-	pi.registerCommand("think", {
-		description: "Toggle thinking mode (restarts server)",
-		getArgumentCompletions: (prefix: string) => {
-			const items = [
-				{ value: "on", label: "on — Enable thinking (step-by-step reasoning)" },
-				{ value: "off", label: "off — Disable thinking (fast, direct)" },
-			];
-			return items.filter((i) => i.value.startsWith(prefix));
-		},
+	// ── Keep /local as alias ─────────────────────────────────────
+	pi.registerCommand("local", {
+		description: "Alias for /llm",
 		handler: async (args, ctx) => {
-			const target = args?.trim().toLowerCase();
-
-			if (!currentModel) {
-				// try to detect
-				const detected = detectCurrentModel();
-				if (detected) {
-					currentModel = detected;
-					currentCtx = currentCtx || "256k";
-				} else {
-					ctx.ui.notify("No local server running. Use /local start first.", "warning");
-					return;
-				}
+			const commands = pi.getCommands();
+			const llmCmd = commands.find((c) => c.name === "llm");
+			if (llmCmd) {
+				// Just delegate — re-trigger the handler
+				ctx.ui.notify("Use /llm instead of /local", "info");
 			}
-
-			let newThinking: string;
-			if (target === "on" || target === "off") {
-				newThinking = target;
-			} else {
-				// toggle
-				newThinking = currentThinking === "on" ? "off" : "on";
-			}
-
-			if (newThinking === currentThinking) {
-				ctx.ui.notify(`Thinking is already ${currentThinking}`, "info");
-				return;
-			}
-
-			ctx.ui.notify(`Switching thinking ${newThinking === "on" ? "ON 🧠" : "OFF ⚡"}...`, "info");
-			return await doStart(currentModel, currentCtx, newThinking, ctx);
 		},
 	});
 
-	// ── Shared start logic (auto-stops existing server) ─────────
+	// ── Shared start logic ────────────────────────────────────────
 	async function doStart(model: string, context: string, thinking: string, ctx: any) {
 		const m = MODELS[model];
 		if (!m) {
@@ -265,7 +304,6 @@ export default function (pi: ExtensionAPI) {
 		if (status.running) {
 			ctx.ui.setStatus("local-model", "⏳ Stopping current server...");
 			stopServer();
-			// Brief pause for port to free
 			execSync("sleep 1");
 		}
 
@@ -288,11 +326,9 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Inject identity + anti-gaslighting rules for local models ──
 	pi.on("before_agent_start", async (event, ctx) => {
-		// Only inject when using a local model
 		const model = ctx.model;
 		if (!model || model.provider !== "local-llama") return;
 
-		// Tell the model who it actually is
 		const detected = detectCurrentModel();
 		const m = detected ? MODELS[detected] : undefined;
 		const thinkStr = currentThinking === "on" ? "ON" : "OFF";
@@ -314,7 +350,10 @@ export default function (pi: ExtensionAPI) {
 				currentModel = detected;
 				currentCtx = currentCtx || "256k";
 			}
-			ctx.ui.setStatus("local-model", detected ? statusLabel(detected, currentCtx || "256k", currentThinking) : `🟢 ${status.model || "Local model"} on :${PORT}`);
+			ctx.ui.setStatus(
+				"local-model",
+				detected ? statusLabel(detected, currentCtx || "256k", currentThinking) : `🟢 ${status.model || "Local model"} on :${PORT}`,
+			);
 		}
 	});
 }

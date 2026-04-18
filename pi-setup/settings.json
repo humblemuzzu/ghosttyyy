@@ -1,7 +1,7 @@
 {
-  "lastChangelogVersion": "0.67.6",
+  "lastChangelogVersion": "0.67.67",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "off",
   "theme": "gruvbox",
   "defaultProvider": "zai",
   "defaultModel": "glm-5.1",

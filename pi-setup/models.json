@@ -22,15 +22,15 @@
       },
       "models": [
         {
-          "id": "gemma-moe-local",
-          "name": "⚡ Gemma 4 26B-A4B MoE — 49 tok/s",
-          "reasoning": false,
+          "id": "qwen36-moe-local",
+          "name": "⚡ Qwen3.6 35B-A3B Uncensored MoE — agentic coding, ~50 tok/s",
+          "reasoning": true,
           "input": [
             "text",
             "image"
           ],
           "contextWindow": 262144,
-          "maxTokens": 32768,
+          "maxTokens": 81920,
           "cost": {
             "input": 0,
             "output": 0,
@@ -39,15 +39,15 @@
           }
         },
         {
-          "id": "qwen-moe-local",
-          "name": "⚡ Qwen3.5 35B-A3B MoE — 42 tok/s",
+          "id": "gemma-e2b-local",
+          "name": "Gemma 4 E2B — 69 tok/s, tiny/fast",
           "reasoning": false,
           "input": [
             "text",
             "image"
           ],
-          "contextWindow": 262144,
-          "maxTokens": 32768,
+          "contextWindow": 131072,
+          "maxTokens": 16384,
           "cost": {
             "input": 0,
             "output": 0,
