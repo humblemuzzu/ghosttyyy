@@ -182,7 +182,9 @@ export default function (pi: ExtensionAPI) {
 
 		if (parent) showProvenance(ctx, parent);
 
-		pi.sendUserMessage(prompt);
+		// put the handoff prompt in the editor box so the user can review
+		// and press Enter to send, rather than auto-submitting
+		ctx.ui.setEditorText(prompt);
 		return true;
 	}
 

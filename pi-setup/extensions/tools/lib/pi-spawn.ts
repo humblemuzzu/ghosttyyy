@@ -107,11 +107,33 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		? ["--mode", "rpc", "--no-session"]
 		: ["--mode", "json", "-p", "--no-session"];
 
-	// resolve model: use parent's full model if the preferred model isn't available
-	// on the parent's provider. ensures sub-agents work regardless of which
-	// provider the user is currently on (claude-agent-sdk, zai, openai, etc).
+	// resolve model: use the tool's designated model when the parent provider
+	// is Anthropic (can serve Claude models directly). when the parent is on a
+	// non-Anthropic provider (zai, local-llama, etc), inherit the parent model
+	// since Claude subagent models would require separate API access.
 	if (config.model) {
-		const resolvedModel = config.parentModel ?? config.model;
+		let resolvedModel = config.model;
+
+		if (config.parentModel) {
+			const parentProvider = config.parentModel.split("/")[0]?.toLowerCase() ?? "";
+			const anthropicProviders = ["anthropic", "claude-bridge"];
+			// no provider prefix means the default provider is being used —
+			// check if that's anthropic by looking at the model name
+			const isClaudeModel = (id: string) =>
+				id.includes("claude") || id.startsWith("opus") || id.startsWith("sonnet") || id.startsWith("haiku");
+			const parentModelId = config.parentModel.split("/").slice(1).join("/") || config.parentModel;
+
+			const isAnthropicParent = anthropicProviders.includes(parentProvider)
+				|| (!parentProvider.includes("/") && isClaudeModel(parentModelId))
+				|| (parentProvider === "" && isClaudeModel(parentModelId));
+
+			// when parent is non-Anthropic (zai, local-llama, etc), inherit
+			// parent model so subagents don't need separate Claude API access
+			if (!isAnthropicParent) {
+				resolvedModel = config.parentModel;
+			}
+		}
+
 		args.push("--model", resolvedModel);
 	}
 	if (config.builtinTools && config.builtinTools.length > 0) {
