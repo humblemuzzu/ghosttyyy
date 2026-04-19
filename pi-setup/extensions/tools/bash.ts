@@ -11,6 +11,10 @@
  * - output truncation with head + tail (first/last N lines, not just tail)
  * - constant memory via OutputBuffer (no unbounded string growth)
  * - permission rules from ~/.pi/agent/permissions.json (allow/reject)
+ * - streaming render: compact tail preview (5 lines) with elapsed time,
+ *   reuses component via context.lastComponent to prevent clearOnShrink thrashing
+ * - final render: box format with proper expanded/collapsed via closure capture
+ *   (TUI calls render(width), not render(width, expanded))
  *
  * shadows pi's built-in `bash` tool via same-name registration.
  */
@@ -19,8 +23,8 @@ import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { boxRendererWindowed, type BoxSection, type Excerpt } from "./lib/box-format";
-import { getText } from "./lib/tui";
+import { formatBoxesWindowed, type BoxSection, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { withFileLock } from "./lib/mutex";
 import { evaluatePermission, loadPermissions } from "./lib/permissions";
@@ -110,6 +114,9 @@ const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "tail" as const, context: 5 },
 ];
 
+/** visual lines shown during streaming — fixed count prevents clearOnShrink thrashing */
+const STREAMING_PREVIEW_LINES = 5;
+
 // --- tool factory ---
 
 export function createBashTool(): ToolDefinition {
@@ -164,21 +171,14 @@ export function createBashTool(): ToolDefinition {
 			);
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, theme: any) {
+		renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any, context: any) {
 			const Text = getText();
+			const Container = getContainer();
 			const content = result.content?.[0];
 			if (!content || content.type !== "text") return new Text(theme.fg("dim", "(no output)"), 0, 0);
 
-			// extract command from structured details (preferred) or parse from content
-			let text: string = content.text;
-			let command: string = result.details?.command ?? "";
-			if (!command && text.startsWith("$ ")) {
-				const firstNewline = text.indexOf("\n");
-				if (firstNewline !== -1) {
-					command = text.slice(2, firstNewline);
-				}
-			}
 			// strip `$ command\n\n` prefix — renderCall already shows it
+			let text: string = content.text;
 			if (text.startsWith("$ ")) {
 				const sep = text.indexOf("\n\n");
 				if (sep !== -1) {
@@ -188,16 +188,91 @@ export function createBashTool(): ToolDefinition {
 
 			if (!text || text === "(no output)") return new Text(theme.fg("dim", "(no output)"), 0, 0);
 
-			const lines = text.split("\n");
+			// --- elapsed time tracking via persistent context.state ---
+			const state = context?.state ?? {};
+			if (context?.executionStarted && state.startedAt === undefined) {
+				state.startedAt = Date.now();
+			}
+			// timer for periodic elapsed-time updates during streaming
+			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
+				state.interval = setInterval(() => context?.invalidate?.(), 1000);
+			}
+			if (!options.isPartial || context?.isError) {
+				state.endedAt ??= Date.now();
+				if (state.interval) {
+					clearInterval(state.interval);
+					state.interval = undefined;
+				}
+			}
+
+			const outputLines = text.split("\n");
+
+			if (options.isPartial) {
+				// --- STREAMING: compact tail preview, stable line count ---
+				// fixed line count prevents TUI clearOnShrink thrashing.
+				// the built-in bash tool uses the same pattern (BASH_PREVIEW_LINES = 5).
+				const tail = outputLines.slice(-STREAMING_PREVIEW_LINES);
+				const skipped = outputLines.length - tail.length;
+
+				const parts: string[] = [];
+				if (skipped > 0) {
+					parts.push(theme.fg("muted", `… ${skipped} earlier lines`));
+				}
+				parts.push(...tail.map((l: string) => theme.fg("toolOutput", l)));
+
+				// elapsed time
+				if (state.startedAt) {
+					const elapsed = ((Date.now() - state.startedAt) / 1000).toFixed(1);
+					parts.push(theme.fg("muted", `${elapsed}s`));
+				}
+
+				// reuse container from context — avoids component churn
+				const container: any = context?.lastComponent ?? new Container();
+				container.clear();
+				container.addChild(new Text(parts.join("\n"), 0, 0));
+				container.invalidate();
+				return container;
+			}
+
+			// --- FINAL: box format with proper expanded state ---
+			const { expanded } = options;
 
 			const buildSections = (): BoxSection[] => [{
-				blocks: [{ lines: lines.map((l) => ({ text: theme.fg("toolOutput", l), highlight: true })) }],
+				blocks: [{ lines: outputLines.map((l) => ({ text: theme.fg("toolOutput", l), highlight: true })) }],
 			}];
 
-			return boxRendererWindowed(buildSections, {
-				collapsed: { excerpts: COLLAPSED_EXCERPTS },
-				expanded: {},
-			});
+			// duration notice
+			let notices: string[] | undefined;
+			if (state.startedAt && state.endedAt) {
+				const elapsed = ((state.endedAt - state.startedAt) / 1000).toFixed(1);
+				notices = [`took ${elapsed}s`];
+			}
+
+			// capture expanded in closure — TUI calls render(width) not render(width, expanded)
+			let cachedWidth: number | undefined;
+			let cachedLines: string[] | undefined;
+
+			return {
+				render(width: number): string[] {
+					if (cachedLines !== undefined && cachedWidth === width) {
+						return cachedLines;
+					}
+					const sections = buildSections();
+					const visual = formatBoxesWindowed(
+						sections,
+						expanded ? {} : { excerpts: COLLAPSED_EXCERPTS },
+						notices,
+						width,
+					);
+					cachedLines = visual.split("\n");
+					cachedWidth = width;
+					return cachedLines;
+				},
+				invalidate() {
+					cachedLines = undefined;
+					cachedWidth = undefined;
+				},
+			};
 		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
