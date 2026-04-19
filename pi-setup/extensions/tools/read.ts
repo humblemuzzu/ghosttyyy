@@ -321,7 +321,7 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			}
 		},
 
-		renderResult(result: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }) {
 			const text = result.content?.[0];
 			if (text?.type !== "text") return new Text("(no output)", 0, 0);
 
@@ -359,13 +359,13 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 
 			const section: BoxSection = { blocks: [{ lines: parsed }] };
 
+			// capture expanded in closure — TUI calls render(width) not render(width, expanded)
 			let cachedWidth: number | undefined;
-			let cachedExpanded: boolean | undefined;
 			let cachedLines: string[] | undefined;
 
 			return {
-				render(width: number, expanded: boolean): string[] {
-					if (cachedLines !== undefined && cachedExpanded === expanded && cachedWidth === width) {
+				render(width: number): string[] {
+					if (cachedLines !== undefined && cachedWidth === width) {
 						return cachedLines;
 					}
 
@@ -376,13 +376,11 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 						width,
 					);
 					cachedLines = visual.split("\n");
-					cachedExpanded = expanded;
 					cachedWidth = width;
 					return cachedLines;
 				},
 				invalidate() {
 					cachedLines = undefined;
-					cachedExpanded = undefined;
 					cachedWidth = undefined;
 				},
 			};

@@ -297,20 +297,25 @@ export function textSection(header: string | undefined, text: string, dim = fals
 
 /**
  * visual-line-aware boxRenderer. uses formatBoxesWindowed under the hood.
- * caches by (width, expanded).
+ * caches by width.
+ *
+ * `expanded` is a construction-time parameter (not a render-time one) because
+ * pi's TUI calls render(width) — not render(width, expanded). when the user
+ * presses Ctrl+O, ToolExecutionComponent calls renderResult() again with the
+ * new expanded state, producing a fresh renderer that captures the new value.
  */
 export function boxRendererWindowed(
 	buildSections: () => BoxSection[],
 	opts: { collapsed: BoxWindowedOpts; expanded: BoxWindowedOpts },
 	notices?: string[],
+	expanded = false,
 ) {
 	let cachedWidth: number | undefined;
-	let cachedExpanded: boolean | undefined;
 	let cachedLines: string[] | undefined;
 
 	return {
-		render(width: number, expanded: boolean): string[] {
-			if (cachedLines !== undefined && cachedExpanded === expanded && cachedWidth === width) {
+		render(width: number): string[] {
+			if (cachedLines !== undefined && cachedWidth === width) {
 				return cachedLines;
 			}
 			const sections = buildSections();
@@ -321,13 +326,11 @@ export function boxRendererWindowed(
 				width,
 			);
 			cachedLines = visual.split("\n");
-			cachedExpanded = expanded;
 			cachedWidth = width;
 			return cachedLines;
 		},
 		invalidate() {
 			cachedLines = undefined;
-			cachedExpanded = undefined;
 			cachedWidth = undefined;
 		},
 	};

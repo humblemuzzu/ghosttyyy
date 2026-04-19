@@ -438,7 +438,7 @@ export function createGrepTool(): ToolDefinition {
 			});
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, _theme: any) {
 			const fileGroups: GrepFile[] | undefined = result.details?.fileGroups;
 			const notices: string[] = result.details?.notices ?? [];
 			const basePath: string | undefined = result.details?.searchPath;
@@ -467,6 +467,7 @@ export function createGrepTool(): ToolDefinition {
 					expanded: {},
 				},
 				notices.length > 0 ? notices : undefined,
+				expanded,
 			);
 		},
 	};
