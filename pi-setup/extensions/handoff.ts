@@ -194,8 +194,10 @@ export default function (pi: ExtensionAPI) {
 		if (parentPath) showProvenance(ctx, parentPath);
 	});
 
-	// --- always cancel compaction. we handoff instead. ---
-	pi.on("session_before_compact", async (_event, _ctx) => {
+	// --- cancel auto-compaction (we handoff instead), but let VCC through ---
+	pi.on("session_before_compact", async (event, _ctx) => {
+		// allow pi-vcc algorithmic compaction — it uses a sentinel instruction
+		if ((event as any).preparation?.customInstructions === "__pi_vcc__") return;
 		return { cancel: true };
 	});
 

@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.67.67",
+  "lastChangelogVersion": "0.67.68",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "off",
+  "defaultThinkingLevel": "high",
   "theme": "gruvbox",
-  "defaultProvider": "zai",
-  "defaultModel": "glm-5.1",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -38,6 +38,9 @@
     "npm:pi-claude-bridge",
     "npm:@benvargas/pi-claude-code-use",
     "npm:@marckrenn/pi-sub-bar",
-    "https://github.com/davebcn87/pi-autoresearch"
+    "https://github.com/davebcn87/pi-autoresearch",
+    "npm:@sting8k/pi-vcc",
+    "npm:pi-tool-display",
+    "npm:@tomooshi/condensed-milk-pi"
   ]
 }

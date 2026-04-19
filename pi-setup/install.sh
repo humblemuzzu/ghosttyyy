@@ -163,6 +163,9 @@ packages=(
     "npm:pi-claude-bridge"
     "npm:@benvargas/pi-claude-code-use"
     "npm:@marckrenn/pi-sub-bar"
+    "npm:@sting8k/pi-vcc"
+    "npm:pi-tool-display"
+    "npm:@tomooshi/condensed-milk-pi"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
@@ -186,6 +189,28 @@ else
     warn "pi-claude-bridge not found or patch file missing — apply patches manually"
 fi
 
+# ── condensed-milk patches ──
+CONDENSED_MILK_DIR="/opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi"
+if [ -d "$CONDENSED_MILK_DIR" ] && [ -f "$SCRIPT_DIR/condensed-milk-patches/index.ts" ]; then
+    info "Applying condensed-milk patches (bash prefix strip + cmd param support)..."
+    cp "$SCRIPT_DIR/condensed-milk-patches/index.ts" "$CONDENSED_MILK_DIR/index.ts"
+    if [ -f "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" ]; then
+        cp "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" "$CONDENSED_MILK_DIR/filters/context-compress.ts"
+    fi
+    ok "condensed-milk patches applied"
+else
+    warn "condensed-milk not found or patch file missing — apply patches manually"
+fi
+
+# ── pi-tool-display config ──
+TOOL_DISPLAY_CONFIG="$PI_AGENT/extensions/pi-tool-display/config.json"
+if [ -f "$SCRIPT_DIR/extensions/pi-tool-display/config.json" ]; then
+    info "Installing pi-tool-display config (all tool overrides disabled)..."
+    mkdir -p "$PI_AGENT/extensions/pi-tool-display"
+    cp "$SCRIPT_DIR/extensions/pi-tool-display/config.json" "$TOOL_DISPLAY_CONFIG"
+    ok "pi-tool-display config installed"
+fi
+
 echo ""
 echo "╭─────────────────────────────────────────╮"
 echo "│   ✅ All done!                          │"
@@ -197,9 +222,11 @@ echo "│   • 2 themes (gruvbox active)           │"
 echo "│   • 18 config skills + 3 pi skills      │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
-echo "│   • 6 pi packages                       │"
+echo "│   • 9 pi packages                       │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
+echo "│   • condensed-milk patched              │"
+echo "│   • pi-tool-display configured          │"
 echo "│                                         │"
 echo "│   Claude Max (OAuth):                   │"
 echo "│   /login anthropic                      │"
