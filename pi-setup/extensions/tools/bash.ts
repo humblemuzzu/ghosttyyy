@@ -24,7 +24,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { formatBoxesWindowed, type BoxSection, type Excerpt } from "./lib/box-format";
-import { getText, getContainer } from "./lib/tui";
+import { getText } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { withFileLock } from "./lib/mutex";
 import { evaluatePermission, loadPermissions } from "./lib/permissions";
@@ -114,8 +114,55 @@ const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "tail" as const, context: 5 },
 ];
 
-/** visual lines shown during streaming — fixed count prevents clearOnShrink thrashing */
-const STREAMING_PREVIEW_LINES = 5;
+// --- output sanitization ---
+
+/**
+ * strip terminal control sequences from tool output for safe TUI rendering.
+ *
+ * SSH, remote commands, and interactive programs can emit ANSI escape sequences
+ * (cursor movement, screen clearing, terminal mode changes) that leak through
+ * our rendered output into the TUI's terminal write buffer. these execute as
+ * real terminal commands, desynchronizing the TUI's cursor position tracking
+ * and causing content to render at wrong positions ("leaking" below the footer).
+ *
+ * the most destructive are DEC private mode sequences that SSH emits on
+ * connection: \x1b[?1049h (alternate screen buffer), \x1b[?25l (hide cursor),
+ * \x1b[?2004h (bracketed paste). these contain a '?' prefix that the previous
+ * regex [0-9;]* didn't match, so they passed through and executed as real
+ * terminal commands. zoom in/out fixed it because SIGWINCH triggers a full
+ * TUI redraw.
+ *
+ * now uses ECMA-48 byte ranges for CSI parameter bytes (0x30-0x3f includes
+ * ? > = < : ; digits) so all CSI variants are caught.
+ *
+ * the built-in BashExecutionComponent (user bash) does this via strip-ansi.
+ * we do it inline to avoid the ESM-only strip-ansi dependency.
+ */
+function sanitizeForDisplay(text: string): string {
+	return text
+		// CSI sequences (full ECMA-48): \x1b[ + parameter bytes (0x30-0x3f)
+		// + intermediate bytes (0x20-0x2f) + final byte (0x40-0x7e).
+		// covers SGR colors, cursor movement, DEC private mode (?25h, ?1049h,
+		// ?2004h), screen clearing, xterm modifiers (>4;2m), etc.
+		.replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, "")
+		// OSC sequences: \x1b] ... BEL or \x1b] ... ST
+		.replace(/\x1b\][^\x07]*\x07/g, "")
+		.replace(/\x1b\][^\x1b]*\x1b\\/g, "")
+		// DCS sequences: \x1bP ... ST (\x1b\\ or \x07)
+		.replace(/\x1bP[^\x07]*\x07/g, "")
+		.replace(/\x1bP[^\x1b]*\x1b\\/g, "")
+		// APC/PM/SOS sequences: \x1b_ / \x1b^ / \x1bX ... ST
+		.replace(/\x1b[_^X][^\x1b]*\x1b\\/g, "")
+		.replace(/\x1b[_^X][^\x07]*\x07/g, "")
+		// charset selection, cursor save/restore, keypad modes
+		.replace(/\x1b[()][0-9A-B]/g, "")
+		.replace(/\x1b[78=>]/g, "")
+		// normalize line endings (SSH sends \r\n; raw \r overwrites line start)
+		.replace(/\r\n/g, "\n")
+		.replace(/\r/g, "\n")
+		// strip remaining control chars (except \n newline and \t tab)
+		.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+}
 
 // --- tool factory ---
 
@@ -173,7 +220,6 @@ export function createBashTool(): ToolDefinition {
 
 		renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any, context: any) {
 			const Text = getText();
-			const Container = getContainer();
 			const content = result.content?.[0];
 			if (!content || content.type !== "text") return new Text(theme.fg("dim", "(no output)"), 0, 0);
 
@@ -185,6 +231,9 @@ export function createBashTool(): ToolDefinition {
 					text = text.slice(sep + 2);
 				}
 			}
+
+			// safety net: sanitize again in case any sequences survived handleData
+			text = sanitizeForDisplay(text);
 
 			if (!text || text === "(no output)") return new Text(theme.fg("dim", "(no output)"), 0, 0);
 
@@ -208,30 +257,19 @@ export function createBashTool(): ToolDefinition {
 			const outputLines = text.split("\n");
 
 			if (options.isPartial) {
-				// --- STREAMING: compact tail preview, stable line count ---
-				// fixed line count prevents TUI clearOnShrink thrashing.
-				// the built-in bash tool uses the same pattern (BASH_PREVIEW_LINES = 5).
-				const tail = outputLines.slice(-STREAMING_PREVIEW_LINES);
-				const skipped = outputLines.length - tail.length;
-
-				const parts: string[] = [];
-				if (skipped > 0) {
-					parts.push(theme.fg("muted", `… ${skipped} earlier lines`));
-				}
-				parts.push(...tail.map((l: string) => theme.fg("toolOutput", l)));
-
-				// elapsed time
+				// --- STREAMING: minimal single-line elapsed timer ---
+				// pi's TUI creates separate visual slots for streaming vs final
+				// renders and doesn't clean up the streaming slot. any multi-line
+				// streaming preview persists as a visible ghost above the final
+				// box (fixable only by terminal resize / SIGWINCH).
+				// workaround: render only a single elapsed-time line during
+				// streaming. the ghost is at most 1 dim line — invisible in
+				// practice. the full output appears in the final box render.
 				if (state.startedAt) {
 					const elapsed = ((Date.now() - state.startedAt) / 1000).toFixed(1);
-					parts.push(theme.fg("muted", `${elapsed}s`));
+					return new Text(theme.fg("muted", `${elapsed}s`), 0, 0);
 				}
-
-				// reuse container from context — avoids component churn
-				const container: any = context?.lastComponent ?? new Container();
-				container.clear();
-				container.addChild(new Text(parts.join("\n"), 0, 0));
-				container.invalidate();
-				return container;
+				return new Text("", 0, 0);
 			}
 
 			// --- FINAL: box format with proper expanded state ---
@@ -241,7 +279,6 @@ export function createBashTool(): ToolDefinition {
 				blocks: [{ lines: outputLines.map((l) => ({ text: theme.fg("toolOutput", l), highlight: true })) }],
 			}];
 
-			// duration notice
 			let notices: string[] | undefined;
 			if (state.startedAt && state.endedAt) {
 				const elapsed = ((state.endedAt - state.startedAt) / 1000).toFixed(1);
@@ -373,7 +410,10 @@ async function runCommand(
 		}
 
 		const handleData = (data: Buffer) => {
-			output.add(data.toString("utf-8"));
+			// sanitize at source — strip terminal control sequences before they
+			// enter the buffer or reach onUpdate. prevents escape sequences from
+			// ever flowing through the TUI pipeline (even briefly via onUpdate).
+			output.add(sanitizeForDisplay(data.toString("utf-8")));
 
 			if (onUpdate) {
 				const { text } = output.format();

@@ -15,7 +15,7 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.67.1)
+pi CLI (v0.68.0)
   └─ pi-claude-bridge (custom provider, registered as "claude-bridge")
        └─ @anthropic-ai/claude-agent-sdk (spawns Claude Code CLI subprocess)
             └─ Claude API
@@ -276,15 +276,15 @@ Changed `pi.sendUserMessage(prompt)` → `ctx.ui.setEditorText(prompt)` in `exec
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@mariozechner/pi-coding-agent` | 0.67.6 | The pi agent itself (installed via homebrew npm) | No |
-| `pi-claude-bridge` | 0.2.0 | Custom provider wrapping Claude Code Agent SDK (legacy, kept as fallback) | **Yes** |
+| `@mariozechner/pi-coding-agent` | 0.68.0 | The pi agent itself (installed via homebrew npm) | No |
+| `pi-claude-bridge` | 0.3.1 | Custom provider wrapping Claude Code Agent SDK (legacy, kept as fallback) | **Yes** |
 | `@benvargas/pi-claude-code-use` | 1.0.1 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.5.0 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No |
 | `pi-autoresearch` | latest | Autonomous experiment loop for optimization targets (GitHub install) | No |
-| `@sting8k/pi-vcc` | 0.3.7 | Algorithmic compaction engine + `vcc_recall` history search | No |
+| `@sting8k/pi-vcc` | 0.3.8 | Algorithmic compaction engine + `vcc_recall` history search | No |
 | `pi-tool-display` | 0.3.2 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.8.1 | Bash output compression + context-level stale result masking | **Yes** |
 
