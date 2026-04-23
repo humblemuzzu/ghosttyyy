@@ -175,16 +175,21 @@ export default function (pi: ExtensionAPI) {
 		handoffPending = false;
 		generating = false;
 		ctx.ui?.setStatus?.("handoff", "");
-		pi.events.emit("editor:remove-label", { key: "handoff" });
+		try {
+			pi.events.emit("editor:remove-label", { key: "handoff" });
+		} catch {
+			// ignore stale errors during shutdown
+		}
 
-		const switchResult = await ctx.newSession({ parentSession: parent });
+		const switchResult = await ctx.newSession({
+			parentSession: parent,
+			withSession: async (newCtx) => {
+				if (parent) showProvenance(newCtx as any, parent);
+				newCtx.ui.setEditorText(prompt);
+			},
+		});
 		if (switchResult.cancelled) return false;
 
-		if (parent) showProvenance(ctx, parent);
-
-		// put the handoff prompt in the editor box so the user can review
-		// and press Enter to send, rather than auto-submitting
-		ctx.ui.setEditorText(prompt);
 		return true;
 	}
 
@@ -205,7 +210,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("agent_end", async (_event, ctx) => {
 		if (handoffPending || generating) return;
 
-		const usage = ctx.getContextUsage();
+		let usage;
+		try {
+			usage = ctx.getContextUsage();
+		} catch {
+			// session disposed during shutdown — ignore
+			return;
+		}
 		if (!usage || usage.percent === null) return;
 		if (usage.percent < HANDOFF_THRESHOLD * 100) return;
 
@@ -230,12 +241,16 @@ export default function (pi: ExtensionAPI) {
 
 			ctx.ui.setEditorText("/handoff");
 			ctx.ui.setStatus("handoff", `handoff ready (${Math.round(usage.percent)}%)`);
-			pi.events.emit("editor:set-label", {
-				key: "handoff",
-				text: `handoff ready (${Math.round(usage.percent)}%)`,
-				position: "top",
-				align: "right",
-			});
+			try {
+				pi.events.emit("editor:set-label", {
+					key: "handoff",
+					text: `handoff ready (${Math.round(usage.percent)}%)`,
+					position: "top",
+					align: "right",
+				});
+			} catch {
+				// ignore stale errors during shutdown
+			}
 			ctx.ui.notify(
 				`context at ${Math.round(usage.percent)}% — handoff prompt generated. press enter to continue in a new session.`,
 				"warning",
@@ -310,7 +325,11 @@ export default function (pi: ExtensionAPI) {
 		storedHandoffPrompt = null;
 		handoffPending = false;
 		generating = false;
-		pi.events.emit("editor:remove-label", { key: "handoff" });
+		try {
+			pi.events.emit("editor:remove-label", { key: "handoff" });
+		} catch {
+			// ignore stale errors during shutdown
+		}
 		ctx.ui.setWidget("handoff-provenance", undefined);
 	});
 
@@ -342,12 +361,16 @@ export default function (pi: ExtensionAPI) {
 
 			ctx.ui.setEditorText("/handoff");
 			ctx.ui.setStatus("handoff", "handoff ready");
-			pi.events.emit("editor:set-label", {
-				key: "handoff",
-				text: "handoff ready",
-				position: "top",
-				align: "right",
-			});
+			try {
+				pi.events.emit("editor:set-label", {
+					key: "handoff",
+					text: "handoff ready",
+					position: "top",
+					align: "right",
+				});
+			} catch {
+				// ignore stale errors during shutdown
+			}
 
 			return {
 				content: [{ type: "text", text: `handoff prompt generated for: "${params.goal}". staged /handoff — press Enter to continue in a new session.` }],
