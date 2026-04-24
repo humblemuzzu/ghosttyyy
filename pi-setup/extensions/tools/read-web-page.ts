@@ -248,26 +248,30 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 			return { content: [{ type: "text" as const, text: content }] } as any;
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const url = args.url || "...";
 			const displayUrl = url.length > 60 ? `${url.slice(0, 60)}...` : url;
 			const linkedUrl = url.startsWith("http") ? osc8Link(url, displayUrl) : displayUrl;
-			let text = theme.fg("toolTitle", theme.bold("read_web_page ")) + theme.fg("dim", linkedUrl);
-			const label = args.prompt || args.objective;
-			if (label) {
-				const short = label.length > 40 ? `${label.slice(0, 40)}...` : label;
-				text += theme.fg("muted", ` — ${short}`);
+			let label = theme.fg("toolTitle", theme.bold("read_web_page ")) + theme.fg("dim", linkedUrl);
+			const promptLabel = args.prompt || args.objective;
+			if (promptLabel) {
+				const short = promptLabel.length > 40 ? `${promptLabel.slice(0, 40)}...` : promptLabel;
+				label += theme.fg("muted", ` — ${short}`);
 			}
-			return new Text(text, 0, 0);
+			text.setText(label);
+			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				return container;
 			}
-			const container = new Container();
 			renderAgentTree(details, container, expanded, theme, { label: "read_web_page", header: "statusOnly" });
 			return container;
 		},

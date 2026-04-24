@@ -24,6 +24,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Text } from "@mariozechner/pi-tui";
 import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 
 const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "head" as const, context: 3 },
@@ -217,12 +218,12 @@ export function createSkillTool(): ToolDefinition {
 			),
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const name = args.name || "...";
-			return new Text(
-				theme.fg("dim", "using ") + theme.fg("toolTitle", theme.bold(name)) + theme.fg("dim", " skill"),
-				0, 0,
-			);
+			text.setText(theme.fg("dim", "using ") + theme.fg("toolTitle", theme.bold(name)) + theme.fg("dim", " skill"));
+			return text;
 		},
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -288,19 +289,26 @@ export function createSkillTool(): ToolDefinition {
 			} as any;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			if (content.text.startsWith("<loaded_skill")) {
-				return boxRendererWindowed(
-					() => [textSection(undefined, "skill loaded", true)],
-					{ collapsed: {}, expanded: {} },
-				);
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
 			}
-			return boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
+			const renderer = content.text.startsWith("<loaded_skill")
+				? boxRendererWindowed(
+						() => [textSection(undefined, "skill loaded", true)],
+						{ collapsed: {}, expanded: {} },
+					)
+				: boxRendererWindowed(
+						() => [textSection(undefined, content.text)],
+						{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
+					);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }

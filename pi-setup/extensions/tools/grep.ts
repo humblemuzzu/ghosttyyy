@@ -22,6 +22,7 @@ import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { headTail } from "./lib/output-buffer";
 import { boxRendererWindowed, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 
 const MAX_TOTAL_MATCHES = 100;
 const MAX_COLLECT_MATCHES = 200;
@@ -153,17 +154,17 @@ export function createGrepTool(): ToolDefinition {
 			),
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const pattern = args.pattern || "...";
 			const searchPath = args.path || args.glob || ".";
 			const home = os.homedir();
 			const shortened = searchPath.startsWith(home) ? `~${searchPath.slice(home.length)}` : searchPath;
 			const linkedPath = searchPath.startsWith("/") ? osc8Link(`file://${searchPath}`, shortened) : shortened;
 			const caseSuffix = args.caseSensitive === false ? " -i" : "";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("Grep ")) + theme.fg("dim", `/${pattern}/${caseSuffix} in ${linkedPath}`),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("Grep ")) + theme.fg("dim", `/${pattern}/${caseSuffix} in ${linkedPath}`));
+			return text;
 		},
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -438,7 +439,11 @@ export function createGrepTool(): ToolDefinition {
 			});
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
+
 			const fileGroups: GrepFile[] | undefined = result.details?.fileGroups;
 			const notices: string[] = result.details?.notices ?? [];
 			const basePath: string | undefined = result.details?.searchPath;
@@ -446,7 +451,8 @@ export function createGrepTool(): ToolDefinition {
 			// fallback for old results or error results without fileGroups
 			if (!fileGroups?.length) {
 				const text = result.content?.[0]?.text ?? "(no output)";
-				return new Text(text, 0, 0);
+				container.addChild(new Text(text, 0, 0));
+				return container;
 			}
 
 			const sections = grepToSections(fileGroups);
@@ -460,7 +466,7 @@ export function createGrepTool(): ToolDefinition {
 				}
 			}
 
-			return boxRendererWindowed(
+			const renderer = boxRendererWindowed(
 				() => sections,
 				{
 					collapsed: { maxSections: COLLAPSED_MAX_FILES, excerpts: COLLAPSED_EXCERPTS },
@@ -469,6 +475,8 @@ export function createGrepTool(): ToolDefinition {
 				notices.length > 0 ? notices : undefined,
 				expanded,
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }

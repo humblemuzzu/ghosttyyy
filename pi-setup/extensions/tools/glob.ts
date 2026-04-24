@@ -19,6 +19,7 @@ import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
 import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 
 const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "head" as const, context: 3 },
@@ -63,21 +64,29 @@ export function createGlobTool(): ToolDefinition {
 			),
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const pattern = args.filePattern || args.pattern || "...";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("Find ")) + theme.fg("dim", pattern),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("Find ")) + theme.fg("dim", pattern));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {

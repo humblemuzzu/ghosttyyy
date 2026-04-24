@@ -21,6 +21,7 @@ import * as os from "node:os";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { formatBoxesWindowed, osc8Link, type BoxSection, type BoxBlock, type BoxLine, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { saveChange, simpleDiff } from "./lib/file-tracker";
 import { withFileLock } from "./lib/mutex";
@@ -333,16 +334,16 @@ export function createEditFileTool(): ToolDefinition {
 			),
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const filePath = args.path || "...";
 			const home = os.homedir();
 			const shortened = filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
 			const linked = filePath.startsWith("/") ? osc8Link(`file://${filePath}`, shortened) : shortened;
 			const editCount = Array.isArray(args.edits) ? ` (${args.edits.length} edit${args.edits.length > 1 ? 's' : ''})` : "";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("Edit ")) + theme.fg("dim", linked + editCount),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("Edit ")) + theme.fg("dim", linked + editCount));
+			return text;
 		},
 
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
@@ -541,9 +542,16 @@ export function createEditFileTool(): ToolDefinition {
 			});
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
+
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text(theme.fg("dim", "(no output)"), 0, 0);
+			if (!content || content.type !== "text") {
+				container.addChild(new Text(theme.fg("dim", "(no output)"), 0, 0));
+				return container;
+			}
 
 			const diffText = content.text;
 			const filenameMatch = diffText.match(/^---\s+(\S+)/m);
@@ -551,7 +559,10 @@ export function createEditFileTool(): ToolDefinition {
 			const filePath: string | undefined = result.details?.filePath;
 
 			const sections = parseDiffToSections(filename, diffText);
-			if (!sections?.length || !sections[0].blocks.length) return new Text(theme.fg("dim", "(no changes)"), 0, 0);
+			if (!sections?.length || !sections[0].blocks.length) {
+				container.addChild(new Text(theme.fg("dim", "(no changes)"), 0, 0));
+				return container;
+			}
 
 			// compute stats from unwindowed sections (accurate counts)
 			const stats = computeDiffStats(sections);
@@ -567,7 +578,7 @@ export function createEditFileTool(): ToolDefinition {
 				{ focus: "tail", context: 13 },
 			];
 
-			return {
+			container.addChild({
 				render(width: number): string[] {
 					const lines: string[] = [];
 					lines.push(statsText + replaceNote);
@@ -602,8 +613,9 @@ export function createEditFileTool(): ToolDefinition {
 					return lines;
 				},
 				invalidate() {},
-			};
+			});
 
+			return container;
 		},
 	};
 }

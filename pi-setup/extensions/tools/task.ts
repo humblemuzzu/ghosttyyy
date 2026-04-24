@@ -118,22 +118,23 @@ export function createTaskTool(): ToolDefinition {
 			return subAgentResult(output, singleResult);
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const desc = args.description || "...";
 			const preview = desc.length > 80 ? `${desc.slice(0, 80)}...` : desc;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("Task ")) + theme.fg("dim", preview),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("Task ")) + theme.fg("dim", preview));
+			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				return container;
 			}
-			const container = new Container();
 			renderAgentTree(details, container, expanded, theme, { label: "Task", header: "statusOnly" });
 			return container;
 		},

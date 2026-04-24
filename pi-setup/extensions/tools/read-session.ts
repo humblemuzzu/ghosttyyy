@@ -379,25 +379,29 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 			return subAgentResult(output, singleResult);
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const goal = args.goal
 				? (args.goal.length > 60 ? `${args.goal.slice(0, 60)}...` : args.goal)
 				: "...";
-			let text = theme.fg("toolTitle", theme.bold("read_session ")) + theme.fg("dim", goal);
+			let label = theme.fg("toolTitle", theme.bold("read_session ")) + theme.fg("dim", goal);
 			if (args.session_id) {
 				const shortId = args.session_id.length > 8 ? args.session_id.slice(0, 8) : args.session_id;
-				text += theme.fg("muted", ` (${shortId}...)`);
+				label += theme.fg("muted", ` (${shortId}...)`);
 			}
-			return new Text(text, 0, 0);
+			text.setText(label);
+			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				return container;
 			}
-			const container = new Container();
 			renderAgentTree(details, container, expanded, theme, { label: "read_session", header: "statusOnly" });
 			return container;
 		},

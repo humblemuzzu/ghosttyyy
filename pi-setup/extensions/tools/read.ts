@@ -18,6 +18,7 @@ import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { formatBoxesWindowed, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
 
@@ -219,24 +220,24 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			),
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const filePath = args.path || "...";
 			const home = os.homedir();
 			const shortened = filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
 			const readRange = args.read_range;
-			let context = shortened;
+			let label = shortened;
 			if (Array.isArray(readRange) && readRange.length === 2) {
-				context += `:${readRange[0]}-${readRange[1]}`;
+				label += `:${readRange[0]}-${readRange[1]}`;
 			} else if (args.offset || args.limit) {
 				const start = args.offset || 1;
 				const end = args.limit ? start + args.limit - 1 : undefined;
-				context += `:${start}${end ? `-${end}` : '+'}`;
+				label += `:${start}${end ? `-${end}` : '+'}`;
 			}
-			const linked = filePath.startsWith("/") ? osc8Link(`file://${filePath}`, context) : context;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("Read ")) + theme.fg("dim", linked),
-				0, 0,
-			);
+			const linked = filePath.startsWith("/") ? osc8Link(`file://${filePath}`, label) : label;
+			text.setText(theme.fg("toolTitle", theme.bold("Read ")) + theme.fg("dim", linked));
+			return text;
 		},
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -321,9 +322,16 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			}
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
+
 			const text = result.content?.[0];
-			if (text?.type !== "text") return new Text("(no output)", 0, 0);
+			if (text?.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
 
 			const filePath: string = result.details?.filePath ?? "";
 			const isDir: boolean = result.details?.isDirectory ?? false;
@@ -363,7 +371,7 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			let cachedWidth: number | undefined;
 			let cachedLines: string[] | undefined;
 
-			return {
+			container.addChild({
 				render(width: number): string[] {
 					if (cachedLines !== undefined && cachedWidth === width) {
 						return cachedLines;
@@ -383,7 +391,9 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 					cachedLines = undefined;
 					cachedWidth = undefined;
 				},
-			};
+			});
+
+			return container;
 		},
 	};
 }

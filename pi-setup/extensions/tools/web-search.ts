@@ -18,6 +18,7 @@ import { spawn } from "node:child_process";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { boxRendererWindowed, osc8Link, type BoxSection, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import type { ToolCostDetails } from "./lib/tool-cost";
 
@@ -270,29 +271,39 @@ export function createWebSearchTool(): ToolDefinition {
 			return { content: [{ type: "text" as const, text: output }], details };
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const objective = args.objective || "...";
 			const short = objective.length > 70 ? `${objective.slice(0, 70)}...` : objective;
-			let text = theme.fg("toolTitle", theme.bold("web_search ")) + theme.fg("dim", short);
+			let label = theme.fg("toolTitle", theme.bold("web_search ")) + theme.fg("dim", short);
 			if (args.search_queries?.length) {
-				text += theme.fg("muted", ` [${args.search_queries.join(", ")}]`);
+				label += theme.fg("muted", ` [${args.search_queries.join(", ")}]`);
 			}
-			return new Text(text, 0, 0);
+			text.setText(label);
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
+
 			const sections: BoxSection[] | undefined = result.details?.resultSections;
 			if (!sections?.length) {
 				const text = result.content?.[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				return container;
 			}
-			return boxRendererWindowed(
+			const renderer = boxRendererWindowed(
 				() => sections,
 				{
 					collapsed: { maxSections: 3, excerpts: COLLAPSED_EXCERPTS },
 					expanded: {},
 				},
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }

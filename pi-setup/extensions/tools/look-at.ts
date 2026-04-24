@@ -144,26 +144,30 @@ export function createLookAtTool(config: LookAtConfig = {}): ToolDefinition {
 			return subAgentResult(output, singleResult);
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const path = args.path || "...";
 			const objective = args.objective
 				? (args.objective.length > 60 ? `${args.objective.slice(0, 60)}...` : args.objective)
 				: "";
-			let text = theme.fg("toolTitle", theme.bold("look_at ")) + theme.fg("dim", path);
-			if (objective) text += theme.fg("muted", ` — ${objective}`);
+			let label = theme.fg("toolTitle", theme.bold("look_at ")) + theme.fg("dim", path);
+			if (objective) label += theme.fg("muted", ` — ${objective}`);
 			if (args.referenceFiles?.length) {
-				text += theme.fg("muted", ` (+${args.referenceFiles.length} ref${args.referenceFiles.length > 1 ? "s" : ""})`);
+				label += theme.fg("muted", ` (+${args.referenceFiles.length} ref${args.referenceFiles.length > 1 ? "s" : ""})`);
 			}
-			return new Text(text, 0, 0);
+			text.setText(label);
+			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				return container;
 			}
-			const container = new Container();
 			renderAgentTree(details, container, expanded, theme, { label: "look_at", header: "statusOnly" });
 			return container;
 		},

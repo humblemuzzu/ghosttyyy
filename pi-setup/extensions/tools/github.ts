@@ -25,6 +25,7 @@ import {
 	truncate,
 } from "./lib/github";
 import { boxRendererWindowed, textSection, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 
 /** collapsed: head 3 + tail 5 = 8 visual lines */
 const COLLAPSED_EXCERPTS: Excerpt[] = [
@@ -90,21 +91,27 @@ export function createReadGithubTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const path = args.path || "...";
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "";
 			const display = `${repo}/${path}`;
 			const url = args.repository ? `${args.repository.replace(/\/$/, "")}/blob/HEAD/${path}` : "";
 			const linked = url ? osc8Link(url, display) : display;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("read_github ")) + theme.fg("dim", linked),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("read_github ")) + theme.fg("dim", linked));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
 
 			// parse numbered lines into BoxLine[] with gutters
 			const parsed: BoxLine[] = content.text.split("\n").map((line: string) => {
@@ -114,10 +121,12 @@ export function createReadGithubTool(): ToolDefinition {
 			});
 
 			const section: BoxSection = { blocks: [{ lines: parsed }] };
-			return boxRendererWindowed(
+			const renderer = boxRendererWindowed(
 				() => [section],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }
@@ -189,23 +198,31 @@ export function createSearchGithubTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const pattern = args.pattern || "...";
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "";
 			const linkedRepo = args.repository ? osc8Link(args.repository, repo) : repo;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("search_github ")) + theme.fg("dim", `/${pattern}/ in ${linkedRepo}`),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("search_github ")) + theme.fg("dim", `/${pattern}/ in ${linkedRepo}`));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }
@@ -255,25 +272,33 @@ export function createListDirectoryGithubTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const path = args.path || "/";
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "";
 			const display = `${repo}/${path}`;
 			const url = args.repository ? `${args.repository.replace(/\/$/, "")}/tree/HEAD/${path}` : "";
 			const linked = url ? osc8Link(url, display) : display;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("list_directory_github ")) + theme.fg("dim", linked),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("list_directory_github ")) + theme.fg("dim", linked));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }
@@ -343,21 +368,29 @@ export function createListRepositoriesTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const query = args.pattern || args.organization || "...";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("list_repositories ")) + theme.fg("dim", query),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("list_repositories ")) + theme.fg("dim", query));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }
@@ -421,23 +454,31 @@ export function createGlobGithubTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const pattern = args.filePattern || "...";
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "";
 			const linkedRepo = args.repository ? osc8Link(args.repository, repo) : repo;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("glob_github ")) + theme.fg("dim", `${pattern} in ${linkedRepo}`),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("glob_github ")) + theme.fg("dim", `${pattern} in ${linkedRepo}`));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }
@@ -513,23 +554,31 @@ export function createCommitSearchTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "...";
 			const linkedRepo = args.repository ? osc8Link(args.repository, repo) : repo;
 			const query = args.query || args.author || "";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("commit_search ")) + theme.fg("dim", `${linkedRepo} ${query}`.trim()),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("commit_search ")) + theme.fg("dim", `${linkedRepo} ${query}`.trim()));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }
@@ -592,23 +641,31 @@ export function createDiffTool(): ToolDefinition {
 			}
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "...";
 			const linkedRepo = args.repository ? osc8Link(args.repository, repo) : repo;
 			const range = `${args.base || "?"}...${args.head || "?"}`;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("diff ")) + theme.fg("dim", `${linkedRepo} ${range}`),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("diff ")) + theme.fg("dim", `${linkedRepo} ${range}`));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 	};
 }

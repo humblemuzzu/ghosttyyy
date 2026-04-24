@@ -138,24 +138,28 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 			return subAgentResult(output, singleResult);
 		},
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const preview = args.task
 				? (args.task.length > 80 ? `${args.task.slice(0, 80)}...` : args.task)
 				: "...";
-			let text = theme.fg("toolTitle", theme.bold("oracle ")) + theme.fg("dim", preview);
+			let label = theme.fg("toolTitle", theme.bold("oracle ")) + theme.fg("dim", preview);
 			if (args.files?.length) {
-				text += theme.fg("muted", ` (${args.files.length} file${args.files.length > 1 ? "s" : ""})`);
+				label += theme.fg("muted", ` (${args.files.length} file${args.files.length > 1 ? "s" : ""})`);
 			}
-			return new Text(text, 0, 0);
+			text.setText(label);
+			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				return container;
 			}
-			const container = new Container();
 			renderAgentTree(details, container, expanded, theme, { label: "oracle", header: "statusOnly" });
 			return container;
 		},

@@ -17,6 +17,7 @@ import { saveChange, simpleDiff } from "./lib/file-tracker";
 import { withFileLock } from "./lib/mutex";
 import { resolveWithVariants } from "./read";
 import { boxRendererWindowed, textSection, osc8Link, type Excerpt } from "./lib/box-format";
+import { getText, getContainer } from "./lib/tui";
 
 const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "head" as const, context: 3 },
@@ -56,24 +57,32 @@ export function createFormatFileTool(): ToolDefinition {
 			}),
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
+			const Text = getText();
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const filePath = args.path || "...";
 			const home = os.homedir();
 			const shortened = filePath.startsWith(home) ? `~${filePath.slice(home.length)}` : filePath;
 			const linked = filePath.startsWith("/") ? osc8Link(`file://${filePath}`, shortened) : shortened;
-			return new Text(
-				theme.fg("toolTitle", theme.bold("Format ")) + theme.fg("dim", linked),
-				0, 0,
-			);
+			text.setText(theme.fg("toolTitle", theme.bold("Format ")) + theme.fg("dim", linked));
+			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any) {
+		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+			const Container = getContainer();
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text("(no output)", 0, 0);
-			return boxRendererWindowed(
+			if (!content || content.type !== "text") {
+				container.addChild(new Text("(no output)", 0, 0));
+				return container;
+			}
+			const renderer = boxRendererWindowed(
 				() => [textSection(undefined, content.text)],
 				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
 			);
+			container.addChild(renderer);
+			return container;
 		},
 
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {

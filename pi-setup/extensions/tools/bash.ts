@@ -24,7 +24,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { formatBoxesWindowed, type BoxSection, type Excerpt } from "./lib/box-format";
-import { getText } from "./lib/tui";
+import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { withFileLock } from "./lib/mutex";
 import { evaluatePermission, loadPermissions } from "./lib/permissions";
@@ -203,8 +203,10 @@ export function createBashTool(): ToolDefinition {
 			// at least one of cmd/command must be present
 		}),
 
-		renderCall(args: any, theme: any) {
+		renderCall(args: any, theme: any, context: any) {
 			const Text = getText();
+			// reuse component to prevent render churn — same object every call
+			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const cmd = args.cmd || args.command || "...";
 			const timeout = args.timeout;
 			const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
@@ -212,16 +214,25 @@ export function createBashTool(): ToolDefinition {
 			const lines = cmd.split("\n");
 			const firstLine = lines[0];
 			const multiSuffix = lines.length > 1 ? theme.fg("muted", " …") : "";
-			return new Text(
+			text.setText(
 				theme.fg("toolTitle", theme.bold(`$ ${firstLine}`)) + multiSuffix + timeoutSuffix,
-				0, 0,
 			);
+			return text;
 		},
 
 		renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any, context: any) {
 			const Text = getText();
+			const Container = getContainer();
+
+			// REUSE: same container every call — prevents TUI tree churn during streaming
+			const container = context?.lastComponent ?? new Container();
+			container.clear();
+
 			const content = result.content?.[0];
-			if (!content || content.type !== "text") return new Text(theme.fg("dim", "(no output)"), 0, 0);
+			if (!content || content.type !== "text") {
+				container.addChild(new Text(theme.fg("dim", "(no output)"), 0, 0));
+				return container;
+			}
 
 			// strip `$ command\n\n` prefix — renderCall already shows it
 			let text: string = content.text;
@@ -235,7 +246,10 @@ export function createBashTool(): ToolDefinition {
 			// safety net: sanitize again in case any sequences survived handleData
 			text = sanitizeForDisplay(text);
 
-			if (!text || text === "(no output)") return new Text(theme.fg("dim", "(no output)"), 0, 0);
+			if (!text || text === "(no output)") {
+				container.addChild(new Text(theme.fg("dim", "(no output)"), 0, 0));
+				return container;
+			}
 
 			// --- elapsed time tracking via persistent context.state ---
 			const state = context?.state ?? {};
@@ -254,26 +268,18 @@ export function createBashTool(): ToolDefinition {
 				}
 			}
 
-			const outputLines = text.split("\n");
-
 			if (options.isPartial) {
-				// --- STREAMING: minimal single-line elapsed timer ---
-				// pi's TUI creates separate visual slots for streaming vs final
-				// renders and doesn't clean up the streaming slot. any multi-line
-				// streaming preview persists as a visible ghost above the final
-				// box (fixable only by terminal resize / SIGWINCH).
-				// workaround: render only a single elapsed-time line during
-				// streaming. the ghost is at most 1 dim line — invisible in
-				// practice. the full output appears in the final box render.
+				// STREAMING: elapsed timer inside the stable reused container
 				if (state.startedAt) {
 					const elapsed = ((Date.now() - state.startedAt) / 1000).toFixed(1);
-					return new Text(theme.fg("muted", `${elapsed}s`), 0, 0);
+					container.addChild(new Text(theme.fg("muted", `${elapsed}s`), 0, 0));
 				}
-				return new Text("", 0, 0);
+				return container;
 			}
 
 			// --- FINAL: box format with proper expanded state ---
 			const { expanded } = options;
+			const outputLines = text.split("\n");
 
 			const buildSections = (): BoxSection[] => [{
 				blocks: [{ lines: outputLines.map((l) => ({ text: theme.fg("toolOutput", l), highlight: true })) }],
@@ -285,11 +291,11 @@ export function createBashTool(): ToolDefinition {
 				notices = [`took ${elapsed}s`];
 			}
 
-			// capture expanded in closure — TUI calls render(width) not render(width, expanded)
+			// capture expanded in closure
 			let cachedWidth: number | undefined;
 			let cachedLines: string[] | undefined;
 
-			return {
+			container.addChild({
 				render(width: number): string[] {
 					if (cachedLines !== undefined && cachedWidth === width) {
 						return cachedLines;
@@ -309,7 +315,9 @@ export function createBashTool(): ToolDefinition {
 					cachedLines = undefined;
 					cachedWidth = undefined;
 				},
-			};
+			});
+
+			return container;
 		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
