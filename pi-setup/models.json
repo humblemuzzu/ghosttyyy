@@ -10,6 +10,55 @@
         }
       }
     },
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com/v1",
+      "api": "openai-completions",
+      "apiKey": "DEEPSEEK_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "supportsUsageInStreaming": true,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "openai",
+        "reasoningEffortMap": {
+          "minimal": "high",
+          "low": "high",
+          "medium": "high",
+          "high": "high",
+          "xhigh": "max"
+        }
+      },
+      "models": [
+        {
+          "id": "deepseek-v4-pro",
+          "name": "🧠 DeepSeek V4 Pro — 1M context, thinking mode",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "cost": {
+            "input": 1.74,
+            "output": 3.48,
+            "cacheRead": 0.145,
+            "cacheWrite": 1.74
+          }
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "name": "⚡ DeepSeek V4 Flash — 1M context, fast",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "cost": {
+            "input": 0.14,
+            "output": 0.28,
+            "cacheRead": 0.028,
+            "cacheWrite": 0.14
+          }
+        }
+      ]
+    },
     "local-llama": {
       "baseUrl": "http://localhost:8080/v1",
       "api": "openai-completions",

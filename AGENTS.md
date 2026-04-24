@@ -15,7 +15,7 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.68.0)
+pi CLI (v0.70.0)
   └─ pi-claude-bridge (custom provider, registered as "claude-bridge")
        └─ @anthropic-ai/claude-agent-sdk (spawns Claude Code CLI subprocess)
             └─ Claude API
@@ -276,7 +276,7 @@ Changed `pi.sendUserMessage(prompt)` → `ctx.ui.setEditorText(prompt)` in `exec
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@mariozechner/pi-coding-agent` | 0.68.0 | The pi agent itself (installed via homebrew npm) | No |
+| `@mariozechner/pi-coding-agent` | 0.70.0 | The pi agent itself (installed via homebrew npm) | No |
 | `pi-claude-bridge` | 0.3.1 | Custom provider wrapping Claude Code Agent SDK (legacy, kept as fallback) | **Yes** |
 | `@benvargas/pi-claude-code-use` | 1.0.1 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill | No |
@@ -406,6 +406,7 @@ Shared code used by multiple tools:
 |----------|--------|---------|
 | `anthropic` | `claude-opus-4-6` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
 | `claude-bridge` | `claude-opus-4`, `claude-sonnet-4`, etc. | Via pi-claude-bridge → Claude Code Agent SDK (legacy fallback) |
+| `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | 1M context, thinking mode, OpenAI-compatible API |
 | `local-llama` | Gemma 4 26B-A4B MoE, Qwen3.5 35B-A3B MoE | llama-server on localhost:8080 |
 | `zai` | `glm-5.1` | Current default provider/model |
 
@@ -438,6 +439,9 @@ pi-setup/
 ├── models.json                 # Model overrides + custom providers
 ├── keybindings.json            # Model cycling keys
 ├── permissions.json            # Git/rm safety rules
+├── pi-sub-bar-settings.json    # @marckrenn/pi-sub-bar widget layout
+├── pi-sub-core-settings.json   # pi-sub-core provider/refresh config
+├── pi-vcc-config.json          # @sting8k/pi-vcc compaction config
 ├── README.md                   # Setup docs + session log
 ├── claude-bridge-patches/
 │   ├── index.ts                # Patched pi-claude-bridge (our custom build)

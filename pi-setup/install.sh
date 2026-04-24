@@ -17,6 +17,9 @@
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
+#   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
+#   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
+#   ~/.pi/agent/pi-vcc-config.json        — pi-vcc compaction config
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
 #   6 pi packages (npm/git)     — web-access, context, token-burden, claude-bridge, claude-code-use, sub-bar, autoresearch
 #   1 global npm package        — pi-claude-bridge (active Claude bridge)
@@ -154,6 +157,16 @@ backup_if_exists "$PI_AGENT/permissions.json"
 cp "$SCRIPT_DIR/permissions.json" "$PI_AGENT/permissions.json"
 ok "Permissions installed"
 
+# ── Pi package configs (sub-bar, sub-core, vcc) ──
+info "Installing pi package configs..."
+for cfg in pi-sub-bar-settings.json pi-sub-core-settings.json pi-vcc-config.json; do
+    if [ -f "$SCRIPT_DIR/$cfg" ]; then
+        backup_if_exists "$PI_AGENT/$cfg"
+        cp "$SCRIPT_DIR/$cfg" "$PI_AGENT/$cfg"
+    fi
+done
+ok "Pi package configs installed (sub-bar, sub-core, vcc)"
+
 # ── Pi packages (npm, discovered by pi at runtime) ──
 info "Installing pi packages..."
 packages=(
@@ -222,6 +235,7 @@ echo "│   • 2 themes (gruvbox active)           │"
 echo "│   • 18 config skills + 3 pi skills      │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
+echo "│   • Sub-bar, sub-core, vcc configs      │"
 echo "│   • 9 pi packages                       │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
