@@ -140,6 +140,16 @@ export class OutputBuffer {
 	}
 
 	/**
+	 * format the current output without consuming the pending partial line.
+	 *
+	 * streaming callers use this so a fast command that writes many partial
+	 * chunks does not turn every chunk boundary into a fake line.
+	 */
+	preview(): { text: string; truncatedLines: number } {
+		return this.formatLines(this.pendingLine ? 1 : 0, this.pendingLine);
+	}
+
+	/**
 	 * finalize and format the output.
 	 * returns the formatted text and count of truncated lines.
 	 *
@@ -154,24 +164,30 @@ export class OutputBuffer {
 			this.pendingLine = "";
 		}
 
-		const allLines = this.totalLines;
+		return this.formatLines(0);
+	}
+
+	private formatLines(extraLines: number, pendingLine?: string): { text: string; truncatedLines: number } {
+		const allLines = this.totalLines + extraLines;
 
 		// no truncation needed: output fits in head + tail combined
 		if (allLines <= this.maxHead + this.maxTail) {
 			// dedupe: when output is small, tail contains head entirely
 			// or tail starts within head region
-			const uniqueLines = this.dedupe(allLines);
+			const uniqueLines = this.dedupe(this.totalLines);
+			if (pendingLine) uniqueLines.push(pendingLine);
 			return { text: uniqueLines.join("\n"), truncatedLines: 0 };
 		}
 
 		// truncation: head + marker + tail
 		const truncated = allLines - this.head.length - this.tail.length;
+		const tail = pendingLine ? [...this.tail.slice(1), pendingLine] : this.tail;
 		const parts = [
 			...this.head,
 			"",
 			`... [${truncated} lines truncated] ...`,
 			"",
-			...this.tail,
+			...tail,
 		];
 
 		return { text: parts.join("\n"), truncatedLines: truncated };

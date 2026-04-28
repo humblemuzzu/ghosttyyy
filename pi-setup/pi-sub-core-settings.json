@@ -32,6 +32,14 @@
     "zai": {
       "enabled": "auto",
       "fetchStatus": false
+    },
+    "crof": {
+      "enabled": "auto",
+      "fetchStatus": false
+    },
+    "kimi": {
+      "enabled": "auto",
+      "fetchStatus": false
     }
   },
   "behavior": {
@@ -53,7 +61,9 @@
     "antigravity",
     "codex",
     "kiro",
-    "anthropic"
+    "anthropic",
+    "crof",
+    "kimi"
   ],
   "defaultProvider": null
 }

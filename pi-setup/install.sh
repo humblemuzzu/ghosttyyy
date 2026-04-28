@@ -93,7 +93,7 @@ if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/nul
     info "Installing tool extension dependencies (npm install)..."
     (cd "$PI_AGENT/extensions/tools" && npm install --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
 fi
-ok "Extensions installed (15 extensions)"
+ok "Extensions installed (16 extensions)"
 
 # ── Themes ──
 info "Installing themes..."
@@ -215,6 +215,23 @@ else
     warn "condensed-milk not found or patch file missing — apply patches manually"
 fi
 
+# ── pi-sub-bar patches (CrofAI provider) ──
+SUB_BAR_DIR="/opt/homebrew/lib/node_modules/@marckrenn/pi-sub-bar"
+if [ -d "$SUB_BAR_DIR" ] && [ -d "$SCRIPT_DIR/sub-bar-patches" ]; then
+    info "Applying pi-sub-bar patches (CrofAI provider)..."
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-shared/index.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-shared/index.ts"
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-core/registry.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/registry.ts"
+    mkdir -p "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/impl"
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-core/src/providers/impl/crof.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/impl/crof.ts"
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-core/src/providers/impl/kimi.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/impl/kimi.ts"
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-bar/src/providers/metadata.ts" "$SUB_BAR_DIR/src/providers/metadata.ts"
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-bar/settings-types.ts" "$SUB_BAR_DIR/src/settings-types.ts"
+    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-bar/src/providers/settings.ts" "$SUB_BAR_DIR/src/providers/settings.ts"
+    ok "pi-sub-bar CrofAI + Kimi patches applied"
+else
+    warn "pi-sub-bar not found or patch files missing — apply patches manually"
+fi
+
 # ── pi-tool-display config ──
 TOOL_DISPLAY_CONFIG="$PI_AGENT/extensions/pi-tool-display/config.json"
 if [ -f "$SCRIPT_DIR/extensions/pi-tool-display/config.json" ]; then
@@ -229,7 +246,7 @@ echo "╭───────────────────────�
 echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
-echo "│   • 15 extensions (incl. mentions)      │"
+echo "│   • 16 extensions (incl. crof)          │"
 echo "│   • 25 custom tools (10 replaced + 15)  │"
 echo "│   • 2 themes (gruvbox active)           │"
 echo "│   • 18 config skills + 3 pi skills      │"

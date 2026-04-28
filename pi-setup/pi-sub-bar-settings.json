@@ -107,11 +107,25 @@
         "showTokens": true,
         "showMonthly": true
       }
+    },
+    "crof": {
+      "showStatus": false,
+      "windows": {
+        "showDay": true,
+        "showCredits": true
+      }
+    },
+    "kimi": {
+      "showStatus": false,
+      "windows": {
+        "showWeek": true,
+        "show5h": true
+      }
     }
   },
   "displayThemes": [],
   "displayUserTheme": null,
-  "pinnedProvider": null,
+  "pinnedProvider": "codex",
   "keybindings": {
     "cycleProvider": "ctrl+alt+p",
     "toggleResetFormat": "ctrl+alt+r"

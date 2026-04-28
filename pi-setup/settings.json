@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.70.0",
+  "lastChangelogVersion": "0.70.5",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "medium",
   "theme": "gruvbox",
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-7",
+  "defaultProvider": "kimi-coding",
+  "defaultModel": "k2p6",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -22,11 +22,26 @@
     "~/.pi/agent/extensions/todos.ts",
     "~/.pi/agent/extensions/local-model.ts",
     "~/.pi/agent/extensions/brain-loader.ts",
-    "~/.pi/agent/extensions/mentions.ts"
+    "~/.pi/agent/extensions/mentions.ts",
+    "~/.pi/agent/extensions/opencode-zen.ts",
+    "~/.pi/agent/extensions/crof.ts"
   ],
   "compaction": {
     "enabled": false
   },
+  "enabledModels": [
+    "anthropic/claude-opus-4-6",
+    "anthropic/claude-opus-4-7",
+    "kimi-coding/k2p6",
+    "zai/glm-5.1",
+    "crof/kimi-k2.6",
+    "crof/glm-5.1",
+    "deepseek/deepseek-v4-pro",
+    "deepseek/deepseek-v4-flash",
+    "openai-codex/gpt-5.5",
+    "opencode/*",
+    "opencode/big-pickle"
+  ],
   "steeringMode": "all",
   "followUpMode": "all",
   "doubleEscapeAction": "tree",
@@ -42,5 +57,8 @@
     "npm:@sting8k/pi-vcc",
     "npm:pi-tool-display",
     "npm:@tomooshi/condensed-milk-pi"
-  ]
+  ],
+  "terminal": {
+    "clearOnShrink": true
+  }
 }

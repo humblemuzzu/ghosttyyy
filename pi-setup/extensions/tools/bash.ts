@@ -35,6 +35,7 @@ import { loadSecrets } from "./lib/psst";
 const HEAD_LINES = 50;
 const TAIL_LINES = 50;
 const SIGKILL_DELAY_MS = 3000;
+const STREAM_UPDATE_INTERVAL_MS = 150;
 
 // --- shell config ---
 
@@ -164,6 +165,22 @@ function sanitizeForDisplay(text: string): string {
 		.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
+function hasCompleteEscapeSequence(text: string): boolean {
+	return /^(?:\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1bP[^\x07]*(?:\x07|\x1b\\)|\x1b[_^X][^\x07]*(?:\x07|\x1b\\)|\x1b[()][0-9A-B]|\x1b[78=>])/.test(text);
+}
+
+function splitIncompleteEscape(text: string): { display: string; carry: string } {
+	const lastEsc = text.lastIndexOf("\x1b");
+	if (lastEsc === -1) return { display: text, carry: "" };
+
+	const suffix = text.slice(lastEsc);
+	if (hasCompleteEscapeSequence(suffix) || suffix.length > 1024) {
+		return { display: text, carry: "" };
+	}
+
+	return { display: text.slice(0, lastEsc), carry: suffix };
+}
+
 // --- tool factory ---
 
 export function createBashTool(): ToolDefinition {
@@ -222,9 +239,10 @@ export function createBashTool(): ToolDefinition {
 
 		renderResult(result: any, options: { expanded: boolean; isPartial: boolean }, theme: any, context: any) {
 			const Text = getText();
+
 			const Container = getContainer();
 
-			// REUSE: same container every call — prevents TUI tree churn during streaming
+			// REUSE: same container every call for final expanded/collapsed rerenders
 			const container = context?.lastComponent ?? new Container();
 			container.clear();
 
@@ -256,26 +274,7 @@ export function createBashTool(): ToolDefinition {
 			if (context?.executionStarted && state.startedAt === undefined) {
 				state.startedAt = Date.now();
 			}
-			// timer for periodic elapsed-time updates during streaming
-			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
-				state.interval = setInterval(() => context?.invalidate?.(), 1000);
-			}
-			if (!options.isPartial || context?.isError) {
-				state.endedAt ??= Date.now();
-				if (state.interval) {
-					clearInterval(state.interval);
-					state.interval = undefined;
-				}
-			}
-
-			if (options.isPartial) {
-				// STREAMING: elapsed timer inside the stable reused container
-				if (state.startedAt) {
-					const elapsed = ((Date.now() - state.startedAt) / 1000).toFixed(1);
-					container.addChild(new Text(theme.fg("muted", `${elapsed}s`), 0, 0));
-				}
-				return container;
-			}
+			state.endedAt ??= Date.now();
 
 			// --- FINAL: box format with proper expanded state ---
 			const { expanded } = options;
@@ -399,6 +398,9 @@ async function runCommand(
 		const output = new OutputBuffer(HEAD_LINES, TAIL_LINES);
 		let timedOut = false;
 		let aborted = false;
+		let controlCarry = "";
+		let lastUpdateAt = 0;
+		let pendingUpdate: ReturnType<typeof setTimeout> | undefined;
 
 		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 		if (timeout && timeout > 0) {
@@ -417,16 +419,35 @@ async function runCommand(
 			else signal.addEventListener("abort", onAbort, { once: true });
 		}
 
+		const sendUpdate = () => {
+			pendingUpdate = undefined;
+			lastUpdateAt = Date.now();
+			const { text } = output.preview();
+			onUpdate?.({ content: [{ type: "text", text }] });
+		};
+
+		const scheduleUpdate = () => {
+			if (!onUpdate || pendingUpdate) return;
+			const elapsed = Date.now() - lastUpdateAt;
+			if (elapsed >= STREAM_UPDATE_INTERVAL_MS) {
+				sendUpdate();
+				return;
+			}
+			pendingUpdate = setTimeout(sendUpdate, STREAM_UPDATE_INTERVAL_MS - elapsed);
+		};
+
 		const handleData = (data: Buffer) => {
 			// sanitize at source — strip terminal control sequences before they
 			// enter the buffer or reach onUpdate. prevents escape sequences from
 			// ever flowing through the TUI pipeline (even briefly via onUpdate).
-			output.add(sanitizeForDisplay(data.toString("utf-8")));
-
-			if (onUpdate) {
-				const { text } = output.format();
-				onUpdate({ content: [{ type: "text", text }] });
-			}
+			// keep incomplete escape sequences across chunks so high-volume SSH
+			// output cannot leak a split CSI/OSC sequence as printable garbage.
+			const raw = controlCarry + data.toString("utf-8");
+			const { display, carry } = splitIncompleteEscape(raw);
+			controlCarry = carry;
+			const sanitized = sanitizeForDisplay(display);
+			if (sanitized) output.add(sanitized);
+			scheduleUpdate();
 		};
 
 		child.stdout?.on("data", handleData);
@@ -434,6 +455,7 @@ async function runCommand(
 
 		child.on("error", (err) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
 			resolve({
 				content: [{ type: "text" as const, text: `command error: ${err.message}` }],
@@ -443,8 +465,12 @@ async function runCommand(
 
 		child.on("close", (code) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
 
+			const finalCarry = sanitizeForDisplay(controlCarry);
+			if (finalCarry) output.add(finalCarry);
+			controlCarry = "";
 			const { text: outputText } = output.format();
 
 			if (aborted) {
