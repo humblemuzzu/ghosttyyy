@@ -7,3 +7,4 @@ export * from "./resolve.js";
 export * from "./session-index.js";
 export * from "./sources.js";
 export * from "./provider.js";
+export * from "./agent-source.js";

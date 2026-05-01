@@ -223,6 +223,48 @@ Changed `pi.sendUserMessage(prompt)` → `ctx.ui.setEditorText(prompt)` in `exec
 
 ---
 
+## Agent Mention Directives (@oracle, @finder, @codereview, @task)
+
+**Files:** `extensions/tools/lib/mentions/agent-source.ts` (new), plus modifications to `types.ts`, `sources.ts`, `parse.ts`, `render.ts`, `provider.ts`, `index.ts`, and `extensions/mentions.ts`.
+
+### What It Does
+
+Extends pi's existing @mention system to support agent tool routing. When the user types `@oracle review this auth flow`, a hidden directive is injected into the context telling the model to call the `oracle` tool — not Task, not do it itself.
+
+### How It Works
+
+1. **Parse** — standalone regex `(?<![\w/])@(oracle|finder|codereview|task)(?=[\s.,;:!?)\]}]|$)` matches `@oracle` without requiring `/value` (unlike `@commit/sha`)
+2. **Resolve** — `agent-source.ts` maps each kind to its tool name (e.g. `codereview` → `code_review`, `task` → `Task`)
+3. **Render** — produces `AGENT DIRECTIVE: Call the \`oracle\` tool for this request. The user explicitly tagged @oracle. Do not substitute another tool.`
+4. **Inject** — `mentions.ts` injects the directive as a hidden `display: false` custom message in the `context` hook
+
+### Agent ↔ Tool Mapping
+
+| Mention | Tool | Description |
+|---------|------|-------------|
+| `@oracle` | `oracle` | Expert advisor — architecture, planning, hard bugs |
+| `@finder` | `finder` | Codebase search by concept or behavior |
+| `@codereview` | `code_review` | Code review with diff analysis |
+| `@task` | `Task` | Full subagent for independent parallel work |
+
+### Autocomplete
+
+Agent kinds appear in autocomplete when typing `@`. They complete with a trailing space (`@oracle `) instead of a trailing slash (`@commit/`). This is controlled by the `standalone: true` flag on `MentionSource`.
+
+### Key Design Decisions
+
+- **Standalone flag** — `MentionSource.standalone?: boolean` differentiates valueless mentions from data mentions. The parser builds two separate regexes (data with `/value`, standalone without).
+- **Side-effect import** — `agent-source.ts` has no named exports; it registers sources at module load. `mentions.ts` uses an explicit `import "./tools/lib/mentions/agent-source.js"` to guarantee evaluation.
+- **No text stripping** — the `@oracle` stays in the user's message text. The directive reinforces it; the model sees both.
+- **Structural discrimination in render** — `"agent" in mention` distinguishes agent results from commit/session results without importing a kind list.
+
+### What NOT to Do
+
+- **Don't remove the side-effect import in `mentions.ts`** — the barrel `export *` in `index.ts` doesn't guarantee evaluation of modules with no named exports. The explicit import is required.
+- **Don't add a `/value` to agent mentions** — they're standalone. `@oracle/foo` won't parse and won't trigger a directive.
+
+---
+
 ## Packages (npm)
 
 | Package | Version | Purpose | Patched? |
@@ -258,7 +300,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` template with variable interpolation |
 | Tool Harness | `tool-harness.ts` | Env-gated tool filtering per workspace |
 | Handoff | `handoff.ts` | LLM-driven context transfer with provenance tracking (replaces compaction) |
-| Mentions | `mentions.ts` | @mention resolution (sessions, commits, handoffs) with hidden context injection |
+| Mentions | `mentions.ts` | @mention resolution (sessions, commits, handoffs) + agent directives (@oracle, @finder, @codereview, @task) |
 | Session Name | `session-name.ts` | Auto session naming |
 | Session Breakdown | `session-breakdown.ts` | `/session-breakdown` analytics command |
 | BTW | `btw.ts` | `/btw` side conversations |
@@ -347,7 +389,7 @@ Shared code used by multiple tools:
 | `config.ts` | Shared config reader with schema validation, deep merge, project-local opt-in (ported from @bds_pi/config) |
 | `prompt-patch.ts` | Auto-derive promptSnippet/promptGuidelines from tool descriptions (ported from @bds_pi/prompt-patch) |
 | `fs.ts` | Path resolution and directory walking utilities (ported from @bds_pi/fs) |
-| `mentions/` | @mention system — parse, resolve, render, session/commit indexing, autocomplete provider (ported from @bds_pi/mentions) |
+| `mentions/` | @mention system — parse, resolve, render, agent directives, session/commit indexing, autocomplete provider (ported from @bds_pi/mentions) |
 
 ---
 
@@ -430,7 +472,7 @@ pi-setup/
     ├── tools/                  # 25 custom tools + lib/ (config, prompt-patch, fs, mentions)
     ├── pi-tool-display/
     │   └── config.json         # All tool overrides disabled (required for compatibility)
-    ├── mentions.ts             # @mention resolution extension
+    ├── mentions.ts             # @mention resolution + agent directives extension
     └── *.ts                    # 16 other extensions (15 active + 2 disabled)
 ```
 

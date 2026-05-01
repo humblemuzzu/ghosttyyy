@@ -1,6 +1,12 @@
 import type { MentionableSession } from "./session-index.js";
 
-export type MentionKind = "commit" | "session" | "handoff";
+export type AgentMentionKind = "oracle" | "finder" | "codereview" | "task";
+
+export type MentionKind =
+  | "commit"
+  | "session"
+  | "handoff"
+  | AgentMentionKind;
 
 export interface MentionToken {
   kind: MentionKind;
@@ -37,6 +43,11 @@ export interface ResolvedSessionMention {
   parentSessionPath?: string;
 }
 
+export interface ResolvedAgentMention {
+  tool: string;
+  description: string;
+}
+
 export interface ResolvedCommitMentionResult {
   token: MentionToken;
   status: "resolved";
@@ -51,6 +62,13 @@ export interface ResolvedSessionMentionResult {
   session: ResolvedSessionMention;
 }
 
+export interface ResolvedAgentMentionResult {
+  token: MentionToken;
+  status: "resolved";
+  kind: AgentMentionKind;
+  agent: ResolvedAgentMention;
+}
+
 export interface UnresolvedMentionResult {
   token: MentionToken;
   status: "unresolved";
@@ -60,6 +78,7 @@ export interface UnresolvedMentionResult {
 export type ResolvedMention =
   | ResolvedCommitMentionResult
   | ResolvedSessionMentionResult
+  | ResolvedAgentMentionResult
   | UnresolvedMentionResult;
 
 export function toResolvedSessionMention(

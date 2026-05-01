@@ -29,6 +29,8 @@ export interface MentionSourceContext {
 export interface MentionSource {
   kind: MentionKind;
   description: string;
+  /** true if the kind needs no value — e.g. @oracle vs @commit/sha */
+  standalone?: boolean;
   isEnabled?(context: MentionSourceContext): boolean;
   getSuggestions(
     query: string,
@@ -52,6 +54,10 @@ export function listMentionKinds(): MentionKind[] {
 
 export function isMentionKind(kind: string): kind is MentionKind {
   return mentionKindDescriptions.has(kind as MentionKind);
+}
+
+export function isStandaloneKind(kind: MentionKind): boolean {
+  return sources.get(kind)?.standalone ?? false;
 }
 
 export function createCommitMentionSource(): MentionSource {

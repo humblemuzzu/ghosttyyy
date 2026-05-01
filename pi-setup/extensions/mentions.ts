@@ -1,9 +1,10 @@
 /**
- * mentions extension — @mention resolution for sessions, commits, and handoffs.
+ * mentions extension — @mention resolution for sessions, commits, handoffs,
+ * and agent directives (@oracle, @finder, @codereview, @task).
  *
- * resolves @session/id, @commit/sha, @handoff/id in user messages into
- * hidden turn-local context injected into the conversation. autocomplete
- * registration is optional (only if editor supports it).
+ * data mentions (@session/id, @commit/sha, @handoff/id) inject hidden
+ * context. agent mentions (@oracle, @finder, etc.) inject a directive
+ * telling the model to call the specified subagent tool.
  *
  * ported from bdsqqq/dots mentions extension, adapted for flat-file setup.
  */
@@ -16,6 +17,8 @@ import {
 	clearCommitIndexCache,
 	type ResolvedMention,
 } from "./tools/lib/mentions/index.js";
+// side-effect import — registers @oracle, @finder, @codereview, @task sources
+import "./tools/lib/mentions/agent-source.js";
 
 const CUSTOM_TYPE = "mentions:resolved";
 

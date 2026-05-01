@@ -333,7 +333,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.71.0) coding agent environment — 15 extensions, 25 custom tools, 4 sub-agent types, 12 packages, 16 skills, 4 patched packages, multi-provider support, and custom system prompt.
+Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.71.0) coding agent environment — 15 extensions, 25 custom tools, 4 sub-agent types with @mention routing, 12 packages, 16 skills, 4 patched packages, multi-provider support, and custom system prompt.
 
 ## 🚀 Installation
 
@@ -372,7 +372,7 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | `system-prompt.ts` | Injects Amp identity prompt with runtime variables |
 | `tool-harness.ts` | Env-gated tool filtering for sub-agent sandboxing |
 | `handoff.ts` | LLM-driven context transfer at ~85% (replaces compaction) |
-| `mentions.ts` | @session/@commit/@handoff resolution |
+| `mentions.ts` | @mention resolution + agent directives (@oracle, @finder, @codereview, @task) |
 | `session-name.ts` | Auto-generates 3-5 word session titles via Haiku |
 | `session-breakdown.ts` | `/session-breakdown` analytics with calendar heatmap |
 | `btw.ts` | `/btw` side conversations while agent works |
@@ -411,6 +411,21 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | **code_review** | claude-sonnet-4-6 | Structured 2-phase diff review with XML output |
 | **Task** | inherits parent | Full sub-agent for parallel independent work |
 | **librarian** | claude-haiku-4-5 | Cross-repo GitHub exploration |
+
+### @Agent Mentions
+
+Type `@` followed by an agent name to force the model to use that specific subagent tool:
+
+| Mention | Routes to | When to use |
+|---------|-----------|-------------|
+| `@oracle` | `oracle` tool | "review this", "plan this", "debug this" |
+| `@finder` | `finder` tool | "find where we handle X", "search for Y" |
+| `@codereview` | `code_review` tool | "review my changes", "check this diff" |
+| `@task` | `Task` tool | "do this in parallel", "spawn a subagent" |
+
+Example: `@oracle is this auth middleware safe?` → injects a hidden directive forcing the model to call oracle instead of guessing.
+
+Autocomplete shows all agents when you type `@`. Agent mentions complete with a trailing space (not `/`).
 
 ### Other tools
 

@@ -8,6 +8,7 @@ import { detectMentionPrefix } from "./parse.js";
 import {
   getMentionKindDescription,
   getMentionSource,
+  isStandaloneKind,
   listEnabledMentionKinds,
   type MentionSourceContext,
 } from "./sources.js";
@@ -54,6 +55,8 @@ export class MentionAwareProvider implements AutocompleteProvider {
     if (!prefix) return base;
 
     if (prefix.kind) {
+      // standalone kinds (@oracle, @finder) have no sub-values
+      if (isStandaloneKind(prefix.kind)) return base;
       return {
         items: this.getValueSuggestions(prefix.kind, prefix.valueQuery),
         prefix: prefix.raw,
@@ -114,13 +117,14 @@ export class MentionAwareProvider implements AutocompleteProvider {
   private getKindSuggestions(query: string): AutocompleteItem[] {
     return this.getEnabledKinds()
       .filter((kind) => kind.startsWith(query.toLowerCase()))
-      .map((kind) =>
-        this.trackItem({
-          value: `@${kind}/`,
-          label: `@${kind}/`,
+      .map((kind) => {
+        const sa = isStandaloneKind(kind);
+        return this.trackItem({
+          value: sa ? `@${kind} ` : `@${kind}/`,
+          label: sa ? `@${kind}` : `@${kind}/`,
           description: getMentionKindDescription(kind),
-        }),
-      )
+        });
+      })
       .slice(0, this.maxItems);
   }
 
