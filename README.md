@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 11 extensions, 17 skills, a multi-agent system, and custom TUI.
+A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 15 extensions, 25 custom tools, 12 packages, 16 skills, multi-provider support, and a custom agent identity.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -333,279 +333,123 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Everything in `pi-setup/` is a portable backup of my full [pi](https://github.com/badlogic/pi-mono) coding agent environment — the custom TUI, all 13 extensions, the multi-agent system (oracle, finder, librarian, task), 17 skills, 6 community packages, 2 themes, and all the config that makes it work the way I want.
+Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.71.0) coding agent environment — 15 extensions, 25 custom tools, 4 sub-agent types, 12 packages, 16 skills, 4 patched packages, multi-provider support, and custom system prompt.
 
-## 🚀 Pi Setup Installation
+## 🚀 Installation
 
 ```bash
-cd pi-setup
-chmod +x install.sh
-./install.sh
+cd pi-setup && chmod +x install.sh && ./install.sh
 ```
 
-One command. It backs up your existing pi config, copies everything into the right places (`~/.pi/agent/` and `~/.config/agents/skills/`), installs npm dependencies, and installs 6 community packages. Restart pi after.
+Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/agents/skills/`, installs packages and re-applies patches. Restart pi after.
 
 ---
 
-## 📦 Community Packages (6)
+## 📦 Packages (12 active)
 
-Installed automatically by `install.sh` via `pi install`:
-
-| Package | What it does |
-|---------|-------------|
-| [`pi-web-access`](https://pi.dev/packages) | Web search, URL fetching, GitHub cloning, PDF extraction, YouTube transcripts |
-| [`pi-context`](https://pi.dev/packages) | Context window awareness — agent knows how full its context is |
-| [`pi-powerline-footer`](https://pi.dev/packages) | Powerline status bar — model, tokens, cost, git branch in the footer |
-| [`pi-anycopy`](https://pi.dev/packages) | Enhanced `/tree` with syntax-highlighted preview and clipboard copy |
-| [`pi-token-burden`](https://pi.dev/packages) | `/token-burden` — shows which tools/skills/extensions eat your context |
-| [`lsp-pi`](https://pi.dev/packages) | LSP diagnostics for TypeScript, Dart/Flutter, Python, Go, Kotlin, Swift, Rust, Vue, Svelte |
-
----
-
-## 🧩 Extensions (13)
-
-Extensions are TypeScript files that hook into pi's extension API to add commands, modify the TUI, register tools, and react to agent events.
-
-### `editor/` — Custom Bordered Editor
-
-Replaces pi's default editor with a box-drawing bordered input area (`╭╮╰╯`). The prompt bar is **enlarged** (minimum 4 content lines instead of the default) so you have room to compose multi-line prompts.
-
-**What it shows in the borders:**
-- **Top-left:** Context usage (`42% of 200k`) and session cost (`$1.23`)
-- **Top-right:** Active model (`claude-opus-4-6`) and thinking level (`high`)
-- **Bottom-right:** Current directory and git branch (`~/myproject (main)`)
-
-**Below the editor:** An animated activity spinner that shows what the agent is doing in real-time — `· turn 2 · read(file.ts) · 12s` — plus uncommitted git diff stats.
-
-Other extensions can inject labels into the borders via an event bus (`editor:set-label` / `editor:remove-label`).
-
-Also makes tool call backgrounds transparent — removes the colored boxes that pi puts around tool results for a cleaner look.
-
-### `btw.ts` — Side Conversations
-
-`/btw <question>` — ask a question **while the main agent is busy working**. It streams the answer in a floating widget above the editor using the same model and context. Think of it as a second conversation channel.
-
-The btw thread maintains its own history — follow-up `/btw` calls continue the thread. The main agent never sees btw messages unless you explicitly inject them.
-
-**Commands:**
-| Command | What it does |
-|---------|-------------|
-| `/btw <question>` | Ask a side question (works while agent is running) |
-| `/btw:new <question>` | Start a fresh btw thread |
-| `/btw:clear` | Dismiss the widget |
-| `/btw:inject [msg]` | Send the full btw conversation into the main agent's context |
-| `/btw:summarize [msg]` | Summarize the btw thread and inject the summary into main context |
-
-### `handoff.ts` — Context Transfer (Replaces Compaction)
-
-When the context window hits ~85%, instead of compacting (summarizing and losing detail), this extension generates a focused **handoff prompt** via LLM and stages `/handoff` in the editor. Press Enter → new session starts with curated context from the old one.
-
-You can also trigger it manually anytime: `/handoff implement the auth system` — it extracts relevant context from the current session and starts a new session focused on that goal.
-
-Also shows provenance — when a session was handed off from another, it displays `↳ handed off from: <parent session name>` in the UI.
-
-**This completely replaces pi's built-in compaction.** Compaction is disabled in settings.
-
-### `session-name.ts` — Auto Session Naming
-
-Automatically generates a 3-5 word title for each session from the first user message. Uses Haiku for speed/cost. The name appears while the agent is still thinking on the first turn.
-
-### `session-breakdown.ts` — Usage Analytics
-
-`/session-breakdown` opens an interactive TUI that analyzes all your pi sessions and shows:
-- Sessions, messages, tokens, and cost per day
-- GitHub-contributions-style calendar heatmap (color = model mix, brightness = activity)
-- Model breakdown table (which models used how many sessions/tokens/cost)
-- Switchable between 7/30/90 day ranges
-
-### `system-prompt.ts` — Amp System Prompt Injection
-
-Injects the full **Amp system prompt** (`prompt.amp.system.md`) into the agent's context on every turn, with runtime-interpolated variables: working directory, OS info, git remote, session ID, workspace listing.
-
-This is what makes the agent behave as "Amp" — the identity, coding philosophy, tool selection rules, and communication style all come from this prompt. See the [Agent Prompts](#-agent-prompts-the-amp-system) section below.
-
-### `tool-harness.ts` — Sub-Agent Tool Filtering
-
-When spawning sub-agents (via the Task tool), this extension reads `PI_INCLUDE_TOOLS` from the environment and restricts which tools the sub-agent can use. For example, a read-only search agent only gets `read, grep, glob, ls` — no file editing, no bash.
-
-### `notify.ts` — Desktop Notifications
-
-Sends a native desktop notification via OSC 777 escape sequence when the agent finishes and is waiting for input. Shows the last few words of the agent's response as the notification body.
-
-Works in Ghostty, iTerm2, WezTerm. Doesn't work in Kitty or Terminal.app.
-
-### `todos.ts` — File-Based Todo Manager
-
-A full todo system stored as markdown files in `.pi/todos/`. Each todo is a standalone `.md` file with JSON frontmatter (id, title, tags, status, assignment).
-
-**TUI:** `/todos` opens an interactive overlay with fuzzy search, action menus (work, refine, close, reopen, delete), and keyboard shortcuts. The agent can also use todos programmatically via the `todo` tool.
-
-**Features:** Auto-GC of closed todos after 7 days, session-based locking (claim/release), tag filtering, clipboard copy.
-
-### `command-palette/` — Command Palette
-
-`Ctrl+Shift+P` opens a VS Code-style command palette overlay. Shows all available commands (built-in, extension, and skill commands) with fuzzy search, source badges `[cmd]` `[ext]` `[skill]`, and descriptions.
-
-### `local-model.ts` — Local LLM Server Manager
-
-`/local` — manage a local llama.cpp server for offline/free model usage. Supports Gemma 4 26B, Qwen3.5 35B MoE, and Qwen 27B Opus with configurable context windows (64k/128k/256k). Start, stop, check status, and switch models without leaving pi.
-
-### `md-export.ts` — Session Markdown Export
-
-`/md` — export the current session as clean, readable Markdown. Saves to your **current working directory** (not a buried system path). Supports exporting the current branch or full session, last N turns, optional tool call and thinking block inclusion, and clipboard copy.
-
-**Flags:** `/md tc` (include tool calls), `/md t` (include thinking), `/md all` (full file), `/md 3` (last 3 turns). Combine freely: `/md tc t all 3`.
-
-### `tools/` — Full Replacement Tool Suite
-
-A complete set of custom tools that replace pi's built-in tools with enhanced versions. This is where the agent's actual capabilities live — file reading, editing, searching, running commands, web access, sub-agents, and more.
-
-**Tools included:**
-
-| Tool | What it does |
-|------|-------------|
-| `read.ts` | Read files and directories with line numbers, image support, range slicing |
-| `edit-file.ts` | Precise text replacement with exact string matching and diffs |
-| `create-file.ts` | Create new files with auto-created parent directories |
-| `bash.ts` | Execute shell commands with output truncation (first/last 50 lines) |
-| `grep.ts` | Ripgrep-powered fast search with regex and literal modes |
-| `glob.ts` | File pattern matching sorted by modification time |
-| `ls.ts` | Directory listing |
-| `format-file.ts` | Run prettier/biome on a file |
-| `undo-edit.ts` | Revert the last edit to a file |
-| `finder.ts` | **Sub-agent** — spawns a Haiku agent for multi-step code search |
-| `oracle.ts` | **Sub-agent** — spawns a Sonnet agent for architecture review, hard bugs, planning |
-| `librarian.ts` | **Sub-agent** — spawns a Haiku agent to explore GitHub repos via API |
-| `task.ts` | **Sub-agent** — spawns a full Opus agent for independent parallel work |
-| `code-review.ts` | Generates and reviews diffs with structured feedback |
-| `look-at.ts` | Examine specific UI/visual elements |
-| `skill.ts` | Load skill instruction files into agent context |
-| `github.ts` | GitHub API tools — read files, search code, list repos, view diffs, commit history |
-| `read-web-page.ts` | Fetch and convert web pages to markdown |
-| `web-search.ts` | Search the web for documentation or information |
-| `search-sessions.ts` | Search past pi session history by keyword, file, or date |
-| `read-session.ts` | Extract relevant content from a past session |
-
-**`lib/` directory** contains shared utilities: output buffering, HTML-to-markdown conversion, file tracking, GitHub API helpers, sub-agent rendering, prompt interpolation, permissions checking, and tool cost tracking.
+| Package | Purpose | Patched? |
+|---------|---------|----------|
+| `pi-web-access` | Web search (Exa MCP free, Perplexity, Gemini), URL fetching, GitHub API | No |
+| `pi-context` | Context management: `context_log`, `context_tag`, `context_checkout` | No |
+| `pi-token-burden` | Token usage tracking and display | No |
+| `@benvargas/pi-claude-code-use` | Claude Max subscription via OAuth rewrite | No |
+| `@marckrenn/pi-sub-bar` | Usage widget in status bar | **Yes** |
+| `pi-autoresearch` | Autonomous experiment loop for optimization | No |
+| `@sting8k/pi-vcc` | Algorithmic compaction + `vcc_recall` history search | No |
+| `pi-tool-display` | Thinking labels, native user message box | **Config** |
+| `@tomooshi/condensed-milk-pi` | Bash output compression + stale result masking | **Yes** |
+| `pi-gpt-config` | GPT Codex-parity: personality, verbosity, fast mode | **Yes** |
+| `pi-computer-use` | macOS GUI automation: screenshots, AX clicks, typing, browser nav | No |
+| `pi-ask` | Structured `ask_user` tool with TUI — single/multi select, notes, review | No |
 
 ---
 
-## 🤖 Agent Prompts — The Amp System
+## 🧩 Extensions (15 active, 2 disabled)
 
-The `agents/` folder contains the prompt files that define how the agent and its sub-agents behave. This is the brain of the whole setup.
+| Extension | Purpose |
+|-----------|---------|
+| `editor/` | Custom box-drawing editor with token/cost/model/git labels |
+| `system-prompt.ts` | Injects Amp identity prompt with runtime variables |
+| `tool-harness.ts` | Env-gated tool filtering for sub-agent sandboxing |
+| `handoff.ts` | LLM-driven context transfer at ~85% (replaces compaction) |
+| `mentions.ts` | @session/@commit/@handoff resolution |
+| `session-name.ts` | Auto-generates 3-5 word session titles via Haiku |
+| `session-breakdown.ts` | `/session-breakdown` analytics with calendar heatmap |
+| `btw.ts` | `/btw` side conversations while agent works |
+| `notify.ts` | Desktop notifications via OSC 777 (Ghostty/iTerm2/WezTerm) |
+| `todos.ts` | File-based todo manager with full TUI |
+| `local-model.ts` | `/llm start\|stop\|status` for llama-server |
+| `opencode-zen.ts` | Curated models.dev provider (free + paid tiers) |
+| `crof.ts` | Budget OSS model provider (DeepSeek/GLM/Qwen/Kimi) |
+| `command-palette/` | Ctrl+Shift+P fuzzy command overlay |
+| `tools/` | 25 custom tools (see below) |
 
-### `prompt.amp.system.md` — Main Agent Identity
+**Disabled (on disk, not loaded):** `brain-loader.ts` (brain vault injection), `md-export.ts` (session→markdown)
 
-The core system prompt that makes the agent "Amp." Injected on every turn by the `system-prompt.ts` extension with runtime variables (`{cwd}`, `{os}`, `{repo}`, `{sessionId}`, etc.).
+---
 
-**Key behaviors it defines:**
-- **"Read first"** — always open files before editing, understand patterns before changing them
-- **"Do the work yourself"** — use direct tools for most tasks, sub-agents are a deliberate escalation
-- **"Edit, then verify"** — check imports, types, and logic after every edit
-- **"Context is not the bottleneck"** — 200k tokens is enough, don't skip reading to save space
-- **Tool selection hierarchy** — when to use direct tools vs. finder vs. oracle vs. Task vs. librarian
-- **The Task rule** — ≤5 tool calls → do it yourself; 5+ independent workstreams → parallel Tasks
-- **Code defaults** — match surrounding style, error handling at real boundaries, explicit over clever
-- **Communication** — state intent, do the work, summarize. Don't ask for clarification when you can read the code.
+## 🛠 Custom Tools (25)
 
-### `agent.amp.oracle.md` — Oracle Sub-Agent
+### Replacements (override pi built-ins)
 
-The prompt for the **Oracle** — a senior technical advisor sub-agent running on **Claude Sonnet** with `read, grep, glob, ls, bash` tools.
+| Tool | Enhancement |
+|------|------------|
+| **bash** | Git trailers, mutex locking, psst secret injection + scrubbing, permission rules, ANSI sanitization |
+| **read** | Image support (jpg/png/gif/webp), line numbers, `.env` blocking |
+| **edit** | Mutex locking, redaction detection, 3-tier matching, change tracking |
+| **write** | Mutex locking, auto parent directory creation |
+| **grep** | Per-file limits, 200-char truncation, context lines |
+| **find** | `rg --files`, mtime sort |
+| **ls**, **format_file**, **undo_edit**, **skill** | Enhanced versions of pi defaults |
 
-The parent agent consults the oracle for:
-- Code reviews and architecture feedback
-- Hard multi-file bugs that need deep reasoning
-- Complex planning and design decisions
+### Sub-agents
 
-**Key behaviors:**
-- Verify before claiming — read the actual code, grep for actual usages
-- Be opinionated — give recommendations, not options
-- Surface non-obvious problems — race conditions, state inconsistencies, resource leaks
-- Reference code precisely — every claim includes `path/file:line` and a snippet
-- Three-phase investigation: understand scope → analyze deeply → synthesize by severity
-- Structured output: Critical → Important → Minor → Architecture Notes → Recommendation
+| Tool | Model | Purpose |
+|------|-------|---------|
+| **finder** | claude-haiku-4-5 | Concept-based parallel code search (8+ searches/turn) |
+| **oracle** | claude-sonnet-4-6 | Architecture review, complex planning |
+| **code_review** | claude-sonnet-4-6 | Structured 2-phase diff review with XML output |
+| **Task** | inherits parent | Full sub-agent for parallel independent work |
+| **librarian** | claude-haiku-4-5 | Cross-repo GitHub exploration |
 
-### `agent.amp.finder.md` — Finder Sub-Agent
+### Other tools
 
-A fast code search agent running on **Claude Haiku** with `read, grep, glob, ls` (read-only).
+`read_web_page`, `read_session`, `search_sessions`, `github` (×7 — read, search, list-dir, list-repos, glob, commit-search, diff)
 
-Designed to finish in 2-3 turns with 6-10 parallel tool calls per turn:
-- **Turn 1:** Cast a wide net — grep for exact symbols, related symbols, glob for filenames, ls directories
-- **Turn 2:** Confirm — read files at exact line ranges from grep hits, follow imports
-- **Turn 3 (if needed):** Trace connections — follow call chains, data flow
+**Disabled:** `look-at` (low quality), `web-search` (conflicts with pi-web-access)
 
-Returns structured findings with file paths, line numbers, code snippets, and connection analysis.
+---
 
-### `agent.amp.librarian.md` — Librarian Sub-Agent
-
-A cross-repository codebase explorer running on **Claude Haiku** with GitHub API tools (`read_github`, `search_github`, `list_directory_github`, `glob_github`, `commit_search`, `diff`).
-
-Used when the parent agent needs to understand code in **external GitHub repositories** it can't clone locally. Explores thoroughly — reads actual source files, follows dependency chains, traces callers and callees.
-
-### Other Prompt Files
+## 🤖 Agent Prompts
 
 | File | Purpose |
 |------|---------|
-| `prompt.amp.code-review-system.md` | System prompt for the code review tool — how to analyze diffs |
-| `prompt.amp.code-review-report.md` | Template for code review output format |
-| `prompt.amp.handoff-extraction.md` | Instructions for the LLM that extracts context during handoff |
-| `prompt.amp.look-at.md` | Prompt for the look-at (visual examination) tool |
-| `prompt.amp.read-web-page.md` | Prompt for web page reading with objective-based extraction |
-| `prompt.harness-docs.pi.md` | Pi-specific documentation injected into the system prompt |
+| `prompt.amp.system.md` | Main Amp identity — behavior rules, tool selection, code defaults |
+| `agent.amp.oracle.md` | Oracle sub-agent: verify before claiming, be opinionated, reference precisely |
+| `agent.amp.finder.md` | Finder sub-agent: 2-3 turns, 6-10 parallel searches per turn |
+| `agent.amp.librarian.md` | Librarian sub-agent: cross-repo GitHub exploration |
+| `prompt.amp.code-review-*.md` | Code review system prompt + XML report format |
+| `prompt.amp.handoff-extraction.md` | Handoff context extraction prompt |
+| `prompt.harness-docs.pi.md` | Pi-specific harness documentation |
 
 ---
 
-## 🎨 Pi Themes (2)
+## 🤖 Providers
 
-Custom color themes for pi's TUI. These control the colors of everything — borders, text, syntax highlighting, tool output, thinking indicators, diffs, markdown rendering.
-
-### Gruvbox (Active)
-
-Warm retro palette with orange/yellow accents. Based on the popular Gruvbox color scheme.
-
-- Accent: yellow
-- Borders: yellow / bright yellow
-- Code blocks: bright green
-- Headings: bright orange
-- Links: bright aqua
-- Diffs: bright green / bright red
-
-### Night Owl
-
-Dark blue palette inspired by Sarah Drasner's Night Owl theme.
-
-- Accent: teal (`#80CBC4`)
-- Borders: blue / cyan
-- Code blocks: green
-- Headings: blue
-- Links: cyan
-- Background: deep navy (`#011627`)
+| Provider | Models | Purpose |
+|----------|--------|---------|
+| `anthropic` | Claude Opus 4-6/4-7 (1M context) | **Primary** — Claude Max via pi-claude-code-use |
+| `deepseek` | V4 Pro, V4 Flash | 1M context, thinking mode |
+| `local-llama` | Qwen3.6 35B-A3B, Gemma 4 E2B | llama-server on localhost:8080 |
+| `nvidia` | GLM-5.1, DeepSeek V4 Pro | NVIDIA NIM API |
+| `opencode` | models.dev catalog | Curated free/paid models |
+| `crof` | Budget OSS models | Quantized DeepSeek/GLM/Qwen/Kimi |
 
 ---
 
-## 🧠 Skills (17)
+## 🧠 Skills (16 config + 1 pi-level)
 
-Skills are loadable instruction files (markdown) that inject domain-specific workflows and rules into the agent's context when activated. The agent loads them with the `skill` tool — e.g., `skill: git` before committing.
-
-| Skill | What it teaches the agent |
-|-------|--------------------------|
-| **git** | Ship workflow (stage → commit → push), worktree for parallel branches, hunks for selective staging, conventional commits, never force push, never `git add -A` |
-| **review** | Epistemic standards — trace-or-delete (every claim needs a file:line reference), confidence labeling, falsification. Load before code reviews or debugging. |
-| **spawn** | Spawn parallel agents in tmux with thread linkage for independent side-quests |
-| **coordinate** | Orchestrate multiple agents with bidirectional tmux communication for multi-hour autonomous runs |
-| **tmux** | Manage background processes in tmux windows — dev servers, build watchers, long-running tasks |
-| **dig** | Systematic investigation methodology — hypothesis-driven analysis with verification agents for incident response, root cause analysis |
-| **document** | Documentation philosophy — explain why, not what. For JSDoc, READMEs, inline comments |
-| **write** | Prose style guide — enforces precise language, supported claims, no hyperbole. Applied to conversations, commits, PRs |
-| **amp-voice** | Write in Amp's voice — direct, technical, opinionated, honest. For technical writing. |
-| **remember** | Record context that would help future sessions — learnings, gotchas, decisions worth preserving |
-| **rounds** | Iterate with spawned agents until stable — bounded verification with explicit exit criteria |
-| **spar** | Adversarial review via spawned antithesis agent — prunes false positives from existing findings |
-| **report** | Report back to a coordinator when spawned as a sub-agent |
-| **shepherd** | Watchdog for long autonomous runs — supervises tmux agents, respawns on death, orchestrates handoffs |
-| **nexus-fix** | Investigation-to-PR workflow for Linear issues — hypothesis-driven debugging with browser validation |
-| **chrome-cdp** | Interact with your live Chrome browser — screenshots, accessibility tree, click, type, eval JS, navigate. Connects to tabs you already have open via Chrome DevTools Protocol. Requires Chrome remote debugging enabled (`chrome://inspect/#remote-debugging`) and Node.js 22+. |
-| **handoff** | Context management via handoff instead of compaction (complements the handoff extension) |
+`amp-voice`, `chrome-cdp`, `coordinate`, `dig`, `document`, `git`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `handoff` at pi level.
 
 ---
 
@@ -613,93 +457,51 @@ Skills are loadable instruction files (markdown) that inject domain-specific wor
 
 ```json
 {
-  "theme": "gruvbox",
   "defaultProvider": "anthropic",
   "defaultModel": "claude-opus-4-6",
   "defaultThinkingLevel": "high",
-  "hideThinkingBlock": false,
-  "compaction": { "enabled": false },
-  "quietStartup": true,
-  "doubleEscapeAction": "tree",
-  "steeringMode": "all",
-  "followUpMode": "all"
+  "theme": "gruvbox",
+  "compaction": { "enabled": false }
 }
 ```
 
-**Key choices:**
-- **Opus as default** — the most capable model for coding tasks
-- **High thinking** — extended thinking enabled and visible (not hidden)
-- **Compaction disabled** — handoff extension replaces it entirely
-- **Double-escape = tree** — pressing Esc twice shows the session tree (branch history)
-- **Quiet startup** — no splash screen or changelog on launch
+Compaction disabled → replaced by handoff system + manual `/pi-vcc`.
 
 ---
 
-## 🔒 Permissions
+## 🔒 Security
 
-Safety rails that prevent the agent from doing dangerous things:
-
-| Rule | What it blocks | Why |
-|------|---------------|-----|
-| Reject `git add -A` / `git add .` | Staging all files blindly | Unstaged changes may belong to other branches or sessions |
-| Reject `git push --force` | Force pushing | Could destroy remote history. Use `fetch + rebase + push` instead |
-| Reject `rm` | Deleting files with `rm` | Use `trash` instead — recoverable deletion |
-| Allow everything else | — | Default allow for all other tool calls |
+- **Permissions:** Block `git add -A`, `git push --force`, `rm` (use `trash`)
+- **psst:** Secret vault injection + output scrubbing (values never reach the LLM)
+- **Redaction guard:** Edit tool rejects placeholder patterns in code
+- **Git trailers:** Session ID auto-injected into every commit
 
 ---
 
-## 📁 Pi Setup File Structure
+## 🎨 Pi Themes
+
+**Gruvbox** (active) — warm retro palette. **Night Owl** — dark blue.
+
+---
+
+## 📁 Pi Setup Structure
 
 ```
 pi-setup/
-├── install.sh              ← one-command installer (backs up existing config)
-├── README.md               ← detailed install docs
-├── settings.json           ← pi settings (model, theme, thinking, etc.)
-├── keybindings.json        ← custom keybindings
-├── permissions.json        ← safety rails (no force push, no rm, etc.)
-├── extensions/             ← 11 extensions
-│   ├── editor/             ← custom bordered editor + activity spinner
-│   ├── command-palette/    ← Ctrl+Shift+P command overlay
-│   ├── tools/              ← full replacement tool suite (20+ tools)
-│   │   └── lib/            ← shared utilities
-│   ├── btw.ts              ← side conversations
-│   ├── handoff.ts          ← context transfer
-│   ├── session-name.ts     ← auto naming
-│   ├── session-breakdown.ts ← usage analytics
-│   ├── system-prompt.ts    ← Amp identity injection
-│   ├── tool-harness.ts     ← sub-agent tool filtering
-│   ├── notify.ts           ← desktop notifications
-│   └── todos.ts            ← todo manager
-├── themes/                 ← 2 TUI themes
-│   ├── gruvbox.json        ← warm retro (active)
-│   └── nightowl.json       ← dark blue
-├── agents/                 ← agent prompt files
-│   ├── prompt.amp.system.md          ← main Amp system prompt
-│   ├── agent.amp.oracle.md           ← Oracle (Sonnet) sub-agent prompt
-│   ├── agent.amp.finder.md           ← Finder (Haiku) sub-agent prompt
-│   ├── agent.amp.librarian.md        ← Librarian (Haiku) sub-agent prompt
-│   ├── prompt.amp.code-review-*.md   ← code review system + report
-│   ├── prompt.amp.handoff-*.md       ← handoff extraction
-│   └── prompt.harness-docs.pi.md     ← pi harness documentation
-├── config-skills/          ← 16 skills
-│   ├── git/                ← git workflows
-│   ├── review/             ← epistemic standards
-│   ├── spawn/              ← parallel agent spawning
-│   ├── coordinate/         ← multi-agent orchestration
-│   ├── tmux/               ← background process management
-│   ├── dig/                ← investigation methodology
-│   ├── document/           ← documentation philosophy
-│   ├── write/              ← prose style guide
-│   ├── amp-voice/          ← Amp's writing voice
-│   ├── remember/           ← context persistence
-│   ├── rounds/             ← iterative verification
-│   ├── spar/               ← adversarial review
-│   ├── report/             ← sub-agent reporting
-│   ├── shepherd/           ← autonomous run watchdog
-│   ├── nexus-fix/          ← issue-to-PR workflow
-│   └── chrome-cdp/         ← Chrome browser interaction via DevTools Protocol
-└── pi-skills/              ← 1 pi-level skill
-    └── handoff/            ← handoff context management
+├── install.sh                  # Backs up + deploys everything
+├── settings.json, models.json, keybindings.json, permissions.json
+├── claude-bridge-patches/      # Patched pi-claude-bridge (inactive)
+├── condensed-milk-patches/     # Patched condensed-milk
+├── sub-bar-patches/            # Patched pi-sub-bar (CrofAI + Kimi)
+├── gpt-config-patches/         # Patched pi-gpt-config (tool discipline removed)
+├── agents/                     # 10 prompt templates
+├── themes/                     # gruvbox + nightowl
+├── pi-skills/                  # handoff skill
+├── config-skills/              # 16 skills
+└── extensions/
+    ├── tools/                  # 25 custom tools + lib/
+    ├── editor/, command-palette/
+    └── *.ts                    # 15 active + 2 disabled extensions
 ```
 
 ---

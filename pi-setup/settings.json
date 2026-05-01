@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.71.0",
+  "lastChangelogVersion": "0.71.1",
   "hideThinkingBlock": false,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
@@ -56,7 +56,8 @@
     "npm:pi-tool-display",
     "npm:@tomooshi/condensed-milk-pi",
     "https://github.com/edxeth/pi-gpt-config",
-    "https://github.com/injaneity/pi-computer-use@v0.2.1"
+    "https://github.com/injaneity/pi-computer-use@v0.2.1",
+    "https://github.com/eko24ive/pi-ask"
   ],
   "terminal": {
     "clearOnShrink": true

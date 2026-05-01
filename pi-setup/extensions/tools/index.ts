@@ -31,7 +31,7 @@ import { createLibrarianTool } from "./librarian";
 import { createCodeReviewTool } from "./code-review";
 // import { createLookAtTool } from "./look-at"; // disabled — cheap model produces low-quality image analysis
 import { createReadWebPageTool } from "./read-web-page";
-import { createWebSearchTool } from "./web-search";
+// import { createWebSearchTool } from "./web-search"; // disabled — conflicts with pi-web-access's web_search
 import { createSearchSessionsTool } from "./search-sessions";
 import { createReadSessionTool } from "./read-session";
 import { readAgentPrompt } from "./lib/pi-spawn";
@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createReadWebPageTool({
 		systemPrompt: readAgentPrompt("prompt.amp.read-web-page.md"),
 	}));
-	pi.registerTool(createWebSearchTool());
+	// web_search provided by pi-web-access package (has curator, response caching, Exa)
 	pi.registerTool(createSearchSessionsTool());
 	pi.registerTool(createReadSessionTool());
 

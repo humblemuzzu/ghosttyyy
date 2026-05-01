@@ -239,8 +239,9 @@ Changed `pi.sendUserMessage(prompt)` → `ctx.ui.setEditorText(prompt)` in `exec
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-gpt-config` | 1.0.0 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
 | `pi-computer-use` | 0.2.1 | macOS GUI automation: screenshots, AX clicks, typing, browser nav (GitHub install) | No |
+| `pi-ask` | latest | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `@sting8k/pi-vcc`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-computer-use`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `@sting8k/pi-vcc`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-computer-use`, `pi-ask`
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
@@ -268,7 +269,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | CrofAI | `crof.ts` | Budget OSS model provider (quantized DeepSeek/GLM/Qwen/Kimi) |
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
-| Tools | `tools/` | 26 custom tools (see below) |
+| Tools | `tools/` | 25 custom tools (see below) |
 
 **Disabled (on disk, not in settings.json):**
 
@@ -279,7 +280,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
 ---
 
-## Custom Tools (26)
+## Custom Tools (25)
 
 All live in `~/.pi/agent/extensions/tools/`, backed up in `pi-setup/extensions/tools/`.
 
@@ -311,7 +312,6 @@ These replace pi's default tool implementations with customized versions:
 | **read-web-page** | `read-web-page.ts` | Web page reader using cheerio |
 | **read-session** | `read-session.ts` | Read past pi session history |
 | **search-sessions** | `search-sessions.ts` | Search session history by keyword, file, date |
-| **web-search** | `web-search.ts` | Web search via Parallel AI Search API |
 | **code-review** | `code-review.ts` | Code review with diff analysis |
 | **github** | `github.ts` | GitHub operations (repos, diffs, commits, search) |
 
@@ -320,6 +320,7 @@ These replace pi's default tool implementations with customized versions:
 | Tool | File | Reason |
 |------|------|--------|
 | **look-at** | `look-at.ts` | Cheap model produces low-quality image analysis |
+| **web-search** | `web-search.ts` | Conflicts with pi-web-access's web_search (use that instead) |
 
 ### Tool Libraries (`tools/lib/`)
 
@@ -426,7 +427,7 @@ pi-setup/
 ├── pi-skills/                  # 1 pi-level skill (handoff; find-skills + userinterface-wiki auto-created by packages)
 ├── config-skills/              # 16 config-level skills
 └── extensions/
-    ├── tools/                  # 26 custom tools + lib/ (config, prompt-patch, fs, mentions)
+    ├── tools/                  # 25 custom tools + lib/ (config, prompt-patch, fs, mentions)
     ├── pi-tool-display/
     │   └── config.json         # All tool overrides disabled (required for compatibility)
     ├── mentions.ts             # @mention resolution extension
