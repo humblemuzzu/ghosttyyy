@@ -9,18 +9,23 @@
  * ported from bdsqqq/dots mentions extension, adapted for flat-file setup.
  */
 
+import * as os from "node:os";
+import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
+	clearCommitIndexCache,
+	clearSessionMentionCache,
+	listMentionKinds,
+	MentionAwareProvider,
 	renderResolvedMentionsText,
 	resolveMentions,
-	clearSessionMentionCache,
-	clearCommitIndexCache,
 	type ResolvedMention,
 } from "./tools/lib/mentions/index.js";
 // side-effect import — registers @oracle, @finder, @codereview, @task sources
 import "./tools/lib/mentions/agent-source.js";
 
 const CUSTOM_TYPE = "mentions:resolved";
+const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
 
 export default function mentionsExtension(pi: ExtensionAPI): void {
 	let activeMentionContext = "";
@@ -70,10 +75,37 @@ export default function mentionsExtension(pi: ExtensionAPI): void {
 		clearActive();
 	});
 
-	// clear state and caches on new session
-	pi.on("session_start", async () => {
+	// register autocomplete + reset state on each session boot
+	pi.on("session_start", async (_event, ctx) => {
 		clearActive();
 		clearSessionMentionCache();
 		clearCommitIndexCache();
+
+		if (!ctx.hasUI) return;
+
+		ctx.ui.addAutocompleteProvider(
+			(current) =>
+				new MentionAwareProvider({
+					baseProvider: current,
+					cwd: ctx.cwd,
+					sessionsDir: SESSIONS_DIR,
+				}),
+		);
+	});
+
+	// /mentions command — verify sources are registered, list available kinds
+	pi.registerCommand("mentions", {
+		description: "Show registered @mention kinds (debug)",
+		handler: async (_args, ctx) => {
+			const kinds = listMentionKinds();
+			const lines = [
+				`registered @mention kinds (${kinds.length}):`,
+				...kinds.map((k) => `  @${k}`),
+				"",
+				"agent kinds (standalone):  @oracle  @finder  @codereview  @task",
+				"data kinds (with /value):  @commit/<sha>  @session/<id>  @handoff/<id>",
+			];
+			ctx.ui.notify(lines.join("\n"), "info");
+		},
 	});
 }

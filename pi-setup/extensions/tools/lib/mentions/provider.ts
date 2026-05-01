@@ -33,7 +33,7 @@ export class MentionAwareProvider implements AutocompleteProvider {
     this.baseProvider = options.baseProvider;
     this.cwd = options.cwd;
     this.sessionsDir = options.sessionsDir;
-    this.maxItems = options.maxItems ?? 8;
+    this.maxItems = options.maxItems ?? 25;
     this.gitEnabled = resolveGitRoot(this.cwd) !== null;
   }
 
@@ -71,11 +71,16 @@ export class MentionAwareProvider implements AutocompleteProvider {
       return { items: special, prefix: prefix.raw };
     }
 
+    // when user types just "@" (no query): files first, kinds after — files
+    // are the primary expectation. when filtering ("@or"): kinds first since
+    // they're explicit matches the user is targeting.
+    const merged =
+      prefix.familyQuery.length === 0
+        ? [...base.items, ...special]
+        : [...special, ...base.items];
+
     return {
-      items: dedupeAutocompleteItems([...special, ...base.items]).slice(
-        0,
-        this.maxItems,
-      ),
+      items: dedupeAutocompleteItems(merged).slice(0, this.maxItems),
       prefix: prefix.raw,
     };
   }
