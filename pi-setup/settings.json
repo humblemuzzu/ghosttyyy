@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.70.5",
+  "lastChangelogVersion": "0.71.0",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "medium",
+  "defaultThinkingLevel": "high",
   "theme": "gruvbox",
-  "defaultProvider": "kimi-coding",
-  "defaultModel": "k2p6",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -21,7 +21,6 @@
     "~/.pi/agent/extensions/notify.ts",
     "~/.pi/agent/extensions/todos.ts",
     "~/.pi/agent/extensions/local-model.ts",
-    "~/.pi/agent/extensions/brain-loader.ts",
     "~/.pi/agent/extensions/mentions.ts",
     "~/.pi/agent/extensions/opencode-zen.ts",
     "~/.pi/agent/extensions/crof.ts"
@@ -50,13 +49,14 @@
     "npm:pi-web-access",
     "npm:pi-context",
     "npm:pi-token-burden",
-    "npm:pi-claude-bridge",
     "npm:@benvargas/pi-claude-code-use",
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:@sting8k/pi-vcc",
     "npm:pi-tool-display",
-    "npm:@tomooshi/condensed-milk-pi"
+    "npm:@tomooshi/condensed-milk-pi",
+    "https://github.com/edxeth/pi-gpt-config",
+    "https://github.com/injaneity/pi-computer-use@v0.2.1"
   ],
   "terminal": {
     "clearOnShrink": true

@@ -15,104 +15,51 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.70.0)
-  └─ pi-claude-bridge (custom provider, registered as "claude-bridge")
-       └─ @anthropic-ai/claude-agent-sdk (spawns Claude Code CLI subprocess)
-            └─ Claude API
+pi CLI (v0.71.0)
+  └─ anthropic provider (native) + pi-claude-code-use (OAuth rewrite for Claude Max)
+       └─ Claude API
 ```
 
-pi-claude-bridge is a third-party extension by Eli Dickinson that wraps the Claude Code Agent SDK. It registers a custom provider called `"claude-bridge"` that routes pi's LLM calls through Claude Code. Tools are exposed via an MCP server — Claude Code thinks it's calling MCP tools, but those tools are actually pi's native tools executed locally.
+Primary provider is `anthropic` with Claude Opus 4-6 via Claude Max subscription. `pi-claude-code-use` intercepts OAuth payloads for subscription-based access.
+
+**Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
 ### System Prompt Assembly
 
 The system prompt is assembled in layers:
 
-1. **`brain-loader.ts`** — injects `~/Documents/brain/MEMORY.md`, `USER.md`, project memory, and update protocol
-2. **`system-prompt.ts`** — loads `agents/prompt.amp.system.md` template, interpolates variables (`{identity}`, `{harness}`, `{date}`, `{cwd}`, `{roots}`, `{os}`, `{repo}`, `{sessionId}`, `{ls}`, `{harness_docs_section}`)
-3. **`tool-harness.ts`** — env-gated tool filtering based on active workspace
+1. **`system-prompt.ts`** — loads `agents/prompt.amp.system.md` template, interpolates variables (`{identity}`, `{harness}`, `{date}`, `{cwd}`, `{roots}`, `{os}`, `{repo}`, `{sessionId}`, `{ls}`, `{harness_docs_section}`)
+2. **`tool-harness.ts`** — env-gated tool filtering based on active workspace
+3. **`brain-loader.ts`** — (disabled) injects `~/Documents/brain/MEMORY.md`, `USER.md`, project memory, and update protocol
 
 ---
 
-## pi-claude-bridge: Custom Build
+## pi-claude-bridge: Custom Build (inactive)
 
 **Upstream:** https://github.com/elidickinson/pi-claude-bridge (v0.2.0)
-**Our patched version:** `pi-setup/claude-bridge-patches/index.ts` (2063 lines)
+**Our patched version:** `pi-setup/claude-bridge-patches/index.ts`
+**Status:** Installed globally but removed from settings.json packages. Legacy fallback.
 
-### What We Changed From Upstream
+### Patch Summary
 
-Two system prompt modifications — both remove `preset: "claude_code"` so Claude Code doesn't load its own system prompt:
+Two `systemPrompt` modifications — remove `preset: "claude_code"` so Claude Code doesn't load its own system prompt. Search for `preset: "claude_code"` in upstream and replace with our versions:
 
-**1. Main provider (streamClaudeAgentSdk):**
 ```typescript
-// Upstream:
-systemPrompt: {
-    type: "preset", preset: "claude_code",
-    append: systemPromptAppend ? systemPromptAppend : undefined,
-},
-// Ours:
-systemPrompt: systemPromptAppend || "",
+// Main provider: systemPrompt: systemPromptAppend || ""
+// AskClaude tool: systemPrompt: skillsBlock || undefined
 ```
 
-**2. AskClaude tool:**
-```typescript
-// Upstream:
-systemPrompt: skillsBlock
-    ? { type: "preset", preset: "claude_code", append: skillsBlock }
-    : undefined,
-// Ours:
-systemPrompt: skillsBlock || undefined,
-```
-
-### How to Re-Apply Patches After npm Update
-
-When `npm update` or `pi update` overwrites the bridge file:
+### Re-apply after npm update
 
 ```bash
-# The installed bridge lives here:
-# /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
-
-# Re-apply our patches:
 cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
-
-# Or run the full installer:
-bash pi-setup/install.sh
 ```
-
-### How to Merge Upstream Changes
-
-When pi-claude-bridge gets updated upstream:
-
-1. Clone latest: `git clone --depth 1 https://github.com/elidickinson/pi-claude-bridge.git /tmp/bridge-latest`
-2. Copy to repo: `cp /tmp/bridge-latest/index.ts pi-setup/claude-bridge-patches/index.ts`
-3. Re-apply the two `systemPrompt` patches described above (search for `preset: "claude_code"` and replace)
-4. Update `pi-setup/claude-bridge-patches/package.json` version if it changed
-5. Install: `cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts`
-6. Commit the updated patched version
-7. Clean up: `rm -rf /tmp/bridge-latest`
-
-**Never skip step 3.** Without the patches, the bridge sends Claude Code's full system prompt, and the session management fixes may not work correctly with our setup.
-
-### Key Upstream Fixes Included
-
-The latest upstream (as of our patched version) includes these critical fixes:
-
-- **`QueryContext` class (v0.2.0):** Replaces 12+ mutable `let` variables with a proper class and context stack. Fixes `deferredUserMessages` not being isolated across reentrant queries (subagent could consume parent's deferred steers). Adding new per-query state is now 1 property instead of 6 edit sites.
-- **Stale cursor after tool-using first turn (issue #4, v0.2.0):** `latestCursor` now correctly advances past all tool_result blocks after the first turn uses tools.
-- **Session resume on symlinked paths / CLAUDE_CONFIG_DIR (v0.2.0):** cc-session-io 0.3.1 resolves symlinks (realpathSync + NFC) and honors `CLAUDE_CONFIG_DIR`, matching how Claude Code resolves session paths. Fixes "No conversation found" on macOS symlinked dirs.
-- **MCP handler context capture (v0.2.0):** Handlers now close over captured QueryContext, ensuring they operate on the correct query's state even across pushContext/popContext calls. Abort handler captures context at the correct point after push.
-- **`repairToolPairing` moved to cc-session-io (v0.2.0):** Orphaned tool_use/tool_result pair repair is now in cc-session-io, shared with index.ts.
-- **`latestCursor` (issue #4):** Module-level cursor tracking that prevents stale closures from breaking session resume after tool-using turns
-- **`deleteSession` + `createSession`:** Session rebuild path that preserves sessionId while wiping corrupt session files
-- **Post-abort UUID rotation:** Fresh sessionId after abort to avoid race conditions with killed subprocess writes
-- **CLI debug capture:** `makeCliDebugOptions()` forwards CC CLI stderr and debug logs when `CLAUDE_BRIDGE_DEBUG=1`
-- **Steer message handling:** Deferred user messages during tool execution are replayed as continuation queries
-- **`ACTIVE_STREAM_SIMPLE_KEY` guard:** Prevents reentrant queries (subagents) from clobbering the parent's `streamSimple` registration
 
 ---
 
 ## condensed-milk-pi: Patched Build
 
-**Upstream:** https://github.com/tomooshi/condensed-milk-pi (v1.8.1)
+**Upstream:** https://github.com/tomooshi/condensed-milk-pi (v1.9.0)
 **Our patched version:** `pi-setup/condensed-milk-patches/` (index.ts + filters/context-compress.ts)
 
 ### What We Changed From Upstream
@@ -150,27 +97,12 @@ const rawCmd = typeof args.command === "string" ? args.command
 const fromDetails = msg?.details?.command ?? msg?.input?.command ?? msg?.input?.cmd;
 ```
 
-### How to Re-Apply Patches After npm Update
-
-When `npm update` or `pi install` overwrites condensed-milk:
+### Re-apply after npm update
 
 ```bash
-# Re-apply patches:
 cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts
 cp pi-setup/condensed-milk-patches/filters/context-compress.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/filters/context-compress.ts
-
-# Or run the full installer:
-bash pi-setup/install.sh
 ```
-
-### How to Merge Upstream Changes
-
-1. `npm install -g @tomooshi/condensed-milk-pi@latest` (or let pi update it)
-2. Copy new files to repo: `cp /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts pi-setup/condensed-milk-patches/index.ts` (same for context-compress.ts)
-3. Re-apply the `$ ` prefix strip in index.ts (search for `dispatch(command, stdout)` and add the strip block before it)
-4. Re-apply `cmd` support in all three locations (search for `.command` and add `?? .cmd` fallbacks)
-5. Deploy: copy patched files back to `/opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/`
-6. Commit
 
 **Never skip the prefix strip.** Without it, `git status` compression returns wrong data to the agent.
 
@@ -178,7 +110,7 @@ bash pi-setup/install.sh
 
 ## pi-tool-display: Configuration Required
 
-**Upstream:** https://github.com/MasuRii/pi-tool-display (v0.3.2)
+**Upstream:** https://github.com/MasuRii/pi-tool-display (v0.3.5)
 **Config file:** `~/.pi/agent/extensions/pi-tool-display/config.json`
 **Backed up:** `pi-setup/extensions/pi-tool-display/config.json`
 
@@ -219,7 +151,7 @@ cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-too
 
 ## pi-vcc: Handoff Compatibility Patch
 
-**Upstream:** https://github.com/sting8k/pi-vcc (v0.3.7)
+**Upstream:** https://github.com/sting8k/pi-vcc (v0.3.12)
 **No patches to the package itself** — the fix is in our `handoff.ts`.
 
 ### The Problem
@@ -239,6 +171,25 @@ pi.on("session_before_compact", async (event, _ctx) => {
 This lets `/pi-vcc` work while still blocking pi's auto-compaction. Both handoff and VCC compaction are available:
 - `/handoff <goal>` — transfer to new session with curated context
 - `/pi-vcc` — compress within current session, zero API cost
+
+---
+
+## pi-gpt-config: Patched Build
+
+**Upstream:** https://github.com/edxeth/pi-gpt-config (v1.0.0)
+**Our patched version:** `pi-setup/gpt-config-patches/index.ts`
+
+Adds `/gpt-config` command for GPT models only (`gpt-5.3-codex`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`). No-op on Claude/DeepSeek/local.
+
+### Patch Summary
+
+Removed `getNativeToolDisciplineOverlay` — always returns `undefined`. Our system prompt already enforces native tool usage for all models, so the 260-token tool discipline overlay is redundant.
+
+### Re-apply after pi update (git pull)
+
+```bash
+cp pi-setup/gpt-config-patches/index.ts ~/.pi/agent/git/github.com/edxeth/pi-gpt-config/index.ts
+```
 
 ---
 
@@ -276,33 +227,33 @@ Changed `pi.sendUserMessage(prompt)` → `ctx.ui.setEditorText(prompt)` in `exec
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@mariozechner/pi-coding-agent` | 0.70.0 | The pi agent itself (installed via homebrew npm) | No |
-| `pi-claude-bridge` | 0.3.1 | Custom provider wrapping Claude Code Agent SDK (legacy, kept as fallback) | **Yes** |
+| `@mariozechner/pi-coding-agent` | 0.71.0 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.1 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout | No |
-| `pi-token-burden` | 0.5.0 | Token usage tracking and display | No |
-| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No |
+| `pi-token-burden` | 0.6.3 | Token usage tracking and display | No |
+| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | **Yes** |
 | `pi-autoresearch` | latest | Autonomous experiment loop for optimization targets (GitHub install) | No |
-| `@sting8k/pi-vcc` | 0.3.8 | Algorithmic compaction engine + `vcc_recall` history search | No |
-| `pi-tool-display` | 0.3.2 | Compact tool rendering, thinking labels, user message box | **Config** |
-| `@tomooshi/condensed-milk-pi` | 1.8.1 | Bash output compression + context-level stale result masking | **Yes** |
+| `@sting8k/pi-vcc` | 0.3.12 | Algorithmic compaction engine + `vcc_recall` history search | No |
+| `pi-tool-display` | 0.3.5 | Compact tool rendering, thinking labels, user message box | **Config** |
+| `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
+| `pi-gpt-config` | 1.0.0 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
+| `pi-computer-use` | 0.2.1 | macOS GUI automation: screenshots, AX clicks, typing, browser nav (GitHub install) | No |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `pi-claude-bridge`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `@sting8k/pi-vcc`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `@sting8k/pi-vcc`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-computer-use`
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
-**Installed but inactive:** `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`, `claude-agent-sdk-pi` (legacy, no longer in packages list)
+**Installed but inactive:** `pi-claude-bridge` (0.3.1, legacy fallback, patched), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
 ---
 
-## Extensions (15)
+## Extensions (15 active, 2 disabled)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
 | Extension | File | Purpose |
 |-----------|------|---------|
-| Brain Loader | `brain-loader.ts` | Injects MEMORY.md, USER.md, project memory into system prompt |
 | System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` template with variable interpolation |
 | Tool Harness | `tool-harness.ts` | Env-gated tool filtering per workspace |
 | Handoff | `handoff.ts` | LLM-driven context transfer with provenance tracking (replaces compaction) |
@@ -313,14 +264,22 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Notify | `notify.ts` | Desktop notifications via OSC 777 |
 | Todos | `todos.ts` | File-based todo manager with TUI |
 | Local Model | `local-model.ts` | `/local start|stop|status|logs` for llama-server |
-| MD Export | `md-export.ts` | Session JSONL → markdown export |
+| OpenCode Zen | `opencode-zen.ts` | Curated models.dev catalog provider with free/paid tiers |
+| CrofAI | `crof.ts` | Budget OSS model provider (quantized DeepSeek/GLM/Qwen/Kimi) |
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
-| Tools | `tools/` | 25 custom tools (see below) |
+| Tools | `tools/` | 26 custom tools (see below) |
+
+**Disabled (on disk, not in settings.json):**
+
+| Extension | File | Purpose |
+|-----------|------|---------|
+| Brain Loader | `brain-loader.ts` | Injects MEMORY.md, USER.md, project memory into system prompt |
+| MD Export | `md-export.ts` | Session JSONL → markdown export |
 
 ---
 
-## Custom Tools (25)
+## Custom Tools (26)
 
 All live in `~/.pi/agent/extensions/tools/`, backed up in `pi-setup/extensions/tools/`.
 
@@ -352,10 +311,15 @@ These replace pi's default tool implementations with customized versions:
 | **read-web-page** | `read-web-page.ts` | Web page reader using cheerio |
 | **read-session** | `read-session.ts` | Read past pi session history |
 | **search-sessions** | `search-sessions.ts` | Search session history by keyword, file, date |
-| **web-search** | `web-search.ts` | Web search via Perplexity/Exa/Gemini |
+| **web-search** | `web-search.ts` | Web search via Parallel AI Search API |
 | **code-review** | `code-review.ts` | Code review with diff analysis |
-| **look-at** | `look-at.ts` | Image viewing for local files |
 | **github** | `github.ts` | GitHub operations (repos, diffs, commits, search) |
+
+**Disabled (file exists, not registered):**
+
+| Tool | File | Reason |
+|------|------|--------|
+| **look-at** | `look-at.ts` | Cheap model produces low-quality image analysis |
 
 ### Tool Libraries (`tools/lib/`)
 
@@ -404,11 +368,10 @@ Shared code used by multiple tools:
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `anthropic` | `claude-opus-4-6` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
-| `claude-bridge` | `claude-opus-4`, `claude-sonnet-4`, etc. | Via pi-claude-bridge → Claude Code Agent SDK (legacy fallback) |
+| `anthropic` | `claude-opus-4-6`, `claude-opus-4-7` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | 1M context, thinking mode, OpenAI-compatible API |
-| `local-llama` | Gemma 4 26B-A4B MoE, Qwen3.5 35B-A3B MoE | llama-server on localhost:8080 |
-| `zai` | `glm-5.1` | Current default provider/model |
+| `local-llama` | Qwen3.6 35B-A3B MoE, Gemma 4 E2B | llama-server on localhost:8080 |
+| `nvidia` | GLM-5.1, DeepSeek V4 Pro | NVIDIA NIM API (requires NVIDIA_API_KEY) |
 
 ### Sub-agent Models
 - **finder**: `claude-haiku-4-5` (cheapest, fast parallel search)
@@ -420,9 +383,9 @@ Shared code used by multiple tools:
 
 ```json
 {
-  "defaultProvider": "zai",
-  "defaultModel": "glm-5.1",
-  "defaultThinkingLevel": "medium",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": false }
 }
@@ -458,14 +421,16 @@ pi-setup/
 ├── themes/                     # 2 pi TUI themes
 │   ├── gruvbox.json
 │   └── nightowl.json
-├── pi-skills/                  # 3 pi-level skills
-├── config-skills/              # 16 config-level skills (symlinked)
+├── sub-bar-patches/            # Patched pi-sub-bar (CrofAI + Kimi providers)
+├── gpt-config-patches/         # Patched pi-gpt-config (tool discipline removed)
+├── pi-skills/                  # 1 pi-level skill (handoff; find-skills + userinterface-wiki auto-created by packages)
+├── config-skills/              # 16 config-level skills
 └── extensions/
-    ├── tools/                  # 25 custom tools + lib/ (config, prompt-patch, fs, mentions)
+    ├── tools/                  # 26 custom tools + lib/ (config, prompt-patch, fs, mentions)
     ├── pi-tool-display/
     │   └── config.json         # All tool overrides disabled (required for compatibility)
     ├── mentions.ts             # @mention resolution extension
-    └── *.ts                    # 14 other extensions
+    └── *.ts                    # 16 other extensions (15 active + 2 disabled)
 ```
 
 ---
@@ -506,14 +471,14 @@ When pi or any package gets updated:
 ### Quick re-patch after any update
 
 ```bash
-# Re-apply all patches at once:
-bash pi-setup/install.sh
-
-# Or manually for specific packages:
+# npm packages:
 cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
 cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts
 cp pi-setup/condensed-milk-patches/filters/context-compress.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/filters/context-compress.ts
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
+
+# git packages:
+cp pi-setup/gpt-config-patches/index.ts ~/.pi/agent/git/github.com/edxeth/pi-gpt-config/index.ts
 ```
 
 ### What NOT to Do
