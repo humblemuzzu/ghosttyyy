@@ -25,6 +25,7 @@ interface CrofModel {
   max_output?: number;
   max_completion_tokens?: number;
   custom_reasoning?: boolean;
+  reasoning_effort?: boolean;
   quantization?: string;
   speed?: number;
   pricing?: {
@@ -42,14 +43,18 @@ const CROF_COMPAT = {
   supportsUsageInStreaming: true,
   maxTokensField: "max_tokens" as const,
   thinkingFormat: "deepseek" as const,
-  reasoningEffortMap: {
-    minimal: "low",
-    low: "low",
-    medium: "medium",
-    high: "high",
-    xhigh: "high",
-  } as Record<string, string>,
 };
+
+// v0.74.0: thinkingLevelMap moved from compat to model-level field
+// CrofAI accepts "none" to disable reasoning entirely (per their docs)
+const CROF_THINKING_LEVEL_MAP = {
+  off: "none",
+  minimal: "low",
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+} as Record<string, string>;
 
 // ── Hardcoded fallback (if /v1/models fetch fails) ─────────────────────
 // Last synced: 2026-04-28 from https://crof.ai/v1/models
@@ -65,6 +70,7 @@ function fallbackModels() {
       contextWindow: 202752,
       maxTokens: 131072,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -75,6 +81,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     // ── Cheap paid models ──
@@ -86,6 +93,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.04, output: 0.15, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -96,6 +104,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.10, output: 0.30, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -106,6 +115,7 @@ function fallbackModels() {
       contextWindow: 204800,
       maxTokens: 131072,
       cost: { input: 0.11, output: 0.95, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -116,6 +126,7 @@ function fallbackModels() {
       contextWindow: 1000000,
       maxTokens: 131072,
       cost: { input: 0.12, output: 0.21, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -126,6 +137,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.20, output: 1.50, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -136,6 +148,7 @@ function fallbackModels() {
       contextWindow: 202752,
       maxTokens: 202752,
       cost: { input: 0.25, output: 1.10, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -146,6 +159,7 @@ function fallbackModels() {
       contextWindow: 163840,
       maxTokens: 163840,
       cost: { input: 0.28, output: 0.38, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -156,6 +170,7 @@ function fallbackModels() {
       contextWindow: 200000,
       maxTokens: 200000,
       cost: { input: 0.30, output: 0.30, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -166,6 +181,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.35, output: 1.70, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -176,6 +192,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.35, output: 1.75, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -186,6 +203,7 @@ function fallbackModels() {
       contextWindow: 202752,
       maxTokens: 202752,
       cost: { input: 0.45, output: 2.10, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -196,6 +214,7 @@ function fallbackModels() {
       contextWindow: 202752,
       maxTokens: 202752,
       cost: { input: 0.48, output: 1.90, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -206,6 +225,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.50, output: 1.99, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -216,6 +236,7 @@ function fallbackModels() {
       contextWindow: 262144,
       maxTokens: 262144,
       cost: { input: 0.55, output: 2.70, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -226,6 +247,7 @@ function fallbackModels() {
       contextWindow: 202752,
       maxTokens: 202752,
       cost: { input: 0.80, output: 2.90, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -236,6 +258,7 @@ function fallbackModels() {
       contextWindow: 1000000,
       maxTokens: 131072,
       cost: { input: 1.00, output: 2.15, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -246,6 +269,7 @@ function fallbackModels() {
       contextWindow: 131072,
       maxTokens: 32768,
       cost: { input: 1.00, output: 3.00, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
     {
@@ -256,6 +280,7 @@ function fallbackModels() {
       contextWindow: 1000000,
       maxTokens: 131072,
       cost: { input: 1.25, output: 3.00, cacheRead: 0, cacheWrite: 0 },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     },
   ];
@@ -269,17 +294,18 @@ function buildModelsFromApi(apiModels: CrofModel[]) {
   for (const m of apiModels) {
     const maxOut = m.max_output ?? m.max_completion_tokens ?? 16384;
 
-    // Parse pricing (API returns per-token strings like "0.00000100")
-    const promptPrice = parseFloat(m.pricing?.prompt ?? "0");
-    const compPrice = parseFloat(m.pricing?.completion ?? "0");
-    // Convert per-token to per-million-tokens
-    const inputCost = promptPrice * 1_000_000;
-    const outputCost = compPrice * 1_000_000;
+    // Parse pricing — CrofAI API returns per-million-token strings (e.g. "0.28" = $0.28/M)
+    // Old format was per-token (e.g. "0.00000028"), auto-detect by magnitude
+    const rawPrompt = parseFloat(m.pricing?.prompt ?? "0");
+    const rawComp = parseFloat(m.pricing?.completion ?? "0");
+    const isPerToken = rawPrompt > 0 && rawPrompt < 0.001;
+    const inputCost = isPerToken ? rawPrompt * 1_000_000 : rawPrompt;
+    const outputCost = isPerToken ? rawComp * 1_000_000 : rawComp;
     const isFree = inputCost === 0 && outputCost === 0;
 
-    // Cache pricing
-    const cachePrice = parseFloat(m.pricing?.cache_prompt ?? "0");
-    const cacheReadCost = cachePrice * 1_000_000;
+    // Cache pricing (same format detection)
+    const rawCache = parseFloat(m.pricing?.cache_prompt ?? "0");
+    const cacheReadCost = (isPerToken ? rawCache * 1_000_000 : rawCache);
 
     // Display name
     let prefix: string;
@@ -300,7 +326,9 @@ function buildModelsFromApi(apiModels: CrofModel[]) {
       ? `${(m.context_length / 1000000).toFixed(0)}M ctx`
       : `${Math.round(m.context_length / 1000)}K ctx`;
     const quantTag = m.quantization ? `, ${m.quantization}` : "";
-    const reasonTag = m.custom_reasoning ? ", reasoning" : "";
+    // custom_reasoning = produces reasoning tokens; reasoning_effort = accepts effort param
+    const hasReasoning = !!m.custom_reasoning || !!m.reasoning_effort;
+    const reasonTag = hasReasoning ? ", reasoning" : "";
     const speedTag = m.speed ? `, ${m.speed} tok/s` : "";
 
     const displayName = `${prefix} ${m.id} — ${costTag}, ${ctxTag}${quantTag}${reasonTag}${speedTag}`;
@@ -314,7 +342,7 @@ function buildModelsFromApi(apiModels: CrofModel[]) {
     models.push({
       id: m.id,
       name: displayName,
-      reasoning: !!m.custom_reasoning,
+      reasoning: hasReasoning,
       input: inputMods,
       contextWindow: m.context_length,
       maxTokens: maxOut,
@@ -324,6 +352,7 @@ function buildModelsFromApi(apiModels: CrofModel[]) {
         cacheRead: cacheReadCost,
         cacheWrite: 0,
       },
+      thinkingLevelMap: CROF_THINKING_LEVEL_MAP,
       compat: CROF_COMPAT,
     });
   }

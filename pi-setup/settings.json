@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.71.1",
+  "lastChangelogVersion": "0.73.1",
   "hideThinkingBlock": false,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
@@ -10,7 +10,6 @@
   ],
   "extensions": [
     "~/.pi/agent/extensions/editor",
-    "~/.pi/agent/extensions/handoff.ts",
     "~/.pi/agent/extensions/session-name.ts",
     "~/.pi/agent/extensions/tool-harness.ts",
     "~/.pi/agent/extensions/system-prompt.ts",
@@ -26,7 +25,7 @@
     "~/.pi/agent/extensions/crof.ts"
   ],
   "compaction": {
-    "enabled": false
+    "enabled": true
   },
   "enabledModels": [
     "anthropic/claude-opus-4-6",
@@ -52,14 +51,21 @@
     "npm:@benvargas/pi-claude-code-use",
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch",
-    "npm:@sting8k/pi-vcc",
     "npm:pi-tool-display",
     "npm:@tomooshi/condensed-milk-pi",
     "https://github.com/edxeth/pi-gpt-config",
-    "https://github.com/injaneity/pi-computer-use@v0.2.1",
-    "https://github.com/eko24ive/pi-ask"
+    "https://github.com/eko24ive/pi-ask",
+    "npm:pi-codex-goal"
   ],
   "terminal": {
     "clearOnShrink": true
+  },
+  "gptConfig": {
+    "fastMode": false,
+    "personality": "claude",
+    "verbosity": "medium",
+    "summary": "auto",
+    "toolDiscipline": "off",
+    "showFooter": true
   }
 }

@@ -48,7 +48,7 @@ const NATIVE_TOOL_DISCIPLINE_PROMPT_TOKENS = 260;
 
 const DEFAULT_STATE: GPTConfigState = {
 	fastMode: false,
-	personality: "none",
+	personality: "claude",
 	verbosity: "medium",
 	summary: "auto",
 	toolDiscipline: "off",

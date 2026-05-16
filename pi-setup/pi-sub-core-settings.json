@@ -34,11 +34,11 @@
       "fetchStatus": false
     },
     "crof": {
-      "enabled": "auto",
+      "enabled": true,
       "fetchStatus": false
     },
     "kimi": {
-      "enabled": "auto",
+      "enabled": true,
       "fetchStatus": false
     }
   },

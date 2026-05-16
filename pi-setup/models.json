@@ -19,14 +19,7 @@
         "supportsReasoningEffort": true,
         "supportsUsageInStreaming": true,
         "maxTokensField": "max_tokens",
-        "thinkingFormat": "openai",
-        "reasoningEffortMap": {
-          "minimal": "high",
-          "low": "high",
-          "medium": "high",
-          "high": "high",
-          "xhigh": "max"
-        }
+        "thinkingFormat": "openai"
       },
       "models": [
         {
@@ -36,6 +29,13 @@
           "input": ["text"],
           "contextWindow": 1048576,
           "maxTokens": 393216,
+          "thinkingLevelMap": {
+            "minimal": "high",
+            "low": "high",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          },
           "cost": {
             "input": 1.74,
             "output": 3.48,
@@ -50,6 +50,13 @@
           "input": ["text"],
           "contextWindow": 1048576,
           "maxTokens": 393216,
+          "thinkingLevelMap": {
+            "minimal": "high",
+            "low": "high",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          },
           "cost": {
             "input": 0.14,
             "output": 0.28,

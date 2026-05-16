@@ -60,7 +60,7 @@ echo ""
 # ── Prerequisites ──
 info "Checking prerequisites..."
 if ! command -v pi &>/dev/null; then
-    warn "pi not found. Install it first: npm install -g @mariozechner/pi-coding-agent"
+    warn "pi not found. Install it first: npm install -g @earendil-works/pi-coding-agent"
     echo "  Then re-run this script."
     exit 1
 fi
