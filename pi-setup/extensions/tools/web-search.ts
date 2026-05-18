@@ -1,286 +1,369 @@
 /**
- * web_search tool — direct HTTP call to Parallel AI's Search API.
+ * web_search tool — routes through OpenAI's Responses API web search.
  *
- * uses curl (not fetch/SDK) because pi extensions run in a nix-built
- * environment where adding npm deps requires a rebuild. curl is always
- * available and the single-endpoint usage doesn't justify the SDK.
+ * reads openai-codex OAuth credentials from ~/.pi/agent/auth.json.
+ * refreshes the access token if expired (same flow pi uses internally).
+ * sends a Responses API request with `{ type: "web_search" }` as a
+ * native tool, parses the SSE stream, extracts sources + model answer.
  *
- * cost is derived from the response's usage array, not hardcoded —
- * the API returns UsageItem[] with SKU counts, we multiply by known
- * unit prices. if the API omits usage, we fall back to base search cost.
+ * works regardless of which model/provider is currently active in pi —
+ * Claude, DeepSeek, local, whatever. the search always goes to OpenAI.
  *
  * refs:
- *   schema: https://docs.parallel.ai/public-openapi.json (UsageItem)
- *   pricing: https://docs.parallel.ai/pricing (Search API section)
+ *   codex CLI: https://github.com/openai/codex (web_search native tool)
+ *   responses API: https://platform.openai.com/docs/guides/tools-web-search
+ *   pi auth: ~/.pi/agent/auth.json (openai-codex OAuth entry)
  */
 
-import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
+import { Type } from "@sinclair/typebox";
 import { boxRendererWindowed, osc8Link, type BoxSection, type Excerpt } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
-import { Type } from "@sinclair/typebox";
-import type { ToolCostDetails } from "./lib/tool-cost";
 
-const ENDPOINT = "https://api.parallel.ai/v1beta/search";
-const CURL_TIMEOUT_SECS = 30;
-const DEFAULT_MAX_RESULTS = 10;
+// ── constants ────────────────────────────────────────────────
 
-/** per-result excerpts for collapsed display — first 5 visual lines */
-const COLLAPSED_EXCERPTS: Excerpt[] = [{ focus: "head" as const, context: 5 }];
+const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
+const CODEX_RESPONSES_URL = "https://chatgpt.com/backend-api/codex/responses";
+const TOKEN_URL = "https://auth.openai.com/oauth/token";
+const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const JWT_CLAIM = "https://api.openai.com/auth";
+
+/** model for the search request — cheapest/fastest on codex sub. */
+const SEARCH_MODEL = "gpt-5.4-mini";
+
+const COLLAPSED_EXCERPTS: Excerpt[] = [{ focus: "head" as const, context: 3 }];
+
+// ── types ────────────────────────────────────────────────────
+
+interface OAuthEntry {
+	type: "oauth";
+	access: string;
+	refresh: string;
+	expires: number;
+	accountId: string;
+}
+
+interface AuthFile {
+	"openai-codex"?: OAuthEntry;
+	[k: string]: unknown;
+}
+
+interface Source {
+	title: string;
+	url: string;
+	snippet?: string;
+}
 
 interface SearchResult {
-	url: string;
-	title: string;
-	publish_date?: string;
-	excerpts: string[];
+	queries: string[];
+	sources: Source[];
+	answer: string;
 }
 
-/**
- * usage line item from the API response.
- * schema: https://docs.parallel.ai/public-openapi.json → UsageItem
- */
-interface UsageItem {
-	name: string;
-	count: number;
-}
+// ── auth ─────────────────────────────────────────────────────
 
-/** per-unit pricing by SKU name ($/unit). ref: https://docs.parallel.ai/pricing */
-const SKU_UNIT_COST: Record<string, number> = {
-	sku_search: 0.005,
-	sku_search_additional_results: 0.001,
-};
-
-/** falls back to base search cost when API omits usage (e.g., older API versions). */
-function costFromUsage(usage: UsageItem[] | undefined): number {
-	if (!usage?.length) return SKU_UNIT_COST.sku_search ?? 0;
-	let total = 0;
-	for (const item of usage) {
-		total += (SKU_UNIT_COST[item.name] ?? 0) * item.count;
+function decodeJwtPayload(token: string): Record<string, any> | null {
+	try {
+		const parts = token.split(".");
+		if (parts.length !== 3) return null;
+		return JSON.parse(Buffer.from(parts[1], "base64").toString("utf-8"));
+	} catch {
+		return null;
 	}
-	return total;
 }
 
-interface SearchResponse {
-	search_id?: string;
-	results: SearchResult[];
-	warnings?: string[];
-	usage?: UsageItem[];
+function extractAccountId(token: string): string | null {
+	const payload = decodeJwtPayload(token);
+	const id = payload?.[JWT_CLAIM]?.chatgpt_account_id;
+	return typeof id === "string" && id.length > 0 ? id : null;
 }
 
-function searchParallel(
-	apiKey: string,
-	body: Record<string, unknown>,
-	signal?: AbortSignal,
-): Promise<{ data?: SearchResponse; error?: string }> {
-	return new Promise((resolve) => {
-		const payload = JSON.stringify(body);
+function readAuthFile(): AuthFile {
+	return JSON.parse(readFileSync(AUTH_FILE, "utf-8"));
+}
 
-		const args = [
-			"-sL",
-			"-X", "POST",
-			"-H", "Content-Type: application/json",
-			"-H", `x-api-key: ${apiKey}`,
-			"-H", "parallel-beta: search-extract-2025-10-10",
-			"-m", String(CURL_TIMEOUT_SECS),
-			"-d", payload,
-			ENDPOINT,
-		];
+function writeAuthFile(data: AuthFile): void {
+	writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2));
+}
 
-		const child = spawn("curl", args, {
-			stdio: ["ignore", "pipe", "pipe"],
-		});
-
-		let stdout = "";
-		let stderr = "";
-		let aborted = false;
-
-		const onAbort = () => {
-			aborted = true;
-			if (!child.killed) child.kill("SIGTERM");
-		};
-		if (signal) {
-			if (signal.aborted) { onAbort(); }
-			else signal.addEventListener("abort", onAbort, { once: true });
-		}
-
-		child.stdout?.on("data", (data: Buffer) => {
-			stdout += data.toString("utf-8");
-		});
-
-		child.stderr?.on("data", (data: Buffer) => {
-			stderr += data.toString("utf-8");
-		});
-
-		child.on("error", (err) => {
-			signal?.removeEventListener("abort", onAbort);
-			resolve({ error: `curl error: ${err.message}` });
-		});
-
-		child.on("close", (code) => {
-			signal?.removeEventListener("abort", onAbort);
-			if (aborted) { resolve({ error: "search aborted" }); return; }
-			if (code !== 0) {
-				resolve({ error: `search failed: ${stderr.trim() || `curl exited with code ${code}`}` });
-				return;
-			}
-			try {
-				const parsed = JSON.parse(stdout) as SearchResponse;
-				resolve({ data: parsed });
-			} catch {
-				resolve({ error: `invalid response from Parallel API: ${stdout.slice(0, 200)}` });
-			}
-		});
+async function refreshAccessToken(
+	refreshToken: string,
+): Promise<{ access: string; refresh: string; expires: number; accountId: string }> {
+	const res = await fetch(TOKEN_URL, {
+		method: "POST",
+		headers: { "Content-Type": "application/x-www-form-urlencoded" },
+		body: new URLSearchParams({
+			grant_type: "refresh_token",
+			refresh_token: refreshToken,
+			client_id: CLIENT_ID,
+		}),
 	});
+	if (!res.ok) {
+		const text = await res.text().catch(() => "");
+		throw new Error(`token refresh failed (${res.status}): ${text.slice(0, 200)}`);
+	}
+	const json = (await res.json()) as Record<string, any>;
+	if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
+		throw new Error("refresh response missing required fields");
+	}
+	const accountId = extractAccountId(json.access_token);
+	if (!accountId) throw new Error("no accountId in refreshed token");
+	return {
+		access: json.access_token,
+		refresh: json.refresh_token,
+		expires: Date.now() + json.expires_in * 1000,
+		accountId,
+	};
 }
 
-function formatResults(results: SearchResult[]): { text: string; headerLineIndices: number[] } {
-	if (results.length === 0) return { text: "(no results found)", headerLineIndices: [] };
-
-	const lines: string[] = [];
-	const headerLineIndices: number[] = [];
-
-	for (let i = 0; i < results.length; i++) {
-		const r = results[i];
-		headerLineIndices.push(lines.length);
-		lines.push(`### ${r.title || "(untitled)"}`);
-		lines.push(r.url);
-		if (r.publish_date) lines.push(`*${r.publish_date}*`);
-		if (r.excerpts?.length) {
-			lines.push("");
-			for (let j = 0; j < r.excerpts.length; j++) {
-				const excerptLines = r.excerpts[j].split("\n");
-				lines.push(...excerptLines);
-				if (j < r.excerpts.length - 1) lines.push("");
-			}
-		}
-
-		if (i < results.length - 1) {
-			lines.push("");
-			lines.push("---");
-			lines.push("");
-		}
+async function getCredentials(): Promise<{ token: string; accountId: string }> {
+	const data = readAuthFile();
+	const cred = data["openai-codex"];
+	if (!cred || cred.type !== "oauth") {
+		throw new Error("openai-codex not configured — run /login openai-codex in pi");
 	}
 
-	return { text: lines.join("\n"), headerLineIndices };
+	if (Date.now() < cred.expires) {
+		return { token: cred.access, accountId: cred.accountId };
+	}
+
+	// expired — refresh and persist so pi also sees the new token
+	const refreshed = await refreshAccessToken(cred.refresh);
+	data["openai-codex"] = { type: "oauth", ...refreshed };
+	writeAuthFile(data);
+	return { token: refreshed.access, accountId: refreshed.accountId };
 }
 
-/** convert raw SearchResult[] into BoxSection[] for box-format rendering. */
-function resultsToSections(results: SearchResult[]): BoxSection[] {
-	return results.map((r) => {
-		const lines = [];
-		lines.push({ text: osc8Link(r.url, r.url), highlight: true });
-		if (r.publish_date) lines.push({ text: r.publish_date, highlight: true });
-		if (r.excerpts?.length) {
-			lines.push({ text: "", highlight: false });
-			for (let j = 0; j < r.excerpts.length; j++) {
-				for (const l of r.excerpts[j].split("\n")) {
-					lines.push({ text: l, highlight: false });
+// ── SSE parsing ──────────────────────────────────────────────
+
+async function* parseSSE(response: Response): AsyncIterable<Record<string, any>> {
+	const body = response.body;
+	if (!body) return;
+
+	const reader = body.getReader();
+	const decoder = new TextDecoder();
+	let buffer = "";
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+
+			buffer += decoder.decode(value, { stream: true });
+			buffer = buffer.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+			let idx = buffer.indexOf("\n\n");
+			while (idx !== -1) {
+				const chunk = buffer.slice(0, idx);
+				buffer = buffer.slice(idx + 2);
+
+				const dataLines = chunk
+					.split("\n")
+					.filter((l) => l.startsWith("data:"))
+					.map((l) => l.slice(5).trim());
+
+				if (dataLines.length > 0) {
+					const data = dataLines.join("\n").trim();
+					if (data && data !== "[DONE]") {
+						try {
+							yield JSON.parse(data);
+						} catch {
+							// skip malformed events
+						}
+					}
 				}
-				if (j < r.excerpts.length - 1) lines.push({ text: "", highlight: false });
+				idx = buffer.indexOf("\n\n");
 			}
 		}
-		return {
-			header: r.title || "(untitled)",
-			blocks: [{ lines }],
-		};
-	});
+	} finally {
+		try { reader.releaseLock(); } catch { /* ignore */ }
+	}
 }
 
+// ── codex web search ─────────────────────────────────────────
+
+async function codexSearch(query: string, signal?: AbortSignal): Promise<SearchResult> {
+	const { token, accountId } = await getCredentials();
+
+	const body = {
+		model: SEARCH_MODEL,
+		store: false,
+		stream: true,
+		instructions: "Search the web for the user's query. Return a thorough, factual answer with sources.",
+		input: [{ role: "user", content: [{ type: "input_text", text: query }] }],
+		tools: [{ type: "web_search", external_web_access: true, search_content_types: ["text"] }],
+		include: ["web_search_call.action.sources", "web_search_call.results"],
+		text: { verbosity: "medium" },
+		tool_choice: "auto",
+		parallel_tool_calls: true,
+		reasoning: { effort: "low", summary: "auto" },
+	};
+
+	const res = await fetch(CODEX_RESPONSES_URL, {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${token}`,
+			"chatgpt-account-id": accountId,
+			originator: "pi",
+			"OpenAI-Beta": "responses=experimental",
+			accept: "text/event-stream",
+			"content-type": "application/json",
+		},
+		body: JSON.stringify(body),
+		signal,
+	});
+
+	if (!res.ok) {
+		const text = await res.text().catch(() => "");
+		throw new Error(`codex API ${res.status}: ${text.slice(0, 300)}`);
+	}
+
+	const sources: Source[] = [];
+	const queries: string[] = [];
+	let answer = "";
+
+	for await (const event of parseSSE(res)) {
+		const type = event.type as string;
+
+		// web_search_call completed — extract sources
+		if (type === "response.output_item.done" && event.item?.type === "web_search_call") {
+			const item = event.item;
+			// action may contain query/queries
+			if (item.action?.type === "search") {
+				if (item.action.query) queries.push(item.action.query);
+				if (Array.isArray(item.action.queries)) queries.push(...item.action.queries);
+			}
+			// sources array
+			if (Array.isArray(item.action?.sources)) {
+				for (const s of item.action.sources) {
+					if (s.url) sources.push({ title: s.title || "", url: s.url, snippet: s.snippet });
+				}
+			}
+		}
+
+		// collect text deltas for the model's answer
+		if (type === "response.output_text.delta" && typeof event.delta === "string") {
+			answer += event.delta;
+		}
+
+		// also catch completed text
+		if (type === "response.output_text.done" && typeof event.text === "string") {
+			answer = event.text;
+		}
+	}
+
+	return { queries, sources, answer: answer.trim() };
+}
+
+// ── formatting ───────────────────────────────────────────────
+
+function formatForModel(result: SearchResult): string {
+	const lines: string[] = [];
+
+	if (result.sources.length > 0) {
+		lines.push("## Sources\n");
+		for (const s of result.sources) {
+			lines.push(`- [${s.title || s.url}](${s.url})`);
+		}
+		lines.push("");
+	}
+
+	if (result.answer) {
+		lines.push("## Answer\n");
+		lines.push(result.answer);
+	}
+
+	if (result.queries.length > 0) {
+		lines.push(`\n*Searched: ${result.queries.join(", ")}*`);
+	}
+
+	return lines.join("\n") || "(no results)";
+}
+
+function resultToSections(result: SearchResult): BoxSection[] {
+	const sections: BoxSection[] = [];
+
+	if (result.sources.length > 0) {
+		sections.push({
+			header: `${result.sources.length} sources`,
+			blocks: [
+				{
+					lines: result.sources.map((s) => ({
+						text: osc8Link(s.url, s.title || s.url),
+						highlight: true,
+					})),
+				},
+			],
+		});
+	}
+
+	if (result.answer) {
+		const answerLines = result.answer.split("\n");
+		sections.push({
+			header: "Answer",
+			blocks: [
+				{
+					lines: answerLines.map((l) => ({ text: l, highlight: false })),
+				},
+			],
+		});
+	}
+
+	return sections;
+}
+
+// ── tool definition ──────────────────────────────────────────
 
 export function createWebSearchTool(): ToolDefinition {
 	return {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web for information relevant to a research objective.\n\n" +
-			"Use when you need up-to-date or precise documentation. " +
-			"Use `read_web_page` to fetch full content from a specific URL.\n\n" +
+			"Search the web for up-to-date information. Routes through OpenAI's server-side " +
+			"web search regardless of active model.\n\n" +
+			"Use `read_web_page` for fetching a specific URL.\n\n" +
 			"# Examples\n\n" +
-			"Get API documentation for a specific provider\n" +
-			'```json\n{"objective":"I want to know the request fields for the Stripe billing create customer API. Prefer Stripe\'s docs site."}\n```\n\n' +
-			"See usage documentation for newly released library features\n" +
-			'```json\n{"objective":"I want to know how to use SvelteKit remote functions, which is a new feature shipped in the last month.","search_queries":["sveltekit","remote function"]}\n```',
+			'```json\n{"queries":["stripe billing API create customer"]}\n```\n\n' +
+			'```json\n{"queries":["sveltekit remote functions","svelte 5 new features 2026"]}\n```',
+
+		promptSnippet:
+			"Use for web research questions. Prefer {queries:[...]} with 2-4 varied angles over a single query for broader coverage.",
 
 		parameters: Type.Object({
-			objective: Type.String({
+			queries: Type.Array(Type.String(), {
 				description:
-					"A natural-language description of the broader task or research goal, " +
-					"including any source or freshness guidance.",
+					"Search queries. Use 2-4 varied angles for broader coverage. " +
+					"Each query is combined into a single search request.",
 			}),
-			search_queries: Type.Optional(
-				Type.Array(Type.String(), {
-					description:
-						"Optional keyword queries to ensure matches for specific terms are " +
-						"prioritized (recommended for best results).",
-				}),
-			),
-			max_results: Type.Optional(
-				Type.Number({
-					description: `The maximum number of results to return (default: ${DEFAULT_MAX_RESULTS}).`,
-				}),
-			),
 		}),
 
 		async execute(_toolCallId, params, signal) {
-			const apiKey = process.env.PARALLEL_API_KEY;
-			if (!apiKey) {
-				return {
-					content: [{ type: "text" as const, text: "PARALLEL_API_KEY not set. add it to secrets.yaml and export in shell.nix." }],
-					isError: true,
-				} as any;
+			const queryText = params.queries.join("\n");
+			if (!queryText.trim()) {
+				return { content: [{ type: "text" as const, text: "no queries provided" }], isError: true } as any;
 			}
 
-			const body: Record<string, unknown> = {
-				objective: params.objective,
-				max_results: params.max_results ?? DEFAULT_MAX_RESULTS,
-				excerpts: { max_chars_per_result: 2000 },
-			};
-			if (params.search_queries?.length) {
-				body.search_queries = params.search_queries;
+			try {
+				const result = await codexSearch(queryText, signal);
+				const text = formatForModel(result);
+				const sections = resultToSections(result);
+				return { content: [{ type: "text" as const, text }], details: { resultSections: sections } };
+			} catch (err: any) {
+				const msg = err?.message || String(err);
+				return { content: [{ type: "text" as const, text: `web search failed: ${msg}` }], isError: true } as any;
 			}
-
-			const { data, error } = await searchParallel(apiKey, body, signal);
-
-			if (error) {
-				return {
-					content: [{ type: "text" as const, text: error }],
-					isError: true,
-				} as any;
-			}
-
-			if (!data?.results) {
-				return {
-					content: [{ type: "text" as const, text: "(no results)" }],
-				} as any;
-			}
-
-			const { text, headerLineIndices } = formatResults(data.results);
-			let output = text;
-
-			if (data.warnings?.length) {
-				output += `\n\n**Warnings:** ${data.warnings.join("; ")}`;
-			}
-
-			const resultSections = resultsToSections(data.results);
-			const details: ToolCostDetails & { matchLineIndices?: number[]; resultSections?: BoxSection[] } = {
-				cost: costFromUsage(data.usage),
-				matchLineIndices: headerLineIndices,
-				resultSections,
-			};
-			return { content: [{ type: "text" as const, text: output }], details };
 		},
 
 		renderCall(args: any, theme: any, context: any) {
-			const Text = getText();
-			const text = context?.lastComponent ?? new Text("", 0, 0);
-			const objective = args.objective || "...";
-			const short = objective.length > 70 ? `${objective.slice(0, 70)}...` : objective;
-			let label = theme.fg("toolTitle", theme.bold("web_search ")) + theme.fg("dim", short);
-			if (args.search_queries?.length) {
-				label += theme.fg("muted", ` [${args.search_queries.join(", ")}]`);
-			}
-			text.setText(label);
+			const TextCtor = getText();
+			const text = context?.lastComponent ?? new TextCtor("", 0, 0);
+			const q = Array.isArray(args.queries) ? args.queries.join(", ") : "...";
+			const short = q.length > 70 ? `${q.slice(0, 70)}...` : q;
+			text.setText(theme.fg("toolTitle", theme.bold("web_search ")) + theme.fg("dim", short));
 			return text;
 		},
 
@@ -291,8 +374,8 @@ export function createWebSearchTool(): ToolDefinition {
 
 			const sections: BoxSection[] | undefined = result.details?.resultSections;
 			if (!sections?.length) {
-				const text = result.content?.[0];
-				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				const block = result.content?.[0];
+				container.addChild(new Text(block?.type === "text" ? block.text : "(no output)", 0, 0));
 				return container;
 			}
 			const renderer = boxRendererWindowed(

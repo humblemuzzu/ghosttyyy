@@ -197,6 +197,39 @@ cp pi-setup/gpt-config-patches/index.ts ~/.pi/agent/git/github.com/edxeth/pi-gpt
 
 ---
 
+## Pi Core: Extension Tool Conflict Suppression Patch
+
+**File:** `dist/core/resource-loader.js` in `@earendil-works/pi-coding-agent`
+**Patch stored:** `pi-setup/pi-core-patches/resource-loader.js`
+
+### The Problem
+
+When a user extension registers a tool with the same name as a package tool (e.g., our `web_search` vs pi-web-access's `web_search`), pi's `detectExtensionConflicts()` pushes the conflict to the errors array. Pi treats these as fatal startup errors, blocking launch — even though the code comment says "Keep all extensions loaded. Conflicts are reported as diagnostics."
+
+User extensions load BEFORE packages, so `getAllRegisteredTools()` (first-wins) already gives user extensions precedence. The conflict diagnostic is the only problem.
+
+### The Fix
+
+Suppressed the conflict-to-error push. `detectExtensionConflicts()` still runs (for internal bookkeeping) but no longer pushes to `extensionsResult.errors`:
+
+```javascript
+// Before:
+const conflicts = this.detectExtensionConflicts(extensionsResult.extensions);
+for (const conflict of conflicts) {
+    extensionsResult.errors.push({ path: conflict.path, error: conflict.message });
+}
+// After:
+this.detectExtensionConflicts(extensionsResult.extensions);
+```
+
+### Re-apply after pi update
+
+```bash
+cp pi-setup/pi-core-patches/resource-loader.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/resource-loader.js
+```
+
+---
+
 ## Subagent Model Resolution (pi-spawn.ts patch)
 
 **File:** `extensions/tools/lib/pi-spawn.ts`
@@ -359,6 +392,7 @@ These replace pi's default tool implementations with customized versions:
 | **read-session** | `read-session.ts` | Read past pi session history |
 | **search-sessions** | `search-sessions.ts` | Search session history by keyword, file, date |
 | **code-review** | `code-review.ts` | Code review with diff analysis |
+| **web-search** | `web-search.ts` | Web search via OpenAI Codex Responses API (overrides pi-web-access, works from any model) |
 | **github** | `github.ts` | GitHub operations (repos, diffs, commits, search) |
 
 **Disabled (file exists, not registered):**
@@ -366,7 +400,6 @@ These replace pi's default tool implementations with customized versions:
 | Tool | File | Reason |
 |------|------|--------|
 | **look-at** | `look-at.ts` | Cheap model produces low-quality image analysis |
-| **web-search** | `web-search.ts` | Conflicts with pi-web-access's web_search (use that instead) |
 
 ### Tool Libraries (`tools/lib/`)
 
@@ -503,7 +536,7 @@ pi-setup/
 
 When pi or any package gets updated:
 
-1. **pi itself updated** (`@earendil-works/pi-coding-agent`): Check if any internal APIs changed that our extensions depend on. Look at the [changelog](https://github.com/earendil-works/pi). Our extensions override built-in tools — if the tool API changed, update our tool files accordingly. The `@mariozechner/*` backward-compat aliases are currently preserved but will eventually be removed — when that happens, rename imports in all 46 `.ts` files (see log.md for the sed command).
+1. **pi itself updated** (`@earendil-works/pi-coding-agent`): Check if any internal APIs changed that our extensions depend on. Look at the [changelog](https://github.com/earendil-works/pi). Our extensions override built-in tools — if the tool API changed, update our tool files accordingly. The `@mariozechner/*` backward-compat aliases are currently preserved but will eventually be removed — when that happens, rename imports in all 46 `.ts` files (see log.md for the sed command). **Must re-apply `resource-loader.js` patch** — without it, our `web_search` override conflicts with pi-web-access and pi refuses to start.
 
 2. **condensed-milk-pi updated**: npm update overwrites our patched `index.ts` and `filters/context-compress.ts`. **Must re-apply patches** — without the `$ ` prefix strip, git status compression returns wrong data. See "condensed-milk-pi: Patched Build" above.
 
@@ -518,6 +551,9 @@ When pi or any package gets updated:
 ### Quick re-patch after any update
 
 ```bash
+# pi core — suppress tool conflict errors (needed for web_search override)
+cp pi-setup/pi-core-patches/resource-loader.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/resource-loader.js
+
 # condensed-milk (CRITICAL — data loss without it)
 cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts
 cp pi-setup/condensed-milk-patches/filters/context-compress.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/filters/context-compress.ts

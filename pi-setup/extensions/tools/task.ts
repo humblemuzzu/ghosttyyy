@@ -24,6 +24,7 @@ const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const EXTENSION_TOOLS = [
 	"read", "grep", "glob", "ls", "bash",
 	"edit_file", "create_file", "format_file", "skill", "finder",
+	"web_search",
 ];
 
 export function createTaskTool(): ToolDefinition {
@@ -32,7 +33,7 @@ export function createTaskTool(): ToolDefinition {
 		label: "Task",
 		description:
 			"Perform a task (a sub-task of the user's overall task) using a sub-agent that has access to " +
-			"the following tools: Read, Grep, glob, ls, Bash, edit_file, create_file, format_file, skill, finder.\n\n" +
+			"the following tools: Read, Grep, glob, ls, Bash, edit_file, create_file, format_file, skill, finder, web_search.\n\n" +
 			"When to use the Task tool:\n" +
 			"- When you need to perform complex multi-step tasks\n" +
 			"- When you need to run an operation that will produce a lot of output (tokens) " +
