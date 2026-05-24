@@ -24,6 +24,13 @@ import { Type } from "@sinclair/typebox";
 import { boxRendererWindowed, osc8Link, type BoxSection, type Excerpt } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
 
+let keyHint: ((action: string, label: string) => string) | null = null;
+try {
+	// resolve pi's keybinding hint helper for expand hint
+	const mod = await import("@earendil-works/pi-coding-agent/dist/modes/interactive/components/keybinding-hints.js" as any);
+	keyHint = mod.keyHint ?? null;
+} catch { /* not available — skip hint */ }
+
 // ── constants ────────────────────────────────────────────────
 
 const AUTH_FILE = join(homedir(), ".pi", "agent", "auth.json");
@@ -32,8 +39,8 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const JWT_CLAIM = "https://api.openai.com/auth";
 
-/** model for the search request — cheapest/fastest on codex sub. */
-const SEARCH_MODEL = "gpt-5.4-mini";
+/** model for the search request — spark is ultra-fast, no reasoning overhead. */
+const SEARCH_MODEL = "gpt-5.3-codex-spark";
 
 const COLLAPSED_EXCERPTS: Excerpt[] = [{ focus: "head" as const, context: 3 }];
 
@@ -200,7 +207,7 @@ async function codexSearch(query: string, signal?: AbortSignal): Promise<SearchR
 		text: { verbosity: "medium" },
 		tool_choice: "auto",
 		parallel_tool_calls: true,
-		reasoning: { effort: "low", summary: "auto" },
+		reasoning: { effort: "low" },
 	};
 
 	const res = await fetch(CODEX_RESPONSES_URL, {
@@ -367,7 +374,7 @@ export function createWebSearchTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
 			const Container = getContainer();
 			const container = context?.lastComponent ?? new Container();
 			container.clear();
@@ -384,8 +391,19 @@ export function createWebSearchTool(): ToolDefinition {
 					collapsed: { maxSections: 3, excerpts: COLLAPSED_EXCERPTS },
 					expanded: {},
 				},
+				undefined,
+				expanded,
 			);
 			container.addChild(renderer);
+
+			// expand hint when collapsed
+			if (!expanded) {
+				const hint = keyHint
+					? `${theme.fg("muted", "(")}${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`
+					: theme.fg("muted", "(Ctrl+O to expand)");
+				container.addChild(new Text(hint, 0, 0));
+			}
+
 			return container;
 		},
 	};

@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.73.1",
+  "lastChangelogVersion": "0.75.5",
   "hideThinkingBlock": false,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
@@ -22,7 +22,8 @@
     "~/.pi/agent/extensions/local-model.ts",
     "~/.pi/agent/extensions/mentions.ts",
     "~/.pi/agent/extensions/opencode-zen.ts",
-    "~/.pi/agent/extensions/crof.ts"
+    "~/.pi/agent/extensions/crof.ts",
+    "~/.pi/agent/extensions/commandcode.ts"
   ],
   "compaction": {
     "enabled": true
@@ -30,13 +31,12 @@
   "enabledModels": [
     "anthropic/claude-opus-4-6",
     "anthropic/claude-opus-4-7",
-    "kimi-coding/k2p6",
-    "zai/glm-5.1",
     "crof/kimi-k2.6",
     "crof/glm-5.1",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
     "openai-codex/gpt-5.5",
+    "cmd/*",
     "opencode/*",
     "opencode/big-pickle"
   ],
@@ -63,7 +63,7 @@
   "gptConfig": {
     "fastMode": false,
     "personality": "claude",
-    "verbosity": "medium",
+    "verbosity": "low",
     "summary": "auto",
     "toolDiscipline": "off",
     "showFooter": true

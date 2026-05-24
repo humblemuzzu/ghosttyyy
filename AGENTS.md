@@ -153,28 +153,12 @@ cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-too
 
 ---
 
-## pi-vcc: Handoff Compatibility Patch
+## pi-vcc: Removed
 
-**Upstream:** https://github.com/sting8k/pi-vcc (v0.3.12)
-**No patches to the package itself** — the fix is in our `handoff.ts`.
+**Previously:** `@sting8k/pi-vcc` (v0.3.12) — algorithmic compaction engine.
+**Status:** Uninstalled. Using pi's native LLM-based compaction instead.
 
-### The Problem
-
-pi-vcc's `/pi-vcc` command calls `ctx.compact({ customInstructions: "__pi_vcc__" })`. Our `handoff.ts` hooks `session_before_compact` and returns `{ cancel: true }` to block auto-compaction. This also blocks VCC.
-
-### The Fix (in handoff.ts)
-
-```typescript
-pi.on("session_before_compact", async (event, _ctx) => {
-    // allow pi-vcc algorithmic compaction — it uses a sentinel instruction
-    if ((event as any).preparation?.customInstructions === "__pi_vcc__") return;
-    return { cancel: true };
-});
-```
-
-This lets `/pi-vcc` work while still blocking pi's auto-compaction. Both handoff and VCC compaction are available:
-- `/handoff <goal>` — transfer to new session with curated context
-- `/pi-vcc` — compress within current session, zero API cost
+**Note:** `handoff.ts` had a `session_before_compact` hook that returned `{ cancel: true }` for all compaction except VCC. This blocked pi's native compaction entirely. `handoff.ts` has been moved to `extensions-disabled/` — pi auto-discovers all `.ts` files in `extensions/`, so simply removing it from `settings.json` was NOT enough to disable it.
 
 ---
 
@@ -307,24 +291,23 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
 | `@mariozechner/pi-coding-agent` | 0.71.0 | The pi agent itself (installed via homebrew npm) | No |
-| `@benvargas/pi-claude-code-use` | 1.0.1 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
+| `@benvargas/pi-claude-code-use` | 1.0.4 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
 | `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.3 | Token usage tracking and display | No |
-| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | **Yes** |
+| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
 | `pi-autoresearch` | latest | Autonomous experiment loop for optimization targets (GitHub install) | No |
-| `@sting8k/pi-vcc` | 0.3.12 | Algorithmic compaction engine + `vcc_recall` history search | No |
-| `pi-tool-display` | 0.3.5 | Compact tool rendering, thinking labels, user message box | **Config** |
+| `pi-tool-display` | 0.4.0 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
-| `pi-gpt-config` | 1.0.0 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
+| `pi-gpt-config` | 1.1.0 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
 | `pi-ask` | latest | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
-| `pi-codex-goal` | 0.1.9 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-codex-goal` | 0.1.12 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 
 **Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
-**Installed but inactive:** `pi-claude-bridge` (0.3.1, legacy fallback, patched), `@sting8k/pi-vcc` (0.3.13, algorithmic compaction), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
+**Installed but inactive:** `pi-claude-bridge` (0.3.1, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
 ---
 
@@ -349,11 +332,11 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Editor | `editor/` | Custom box-drawing editor |
 | Tools | `tools/` | 25 custom tools (see below) |
 
-**Disabled (on disk, not in settings.json):**
+**Disabled (moved to `extensions-disabled/` — files in `extensions/` are auto-discovered and always loaded):**
 
 | Extension | File | Purpose |
 |-----------|------|---------|
-| Handoff | `handoff.ts` | LLM-driven context transfer (disabled — using native compaction instead) |
+| Handoff | `handoff.ts` | LLM-driven context transfer — **blocks pi native compaction via `session_before_compact` cancel hook** |
 | Brain Loader | `brain-loader.ts` | Injects MEMORY.md, USER.md, project memory into system prompt |
 | MD Export | `md-export.ts` | Session JSONL → markdown export |
 
@@ -501,7 +484,7 @@ pi-setup/
 ├── themes/                     # 2 pi TUI themes
 │   ├── gruvbox.json
 │   └── nightowl.json
-├── sub-bar-patches/            # Patched pi-sub-bar (CrofAI + Kimi providers)
+├── extensions-disabled/         # Disabled extensions (moved out of extensions/ to prevent auto-discovery)
 ├── gpt-config-patches/         # Patched pi-gpt-config (tool discipline removed)
 ├── pi-skills/                  # 1 pi-level skill (handoff; find-skills + userinterface-wiki auto-created by packages)
 ├── config-skills/              # 16 config-level skills
@@ -540,7 +523,7 @@ When pi or any package gets updated:
 
 2. **condensed-milk-pi updated**: npm update overwrites our patched `index.ts` and `filters/context-compress.ts`. **Must re-apply patches** — without the `$ ` prefix strip, git status compression returns wrong data. See "condensed-milk-pi: Patched Build" above.
 
-3. **pi-sub-bar updated**: npm update overwrites our CrofAI + Kimi provider patches (7 files). Re-apply from `pi-setup/sub-bar-patches/`.
+3. **pi-sub-bar updated**: CrofAI + Kimi providers are now built-in as of v1.5.0. No patches needed.
 
 4. **pi-gpt-config updated** (git): `pi install` may overwrite our patched `index.ts`. Re-apply — our patches remove the redundant tool discipline overlay and set claude personality as default.
 
@@ -558,7 +541,7 @@ cp pi-setup/pi-core-patches/resource-loader.js /opt/homebrew/lib/node_modules/@e
 cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts
 cp pi-setup/condensed-milk-patches/filters/context-compress.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/filters/context-compress.ts
 
-# pi-sub-bar (CrofAI + Kimi providers — run install.sh sub-bar section or manually copy 7 files)
+# pi-sub-bar — no patches needed (CrofAI + Kimi now built-in as of v1.5.0)
 
 # pi-gpt-config (tool discipline removed + claude personality default)
 cp pi-setup/gpt-config-patches/index.ts ~/.pi/agent/git/github.com/edxeth/pi-gpt-config/index.ts

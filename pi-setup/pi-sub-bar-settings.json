@@ -109,7 +109,7 @@
       }
     },
     "crof": {
-      "showStatus": false,
+      "showStatus": true,
       "windows": {
         "showDay": true,
         "showCredits": true

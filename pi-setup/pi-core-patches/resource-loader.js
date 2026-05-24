@@ -1,10 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME } from "../config.js";
 import { loadThemeFromPath } from "../modes/interactive/theme/theme.js";
-import { canonicalizePath, isLocalPath } from "../utils/paths.js";
+import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.js";
 import { createEventBus } from "./event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
 import { DefaultPackageManager } from "./package-manager.js";
@@ -46,8 +45,8 @@ function loadContextFileFromDir(dir) {
     return null;
 }
 export function loadProjectContextFiles(options) {
-    const resolvedCwd = options.cwd;
-    const resolvedAgentDir = options.agentDir;
+    const resolvedCwd = resolvePath(options.cwd);
+    const resolvedAgentDir = resolvePath(options.agentDir);
     const contextFiles = [];
     const seenPaths = new Set();
     const globalContext = loadContextFileFromDir(resolvedAgentDir);
@@ -116,8 +115,8 @@ export class DefaultResourceLoader {
     lastPromptPaths;
     lastThemePaths;
     constructor(options) {
-        this.cwd = options.cwd;
-        this.agentDir = options.agentDir;
+        this.cwd = resolvePath(options.cwd);
+        this.agentDir = resolvePath(options.agentDir);
         this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
         this.eventBus = options.eventBus ?? createEventBus();
         this.packageManager = new DefaultPackageManager({
@@ -277,12 +276,14 @@ export class DefaultResourceLoader {
         extensionsResult.extensions.push(...inlineExtensions.extensions);
         extensionsResult.errors.push(...inlineExtensions.errors);
         // Detect extension conflicts (tools, commands, flags with same names from different extensions)
-        // Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
         // Tool conflicts are intentional when user extensions override package tools — suppress the diagnostic.
         this.detectExtensionConflicts(extensionsResult.extensions);
         for (const p of this.additionalExtensionPaths) {
-            if (isLocalPath(p) && !existsSync(p)) {
-                extensionsResult.errors.push({ path: p, error: `Extension path does not exist: ${p}` });
+            if (isLocalPath(p)) {
+                const resolved = this.resolveResourcePath(p);
+                if (!existsSync(resolved)) {
+                    extensionsResult.errors.push({ path: resolved, error: `Extension path does not exist: ${resolved}` });
+                }
             }
         }
         this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
@@ -293,8 +294,11 @@ export class DefaultResourceLoader {
         this.lastSkillPaths = skillPaths;
         this.updateSkillsFromPaths(skillPaths, metadataByPath);
         for (const p of this.additionalSkillPaths) {
-            if (isLocalPath(p) && !existsSync(p) && !this.skillDiagnostics.some((d) => d.path === p)) {
-                this.skillDiagnostics.push({ type: "error", message: "Skill path does not exist", path: p });
+            if (isLocalPath(p)) {
+                const resolved = this.resolveResourcePath(p);
+                if (!existsSync(resolved) && !this.skillDiagnostics.some((d) => d.path === resolved)) {
+                    this.skillDiagnostics.push({ type: "error", message: "Skill path does not exist", path: resolved });
+                }
             }
         }
         const promptPaths = this.noPromptTemplates
@@ -303,8 +307,15 @@ export class DefaultResourceLoader {
         this.lastPromptPaths = promptPaths;
         this.updatePromptsFromPaths(promptPaths, metadataByPath);
         for (const p of this.additionalPromptTemplatePaths) {
-            if (isLocalPath(p) && !existsSync(p) && !this.promptDiagnostics.some((d) => d.path === p)) {
-                this.promptDiagnostics.push({ type: "error", message: "Prompt template path does not exist", path: p });
+            if (isLocalPath(p)) {
+                const resolved = this.resolveResourcePath(p);
+                if (!existsSync(resolved) && !this.promptDiagnostics.some((d) => d.path === resolved)) {
+                    this.promptDiagnostics.push({
+                        type: "error",
+                        message: "Prompt template path does not exist",
+                        path: resolved,
+                    });
+                }
             }
         }
         const themePaths = this.noThemes
@@ -313,8 +324,9 @@ export class DefaultResourceLoader {
         this.lastThemePaths = themePaths;
         this.updateThemesFromPaths(themePaths, metadataByPath);
         for (const p of this.additionalThemePaths) {
-            if (!existsSync(p) && !this.themeDiagnostics.some((d) => d.path === p)) {
-                this.themeDiagnostics.push({ type: "error", message: "Theme path does not exist", path: p });
+            const resolved = this.resolveResourcePath(p);
+            if (!existsSync(resolved) && !this.themeDiagnostics.some((d) => d.path === resolved)) {
+                this.themeDiagnostics.push({ type: "error", message: "Theme path does not exist", path: resolved });
             }
         }
         const agentsFiles = {
@@ -334,10 +346,15 @@ export class DefaultResourceLoader {
             : baseAppend;
     }
     normalizeExtensionPaths(entries) {
-        return entries.map((entry) => ({
-            path: this.resolveResourcePath(entry.path),
-            metadata: entry.metadata,
-        }));
+        return entries.map((entry) => {
+            const metadata = entry.metadata.baseDir
+                ? { ...entry.metadata, baseDir: this.resolveResourcePath(entry.metadata.baseDir) }
+                : entry.metadata;
+            return {
+                path: this.resolveResourcePath(entry.path),
+                metadata,
+            };
+        });
     }
     updateSkillsFromPaths(skillPaths, metadataByPath) {
         let skillsResult;
@@ -505,18 +522,7 @@ export class DefaultResourceLoader {
         return merged;
     }
     resolveResourcePath(p) {
-        const trimmed = p.trim();
-        let expanded = trimmed;
-        if (trimmed === "~") {
-            expanded = homedir();
-        }
-        else if (trimmed.startsWith("~/")) {
-            expanded = join(homedir(), trimmed.slice(2));
-        }
-        else if (trimmed.startsWith("~")) {
-            expanded = join(homedir(), trimmed.slice(1));
-        }
-        return resolve(this.cwd, expanded);
+        return resolvePath(p, this.cwd, { trim: true });
     }
     loadThemes(paths, includeDefaults = true) {
         const themes = [];
@@ -528,7 +534,7 @@ export class DefaultResourceLoader {
             }
         }
         for (const p of paths) {
-            const resolved = resolve(this.cwd, p);
+            const resolved = this.resolveResourcePath(p);
             if (!existsSync(resolved)) {
                 diagnostics.push({ type: "warning", message: "theme path does not exist", path: resolved });
                 continue;
