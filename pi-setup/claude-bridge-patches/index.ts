@@ -3,19 +3,22 @@ import * as piAi from "@mariozechner/pi-ai";
 import { buildSessionContext, keyHint, type ExtensionAPI, type ExtensionUIContext } from "@mariozechner/pi-coding-agent";
 import { createSdkMcpServer, query, type EffortLevel, type SDKMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
-import { z } from "zod";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { Text } from "@mariozechner/pi-tui";
 import { createSession, deleteSession, repairToolPairing } from "cc-session-io";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, join } from "path";
 import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
 import { buildModels, resolveModelId as _resolveModelId } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, stackDepth, pushContext, popContext } from "./query-state.js";
+import { loadConfig } from "./config.js";
+import { extractAgentsAppend } from "./agents-md.js";
+import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
+import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
 
 // Compat (#2): use factory if available (pi-ai ≥0.66), else fall back to constructor (gsd-pi etc.)
 const _piAi = piAi as any;
@@ -112,65 +115,11 @@ const SDK_TO_PI_TOOL_NAME: Record<string, string> = {
 	read: "read", write: "write", edit: "edit", bash: "bash",
 };
 
-const DISALLOWED_BUILTIN_TOOLS = [
-	"Read", "Write", "Edit", "Glob", "Grep", "Bash", "Agent",
-	"NotebookEdit", "EnterWorktree", "ExitWorktree",
-	"CronCreate", "CronDelete", "CronList", "TeamCreate", "TeamDelete",
-	"WebFetch", "WebSearch", "TodoRead", "TodoWrite",
-	"EnterPlanMode", "ExitPlanMode", "RemoteTrigger", "SendMessage",
-	"Skill", "TaskOutput", "TaskStop", "ToolSearch",
-	"AskUserQuestion", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
-];
-
 // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
 const MODELS = buildModels(getModels("anthropic"));
 
 function resolveModelId(input: string): string {
 	return _resolveModelId(MODELS, input);
-}
-
-// --- Skills/settings paths ---
-
-const GLOBAL_SETTINGS_PATH = join(homedir(), ".pi", "agent", "settings.json");
-const PROJECT_SETTINGS_PATH = join(process.cwd(), ".pi", "settings.json");
-const GLOBAL_AGENTS_PATH = join(homedir(), ".pi", "agent", "AGENTS.md");
-
-// --- Config ---
-
-interface Config {
-	/** @deprecated Unsafe: can slice mid-tool-sequence causing orphaned tool_result without matching tool_use */
-	maxHistoryMessages?: number;
-	askClaude?: {
-		enabled?: boolean;
-		name?: string;
-		label?: string;
-		description?: string;
-		defaultMode?: "full" | "read" | "none";
-		defaultIsolated?: boolean;
-		allowFullMode?: boolean;
-		appendSkills?: boolean;
-	};
-}
-
-function tryParseJson(path: string): Partial<Config> {
-	if (!existsSync(path)) return {};
-	try {
-		return JSON.parse(readFileSync(path, "utf-8"));
-	} catch (e) {
-		console.error(`claude-bridge: failed to parse ${path}: ${e}`);
-		return {};
-	}
-}
-
-function loadConfig(cwd: string): Config {
-	const global = tryParseJson(join(homedir(), ".pi", "agent", "claude-bridge.json"));
-	const project = tryParseJson(join(cwd, ".pi", "claude-bridge.json"));
-	const merged: Config = {
-		maxHistoryMessages: project.maxHistoryMessages ?? global.maxHistoryMessages,
-		askClaude: { ...global.askClaude, ...project.askClaude },
-	};
-	debug("loadConfig:", JSON.stringify(merged));
-	return merged;
 }
 
 // --- Error handling ---
@@ -186,98 +135,13 @@ function errorMessage(err: unknown): string {
 	return String(err);
 }
 
-// --- Text extraction ---
-
-// Text-only extraction — callers: extractUserPrompt, convertAndImportMessages (tool results).
-// --- AskClaude helpers ---
-
-interface ToolCallState {
-	name: string;
-	status: string;
-	rawInput?: unknown;
-}
-
-function extractPath(rawInput: unknown): string | undefined {
-	if (!rawInput || typeof rawInput !== "object") return undefined;
-	const input = rawInput as Record<string, unknown>;
-	if (typeof input.file_path === "string") return input.file_path;
-	if (typeof input.path === "string") return input.path;
-	if (typeof input.command === "string") return input.command.substring(0, 80);
-	return undefined;
-}
-
-function shortPath(p: string): string {
-	const cwd = process.cwd();
-	if (p.startsWith(cwd + "/")) return p.slice(cwd.length + 1);
-	if (p.startsWith("/")) {
-		const parts = p.split("/");
-		if (parts.length > 3) return parts.slice(-2).join("/");
-	}
-	return p;
-}
-
-function formatToolAction(tc: ToolCallState): string | undefined {
-	const path = extractPath(tc.rawInput);
-	const verb = tc.name.toLowerCase().split(/\s/)[0];
-	if (verb === "read" || verb === "readfile") {
-		return path ? `Read(${shortPath(path)})` : "Read";
-	} else if (verb === "glob") {
-		const input = tc.rawInput as Record<string, unknown> | undefined;
-		const pat = typeof input?.pattern === "string" ? input.pattern.slice(0, 40) : "";
-		return pat ? `Glob(${pat})` : "Glob";
-	} else if (verb === "edit" || verb === "write" || verb === "writefile" || verb === "multiedit") {
-		return path ? `Edit(${shortPath(path)})` : "Edit";
-	} else if (verb === "bashoutput") {
-		return undefined; // redundant with preceding Bash call
-	} else if (verb === "bash" || verb === "terminal") {
-		return path ? `Bash(${path})` : "Bash";
-	} else if (verb === "agent") {
-		const input = tc.rawInput as Record<string, unknown> | undefined;
-		return `Agent(${String(input?.description ?? "").slice(0, 40)})`;
-	} else if (verb === "grep") {
-		const input = tc.rawInput as Record<string, unknown> | undefined;
-		const pat = typeof input?.pattern === "string" ? input.pattern.slice(0, 40) : "";
-		return pat ? `Grep(${pat})` : "Grep";
-	} else if (verb === "skill") {
-		const input = tc.rawInput as Record<string, unknown> | undefined;
-		const name = typeof input?.skill === "string" ? input.skill.slice(0, 40) : "";
-		return name ? `Skill(${name})` : "Skill";
-	} else if (verb === "todowrite" || verb === "taskcreate" || verb === "taskupdate") {
-		const todos = Array.isArray((tc.rawInput as any)?.todos) ? (tc.rawInput as any).todos : [];
-		const current = todos.find((t: any) => t.status === "in_progress") ?? todos.find((t: any) => t.status === "pending");
-		const label = current ? String(current.content ?? "").slice(0, 40) : "";
-		return label || undefined;
-	} else if (verb === "askclaude") {
-		// Recursive — don't show AskClaude in its own action summary
-		return undefined;
-	}
-	return tc.name;
-}
-
-function buildActionSummary(calls: Map<string, ToolCallState>): string {
-	const parts: string[] = [];
-	let prevVerb = "";
-	for (const [, tc] of calls) {
-		const action = formatToolAction(tc);
-		if (!action) continue;
-		const verb = tc.name.toLowerCase().split(/\s/)[0];
-		// Collapse consecutive calls to the same tool — keep only the latest
-		if (verb === prevVerb) {
-			parts[parts.length - 1] = action;
-		} else {
-			parts.push(action);
-		}
-		prevVerb = verb;
-	}
-	return parts.join("; ");
-}
-
 // AskClaude mode presets — controls which CC tools are blocked per mode.
 // Only block tools that can't work (no pi TUI for user interaction).
 // Other CC tools (Agent, SendMessage, RemoteTrigger, Tasks, etc.) are intentionally not blocked.
 const ASKCLAUDE_ALWAYS_BLOCKED = [
 	"AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	"ToolSearch", // probes for blocked tools, wastes tokens
+	"ScheduleWakeup", // no harness to fire wakeup from inside a delegated subagent
 ];
 const MODE_DISALLOWED_TOOLS: Record<string, string[]> = {
 	full: [
@@ -303,16 +167,23 @@ interface SessionState {
 	sessionId: string;
 	cursor: number;
 	cwd: string;
-	// Set after an abort: the session file on disk may be in an indeterminate
-	// state (CC partially wrote assistant output before the interrupt), so
-	// REUSE must not fire. REBUILD still preserves the sessionId via
-	// deleteSession+createSession, which wipes the partial state cleanly.
+	// Force the next syncSharedSession call down the REBUILD path. Set when
+	// pi has mutated its messages array out from under us (compact, tree
+	// navigation) or after an abort left the JSONL in an indeterminate state.
+	// REBUILD wipes and rewrites the file to match pi's current history.
 	needsRebuild?: boolean;
+	// Set ONLY after an abort. The killed CC subprocess may still be flushing
+	// a late "[Request interrupted by user]" record to the session JSONL.
+	// Reusing the same sessionId/path would race that orphan write into our
+	// fresh file and break CC's parent-uuid chain on the next resume. When
+	// this flag is set, REBUILD takes a fresh UUID and skips deleteSession
+	// so the orphan writes land on a dead inode. Compact/tree do NOT set
+	// this — there's no concurrent CC writer during those events, so
+	// in-place rebuild (preserve UUID, deleteSession + createSession) is safe.
+	forceRotate?: boolean;
 }
 
 let sharedSession: SessionState | null = null;
-
-let configuredMaxHistoryMessages: number | undefined;
 
 // Convert pi messages to Anthropic API format for session import.
 // Lossy: non-Anthropic thinking blocks are dropped (no valid signature), and only
@@ -324,13 +195,9 @@ function convertAndImportMessages(
 	messages: Context["messages"],
 	customToolNameToSdk?: Map<string, string>,
 ): void {
-	const limit = configuredMaxHistoryMessages;
-	const capped = limit && messages.length > limit ? messages.slice(-limit) : messages;
-	if (limit && messages.length > limit) debug(`convertAndImportMessages: capped ${messages.length} → ${limit} messages`);
+	const { anthropicMessages, sanitizedIds } = convertPiMessages(messages, customToolNameToSdk);
 
-	const { anthropicMessages, sanitizedIds } = convertPiMessages(capped, customToolNameToSdk);
-
-	debug(`convertAndImportMessages: ${capped.length} pi msgs → ${anthropicMessages.length} anthropic msgs`);
+	debug(`convertAndImportMessages: ${messages.length} pi msgs → ${anthropicMessages.length} anthropic msgs`);
 	debug(`convertAndImportMessages: imported roles:`, anthropicMessages.map((m, i) => {
 		const c = m.content;
 		if (typeof c === "string") return `[${i}]${m.role}:text`;
@@ -347,12 +214,6 @@ function convertAndImportMessages(
 		debug(`convertAndImportMessages: repairToolPairing ${anthropicMessages.length} → ${repaired.length} msgs`);
 	}
 	if (repaired.length) session.importMessages(repaired);
-}
-
-function msgPreview(msg: { role: string; content?: unknown }): string {
-	const c = msg.content;
-	const text = typeof c === "string" ? c : Array.isArray(c) ? (c[0] as any)?.text ?? (c[0] as any)?.type ?? "?" : "?";
-	return `${msg.role}:${JSON.stringify(typeof text === "string" ? text.slice(0, 60) : text)}`;
 }
 
 // Pi doesn't pass tool results directly — it appends them to the context and calls
@@ -531,14 +392,11 @@ function syncSharedSession(
 	}
 	const previousSessionId = sharedSession?.sessionId;
 	const previousCursor = sharedSession?.cursor ?? 0;
-	// After an abort, the killed CC subprocess may still be flushing its
-	// interrupt cleanup (including a stray "[Request interrupted by user]"
-	// record with a parentUuid from its in-memory state). If we reuse the
-	// same sessionId → same file path, those late writes race with our
-	// rebuild and append an orphan record that breaks CC's parent-uuid
-	// chain on the next resume. Take a fresh UUID in this one case to
-	// sidestep the race; normal rebuilds still preserve the sessionId.
-	const preserveId = previousSessionId !== undefined && !sharedSession?.needsRebuild;
+	// preserveId: rebuild in place (deleteSession + createSession with the
+	// existing UUID), so prompt-cache UUIDs stay stable for log correlation
+	// and for any tools that key off them. Skipped only when there's a
+	// concurrent writer we shouldn't race — see forceRotate docs above.
+	const preserveId = previousSessionId !== undefined && !sharedSession?.forceRotate;
 	if (preserveId) {
 		// Wipe prior jsonl + companion dir (no-op if nothing to wipe).
 		deleteSession(previousSessionId!, cwd, process.env.CLAUDE_CONFIG_DIR);
@@ -607,90 +465,6 @@ function mapToolArgs(
 	return result;
 }
 
-// --- Provider helpers: system prompt ---
-
-function resolveAgentsMdPath(): string | undefined {
-	const fromCwd = findAgentsMdInParents(process.cwd());
-	if (fromCwd) return fromCwd;
-	if (existsSync(GLOBAL_AGENTS_PATH)) return GLOBAL_AGENTS_PATH;
-	return undefined;
-}
-
-function findAgentsMdInParents(startDir: string): string | undefined {
-	let current = resolve(startDir);
-	while (true) {
-		const candidate = join(current, "AGENTS.md");
-		if (existsSync(candidate)) return candidate;
-		const parent = dirname(current);
-		if (parent === current) break;
-		current = parent;
-	}
-	return undefined;
-}
-
-function extractAgentsAppend(): string | undefined {
-	const agentsPath = resolveAgentsMdPath();
-	if (!agentsPath) return undefined;
-	try {
-		const content = readFileSync(agentsPath, "utf-8").trim();
-		if (!content) return undefined;
-		const sanitized = sanitizeAgentsContent(content);
-		return sanitized.length > 0 ? `# CLAUDE.md\n\n${sanitized}` : undefined;
-	} catch {
-		return undefined;
-	}
-}
-
-function sanitizeAgentsContent(content: string): string {
-	let sanitized = content;
-	sanitized = sanitized.replace(/~\/\.pi\b/gi, "~/.claude");
-	sanitized = sanitized.replace(/(^|[\s'"`])\.pi\//g, "$1.claude/");
-	sanitized = sanitized.replace(/\b\.pi\b/gi, ".claude");
-	sanitized = sanitized.replace(/\bpi\b/gi, "environment");
-	return sanitized;
-}
-
-// --- Provider helpers: settings ---
-
-type ProviderSettings = {
-	appendSystemPrompt?: boolean;
-	settingSources?: SettingSource[];
-	strictMcpConfig?: boolean;
-};
-
-function loadProviderSettings(): ProviderSettings {
-	const globalSettings = readSettingsFile(GLOBAL_SETTINGS_PATH);
-	const projectSettings = readSettingsFile(PROJECT_SETTINGS_PATH);
-	return { ...globalSettings, ...projectSettings };
-}
-
-function readSettingsFile(filePath: string): ProviderSettings {
-	if (!existsSync(filePath)) return {};
-	try {
-		const raw = readFileSync(filePath, "utf-8");
-		const parsed = JSON.parse(raw) as Record<string, unknown>;
-		const settingsBlock =
-			(parsed["claudeAgentSdkProvider"] as Record<string, unknown> | undefined) ??
-			(parsed["claude-agent-sdk-provider"] as Record<string, unknown> | undefined) ??
-			(parsed["claudeAgentSdk"] as Record<string, unknown> | undefined);
-		if (!settingsBlock || typeof settingsBlock !== "object") return {};
-		const appendSystemPrompt =
-			typeof settingsBlock["appendSystemPrompt"] === "boolean" ? settingsBlock["appendSystemPrompt"] : undefined;
-		const settingSourcesRaw = settingsBlock["settingSources"];
-		const settingSources =
-			Array.isArray(settingSourcesRaw) &&
-			settingSourcesRaw.every((value) => typeof value === "string" && (value === "user" || value === "project" || value === "local"))
-				? (settingSourcesRaw as SettingSource[])
-				: undefined;
-		const strictMcpConfig =
-			typeof settingsBlock["strictMcpConfig"] === "boolean" ? settingsBlock["strictMcpConfig"] : undefined;
-		return { appendSystemPrompt, settingSources, strictMcpConfig };
-	} catch (e) {
-		console.error(`claude-bridge: failed to parse ${filePath}: ${e}`);
-		return {};
-	}
-}
-
 // --- Provider helpers: tool resolution ---
 
 // --- Provider helpers: tool bridge ---
@@ -725,48 +499,6 @@ function resolveMcpTools(context: Context, excludeToolName?: string): {
 	}
 
 	return { mcpTools, customToolNameToSdk, customToolNameToPi };
-}
-
-// --- TypeBox → Zod schema conversion ---
-//
-// Pi tools use TypeBox (JSON Schema objects). The SDK's MCP server needs Zod.
-//
-// Why: createSdkMcpServer's tools/list handler calls zodToJsonSchema() on each
-// tool's inputSchema. It detects Zod via the `~standard` marker or `_def`/`_zod`
-// properties (see `Z0()` in sdk.mjs). Plain JSON Schema objects silently fall
-// back to `{type: "object", properties: {}}` — the model sees no params.
-//
-// If this breaks after an SDK update, check whether `Z0()` detection changed
-// or whether createSdkMcpServer now accepts raw JSON Schema.
-
-function jsonSchemaPropertyToZod(prop: Record<string, unknown>): z.ZodTypeAny {
-	let base: z.ZodTypeAny;
-	if (Array.isArray(prop.enum)) base = z.enum(prop.enum as [string, ...string[]]);
-	else switch (prop.type) {
-		case "string": base = z.string(); break;
-		case "number": case "integer": base = z.number(); break;
-		case "boolean": base = z.boolean(); break;
-		case "array": base = prop.items
-			? z.array(jsonSchemaPropertyToZod(prop.items as Record<string, unknown>))
-			: z.array(z.unknown()); break;
-		case "object": base = z.record(z.string(), z.unknown()); break;
-		default: base = z.unknown();
-	}
-	if (typeof prop.description === "string") base = base.describe(prop.description);
-	return base;
-}
-
-function jsonSchemaToZodShape(schema: unknown): Record<string, z.ZodTypeAny> {
-	const s = schema as Record<string, unknown>;
-	if (!s || s.type !== "object" || !s.properties) return {};
-	const props = s.properties as Record<string, Record<string, unknown>>;
-	const required = new Set(Array.isArray(s.required) ? s.required as string[] : []);
-	const shape: Record<string, z.ZodTypeAny> = {};
-	for (const [key, prop] of Object.entries(props)) {
-		const zodProp = jsonSchemaPropertyToZod(prop);
-		shape[key] = required.has(key) ? zodProp : zodProp.optional();
-	}
-	return shape;
 }
 
 // Creates an MCP server that bridges pi tools to the SDK. Each tool handler
@@ -1222,26 +954,31 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		? wrapPromptStream(promptBlocks)
 		: promptText;
 	const mcpServers = buildMcpServers(mcpTools, ctx());
-	const providerSettings = loadProviderSettings();
+	const providerSettings = loadConfig(cwd).provider ?? {};
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
 	const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : undefined;
 	const skillsAppend = appendSystemPrompt ? extractSkillsBlock(context.systemPrompt) : undefined;
 	const appendParts = [agentsAppend, skillsAppend].filter((part): part is string => Boolean(part));
 	const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : undefined;
 
-	// MCP auto-loading suppression: CC auto-loads MCP servers from ~/.claude.json and
-	// .mcp.json when filesystem settings are loaded. Since pi executes tools (not CC),
-	// auto-loaded MCP tools are pure token overhead. Two mechanisms prevent this:
-	//   appendSystemPrompt=true  (default): settingSources=undefined → SDK isolation mode,
-	//     no filesystem settings loaded, so no MCP auto-discovery occurs.
-	//   appendSystemPrompt=false: settingSources loads user/project settings, but
-	//     --strict-mcp-config tells CC to ignore auto-discovered MCP configs.
+	// MCP auto-loading suppression: CC reads MCP servers from ~/.claude.json (top-level
+	// + per-project) and .mcp.json. Since pi executes tools (not CC), those are pure
+	// token overhead. --strict-mcp-config tells the binary to use ONLY mcpServers passed
+	// programmatically and ignore filesystem MCP entries — applied unconditionally because
+	// settingSources=undefined does NOT give isolation (the CC default loads all sources).
 	const settingSources: SettingSource[] | undefined = appendSystemPrompt
 		? undefined
 		: providerSettings.settingSources ?? ["user", "project"];
-	const strictMcpConfigEnabled = !appendSystemPrompt && providerSettings.strictMcpConfig !== false;
+	const strictMcpConfigEnabled = providerSettings.strictMcpConfig !== false;
+	const claudeExecutable = providerSettings.pathToClaudeCodeExecutable;
 
-	const effort = options?.reasoning ? REASONING_TO_EFFORT[options.reasoning] : undefined;
+	// Prefer the model's own thinkingLevelMap when present (pi-ai 0.72+ ships
+	// per-model overrides — e.g. opus-4-7 wants xhigh→xhigh, not xhigh→max).
+	// Fall back to our generic table for older pi-ai or unmapped levels.
+	const effort = options?.reasoning
+		? ((model as any).thinkingLevelMap?.[options.reasoning] as EffortLevel | undefined)
+			?? REASONING_TO_EFFORT[options.reasoning]
+		: undefined;
 
 	const extraArgs: Record<string, string | null> = { model: model.id };
 	if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
@@ -1249,10 +986,21 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// Force summarized so thinking_delta events arrive. See anthropics/claude-agent-sdk-python#830.
 	if (effort) extraArgs["thinking-display"] = "summarized";
 
+	// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
+	// when the user is logged into Anthropic). These are a separate code path from
+	// filesystem MCP and are NOT blocked by --strict-mcp-config or settingSources=undefined.
+	// The native CC binary gates them on env var ENABLE_CLAUDEAI_MCP_SERVERS: setting it
+	// to "0"/"false"/"no"/"off" makes the loader return early before any cloud fetch.
+	// DISABLE_AUTO_COMPACT=1: pi owns context-management and propagates its own
+	// /compact via session_compact (see handler in default export). Letting CC
+	// also autocompact would double-flush the prompt cache and races pi's
+	// threshold with CC's, including CC's anti-thrashing guard (issue #8).
+	// Manual /compact in CC still works (we never invoke it).
+	const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" };
 	const queryOptions: NonNullable<Parameters<typeof query>[0]["options"]> = {
 		cwd,
-		disallowedTools: DISALLOWED_BUILTIN_TOOLS,
-		allowedTools: [`mcp__${MCP_SERVER_NAME}__*`],
+		env: childEnv,
+		tools: [],
 		permissionMode: "bypassPermissions",
 		includePartialMessages: true,
 		systemPrompt: systemPromptAppend || "",
@@ -1261,6 +1009,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		...(settingSources ? { settingSources } : {}),
 		...(mcpServers ? { mcpServers } : {}),
 		...(resumeSessionId ? { resume: resumeSessionId } : {}),
+		...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
 		...makeCliDebugOptions("provider"),
 	};
 
@@ -1305,9 +1054,9 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 			// --- Abort detection in normal completion path ---
 			if (wasAborted || options?.signal?.aborted) {
-				if (sharedSession) sharedSession = { ...sharedSession, needsRebuild: true };
+				if (sharedSession) sharedSession = { ...sharedSession, needsRebuild: true, forceRotate: true };
 				ctx().deferredUserMessages = [];
-				debug(`provider: abort detected, marked sharedSession needsRebuild`);
+				debug(`provider: abort detected, marked sharedSession needsRebuild + forceRotate`);
 				if (ctx().turnOutput) {
 					ctx().turnOutput.stopReason = "aborted";
 					ctx().turnOutput.errorMessage = "Operation aborted";
@@ -1370,7 +1119,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		.catch((error) => {
 			debug(`provider: query error, model=${model.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
 			if ((wasAborted || options?.signal?.aborted) && sharedSession) {
-				sharedSession = { ...sharedSession, needsRebuild: true };
+				sharedSession = { ...sharedSession, needsRebuild: true, forceRotate: true };
 			} else {
 				sharedSession = null;
 			}
@@ -1452,6 +1201,8 @@ async function promptAndWait(
 	const effort = options?.thinking && options.thinking !== "off"
 		? REASONING_TO_EFFORT[options.thinking] : undefined;
 
+	const claudeExecutable = loadConfig(cwd).provider?.pathToClaudeCodeExecutable;
+
 	const extraArgs: Record<string, string | null> = {
 		"strict-mcp-config": null,
 		model: modelId,
@@ -1467,6 +1218,7 @@ async function promptAndWait(
 		prompt,
 		options: {
 			cwd,
+			env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" },
 			permissionMode: "bypassPermissions",
 			...(disallowedTools.length ? { disallowedTools } : {}),
 			...(effort ? { effort } : {}),
@@ -1475,6 +1227,7 @@ async function promptAndWait(
 			extraArgs,
 			...(resumeSessionId ? { resume: resumeSessionId } : {}),
 			...(options?.isolated ? { persistSession: false } : {}),
+			...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
 			...makeCliDebugOptions("askclaude"),
 		},
 	});
@@ -1571,7 +1324,7 @@ export default function (pi: ExtensionAPI) {
 	process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
 
 	const config = loadConfig(process.cwd());
-	configuredMaxHistoryMessages = config.maxHistoryMessages;
+	debug("loadConfig:", JSON.stringify(config));
 
 	// Reset shared session on pi session lifecycle events
 	const clearSession = (event: string) => {
@@ -1594,6 +1347,22 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 	pi.on("session_shutdown", () => clearSession("session_shutdown"));
+
+	// pi /compact and session-tree navigation (rewind / fork-at-point /
+	// branch switch) both mutate pi's messages array out from under the
+	// bridge. syncSharedSession's REUSE check would otherwise see
+	// slice(cursor) === [] (or skip entries) and keep --resume'ing a CC
+	// session that no longer matches pi's history. /compact in particular
+	// triggers CC's autocompact-thrashing guard (issue #8). Force the next
+	// call down the REBUILD path so CC sees the current history.
+	const markRebuild = (event: string) => {
+		if (sharedSession) {
+			debug(`${event}: marking needsRebuild on session ${sharedSession.sessionId.slice(0, 8)}`);
+			sharedSession = { ...sharedSession, needsRebuild: true };
+		}
+	};
+	pi.on("session_compact", () => markRebuild("session_compact"));
+	pi.on("session_tree", () => markRebuild("session_tree"));
 
 	// --- Provider ---
 	//
@@ -1636,17 +1405,18 @@ export default function (pi: ExtensionAPI) {
 	if (allowFull) modeDesc += ` "full": allows writing and bash execution (careful: runs without feedback to pi).`;
 
 	if (askConf?.enabled !== false) {
-		pi.registerTool({
+		const askClaudeParams = Type.Object({
+			prompt: Type.String({ description: "The question or task for Claude Code. By default Claude sees the full conversation history. Don't research up front, let Claude explore." }),
+			mode: Type.Optional(StringEnum(modeValues, { description: modeDesc })),
+			model: Type.Optional(Type.String({ description: 'Claude model (e.g. "opus", "sonnet", "haiku", or full ID). Defaults to "opus".' })),
+			thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, { description: "Thinking effort level. Omit to use Claude Code's default." })),
+			isolated: Type.Optional(Type.Boolean({ description: "When true, Claude sees only this prompt (clean session). When false (default), Claude sees the full conversation history." })),
+		});
+		pi.registerTool<typeof askClaudeParams>({
 			name: askConf?.name ?? "AskClaude",
 			label: askConf?.label ?? "Ask Claude Code",
 			description: askConf?.description ?? (allowFull ? DEFAULT_TOOL_DESCRIPTION_FULL : DEFAULT_TOOL_DESCRIPTION),
-			parameters: Type.Object({
-				prompt: Type.String({ description: "The question or task for Claude Code. By default Claude sees the full conversation history. Don't research up front, let Claude explore." }),
-				mode: Type.Optional(StringEnum(modeValues, { description: modeDesc })),
-				model: Type.Optional(Type.String({ description: 'Claude model (e.g. "opus", "sonnet", "haiku", or full ID). Defaults to "opus".' })),
-				thinking: Type.Optional(StringEnum(["off", "minimal", "low", "medium", "high", "xhigh"] as const, { description: "Thinking effort level. Omit to use Claude Code's default." })),
-				isolated: Type.Optional(Type.Boolean({ description: "When true, Claude sees only this prompt (clean session). When false (default), Claude sees the full conversation history." })),
-			}),
+			parameters: askClaudeParams,
 			renderCall(args, theme) {
 				let text = theme.fg("mdLink", theme.bold("AskClaude "));
 				const mode = args.mode ?? defaultMode;

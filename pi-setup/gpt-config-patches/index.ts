@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Text, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Container, type SettingItem, SettingsList, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { Model } from "@earendil-works/pi-ai";
 
 type Personality = "friendly" | "pragmatic" | "claude" | "none";
@@ -291,12 +291,6 @@ export default function gptConfigExtension(pi: ExtensionAPI) {
 			return "No effect on the current model. Priority service tier is only available on parity models that support it.";
 		}
 		return "Requests the priority service tier for lower latency. It affects speed only, not tone, answer length, or reasoning-summary behavior.";
-	}
-
-	function fastModeBadge(model: Model<any> | undefined): string | undefined {
-		if (!state.fastMode) return undefined;
-		if (shouldApplyFastModeParity(model)) return "Fast mode enabled: next request will send service_tier=priority.";
-		return "Fast mode enabled but ignored for the current model.";
 	}
 
 	function shouldApplyVerbosityParity(model: Model<any> | undefined): boolean {
@@ -672,7 +666,8 @@ export default function gptConfigExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const overlays = getInstructionOverlays(ctx.model).filter((overlay) => {
+		const model = ctx.model;
+		const overlays = getInstructionOverlays(model).filter((overlay) => {
 			if (overlay.startsWith("<personality>") && event.systemPrompt.includes("<personality>")) return false;
 			if (overlay.startsWith("<native_tool_discipline>") && event.systemPrompt.includes("<native_tool_discipline>")) return false;
 			return true;
@@ -687,16 +682,17 @@ export default function gptConfigExtension(pi: ExtensionAPI) {
 		const payload = event.payload;
 		if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
 
+		const model = ctx.model;
 		let modified = payload as Record<string, unknown>;
 		let changed = false;
 
-		if (state.fastMode && shouldApplyFastModeParity(ctx.model)) {
+		if (state.fastMode && shouldApplyFastModeParity(model)) {
 			modified = { ...modified, service_tier: "priority" };
 			changed = true;
 		}
 
-		const effectiveVerbosity = getEffectiveVerbosity(ctx.model);
-		if (effectiveVerbosity && shouldApplyVerbosityParity(ctx.model)) {
+		const effectiveVerbosity = getEffectiveVerbosity(model);
+		if (effectiveVerbosity && shouldApplyVerbosityParity(model)) {
 			const existingText = (modified.text && typeof modified.text === "object" && !Array.isArray(modified.text))
 				? modified.text as Record<string, unknown>
 				: {};
@@ -704,8 +700,8 @@ export default function gptConfigExtension(pi: ExtensionAPI) {
 			changed = true;
 		}
 
-		const effectiveSummary = getEffectiveSummary(ctx.model);
-		if (effectiveSummary && effectiveSummary !== "none" && shouldApplySummaryParity(ctx.model)) {
+		const effectiveSummary = getEffectiveSummary(model);
+		if (effectiveSummary && effectiveSummary !== "none" && shouldApplySummaryParity(model)) {
 			const existingReasoning = (modified.reasoning && typeof modified.reasoning === "object" && !Array.isArray(modified.reasoning))
 				? modified.reasoning as Record<string, unknown>
 				: {};

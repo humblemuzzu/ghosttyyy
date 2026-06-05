@@ -40,7 +40,7 @@ The system prompt is assembled in layers:
 
 ## pi-claude-bridge: Custom Build (inactive)
 
-**Upstream:** https://github.com/elidickinson/pi-claude-bridge (v0.2.0)
+**Upstream:** https://github.com/elidickinson/pi-claude-bridge (v0.4.0)
 **Our patched version:** `pi-setup/claude-bridge-patches/index.ts`
 **Status:** Installed globally but removed from settings.json packages. Legacy fallback.
 
@@ -56,7 +56,7 @@ Two `systemPrompt` modifications — remove `preset: "claude_code"` so Claude Co
 ### Re-apply after npm update
 
 ```bash
-cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
+cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/src/index.ts
 ```
 
 ---
@@ -114,7 +114,7 @@ cp pi-setup/condensed-milk-patches/filters/context-compress.ts /opt/homebrew/lib
 
 ## pi-tool-display: Configuration Required
 
-**Upstream:** https://github.com/MasuRii/pi-tool-display (v0.3.5)
+**Upstream:** https://github.com/MasuRii/pi-tool-display (v0.4.1)
 **Config file:** `~/.pi/agent/extensions/pi-tool-display/config.json`
 **Backed up:** `pi-setup/extensions/pi-tool-display/config.json`
 
@@ -290,28 +290,28 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@mariozechner/pi-coding-agent` | 0.71.0 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.78.1 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.4 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
-| `pi-web-access` | 0.10.6 | Web access: read pages, search, GitHub API, librarian skill | No |
-| `pi-context` | 1.1.3 | Context management: context_log, context_tag, context_checkout | No |
-| `pi-token-burden` | 0.6.3 | Token usage tracking and display | No |
+| `pi-web-access` | 0.10.7 | Web access: read pages, search, GitHub API, librarian skill | No |
+| `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
+| `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
-| `pi-autoresearch` | latest | Autonomous experiment loop for optimization targets (GitHub install) | No |
-| `pi-tool-display` | 0.4.0 | Compact tool rendering, thinking labels, user message box | **Config** |
+| `pi-autoresearch` | 1.5.0 | Autonomous experiment loop for optimization targets (GitHub install) | No |
+| `pi-tool-display` | 0.4.2 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
-| `pi-gpt-config` | 1.1.0 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
-| `pi-ask` | latest | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
-| `pi-codex-goal` | 0.1.12 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-gpt-config` | 1.1.1 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
+| `pi-ask` | 1.0.2 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
+| `pi-codex-goal` | 0.1.24 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 
 **Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
-**Installed but inactive:** `pi-claude-bridge` (0.3.1, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
+**Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
 ---
 
-## Extensions (14 active, 3 disabled)
+## Extensions (12 active, 5 disabled)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
@@ -326,7 +326,6 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Notify | `notify.ts` | Desktop notifications via OSC 777 |
 | Todos | `todos.ts` | File-based todo manager with TUI |
 | Local Model | `local-model.ts` | `/local start|stop|status|logs` for llama-server |
-| OpenCode Zen | `opencode-zen.ts` | Curated models.dev catalog provider with free/paid tiers |
 | CrofAI | `crof.ts` | Budget OSS model provider (quantized DeepSeek/GLM/Qwen/Kimi) |
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
@@ -339,6 +338,8 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Handoff | `handoff.ts` | LLM-driven context transfer — **blocks pi native compaction via `session_before_compact` cancel hook** |
 | Brain Loader | `brain-loader.ts` | Injects MEMORY.md, USER.md, project memory into system prompt |
 | MD Export | `md-export.ts` | Session JSONL → markdown export |
+| OpenCode Zen | `opencode-zen.ts` | Curated models.dev catalog provider with free/paid tiers — disabled to reduce model noise |
+| CommandCode | `commandcode.ts` | CommandCode subscription provider — disabled to reduce model noise |
 
 ---
 
@@ -550,7 +551,7 @@ cp pi-setup/gpt-config-patches/index.ts ~/.pi/agent/git/github.com/edxeth/pi-gpt
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
 
 # pi-claude-bridge (only if reactivating — currently inactive)
-# cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
+# cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/src/index.ts
 ```
 
 ### What NOT to Do
