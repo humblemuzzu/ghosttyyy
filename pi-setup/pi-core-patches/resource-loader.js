@@ -206,7 +206,21 @@ export class DefaultResourceLoader {
             this.updateThemesFromPaths(this.lastThemePaths);
         }
     }
-    async reload() {
+    async loadProjectTrustExtensions() {
+        // Force untrusted project settings for the bootstrap pass. This keeps project-local
+        // extensions/packages out while still loading user/global and temporary CLI extensions.
+        this.settingsManager.setProjectTrusted(false);
+        await this.settingsManager.reload();
+        return this.loadCurrentExtensionSet({ includeInlineFactories: true });
+    }
+    async reload(options) {
+        let preTrustExtensions;
+        if (options?.resolveProjectTrust) {
+            preTrustExtensions = await this.loadProjectTrustExtensions();
+            const projectTrusted = await options.resolveProjectTrust({ extensionsResult: preTrustExtensions });
+            this.settingsManager.setProjectTrusted(projectTrusted);
+        }
+        // reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
         await this.settingsManager.reload();
         const resolvedPaths = await this.packageManager.resolve();
         const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
@@ -230,29 +244,7 @@ export class DefaultResourceLoader {
         const enabledSkillResources = getEnabledResources(resolvedPaths.skills);
         const enabledPrompts = getEnabledPaths(resolvedPaths.prompts);
         const enabledThemes = getEnabledPaths(resolvedPaths.themes);
-        const mapSkillPath = (resource) => {
-            if (resource.metadata.source !== "auto" && resource.metadata.origin !== "package") {
-                return resource.path;
-            }
-            try {
-                const stats = statSync(resource.path);
-                if (!stats.isDirectory()) {
-                    return resource.path;
-                }
-            }
-            catch {
-                return resource.path;
-            }
-            const skillFile = join(resource.path, "SKILL.md");
-            if (existsSync(skillFile)) {
-                if (!metadataByPath.has(skillFile)) {
-                    metadataByPath.set(skillFile, resource.metadata);
-                }
-                return skillFile;
-            }
-            return resource.path;
-        };
-        const enabledSkills = enabledSkillResources.map(mapSkillPath);
+        const enabledSkills = enabledSkillResources.map((resource) => this.mapSkillPath(resource, metadataByPath));
         // Add CLI paths metadata
         for (const r of cliExtensionPaths.extensions) {
             if (!metadataByPath.has(r.path)) {
@@ -271,13 +263,7 @@ export class DefaultResourceLoader {
         const extensionPaths = this.noExtensions
             ? cliEnabledExtensions
             : this.mergePaths(cliEnabledExtensions, enabledExtensions);
-        const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
-        const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
-        extensionsResult.extensions.push(...inlineExtensions.extensions);
-        extensionsResult.errors.push(...inlineExtensions.errors);
-        // Detect extension conflicts (tools, commands, flags with same names from different extensions)
-        // Tool conflicts are intentional when user extensions override package tools — suppress the diagnostic.
-        this.detectExtensionConflicts(extensionsResult.extensions);
+        const extensionsResult = await this.loadFinalExtensionSet(extensionPaths, preTrustExtensions);
         for (const p of this.additionalExtensionPaths) {
             if (isLocalPath(p)) {
                 const resolved = this.resolveResourcePath(p);
@@ -330,7 +316,12 @@ export class DefaultResourceLoader {
             }
         }
         const agentsFiles = {
-            agentsFiles: this.noContextFiles ? [] : loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir }),
+            agentsFiles: this.noContextFiles
+                ? []
+                : loadProjectContextFiles({
+                    cwd: this.cwd,
+                    agentDir: this.agentDir,
+                }),
         };
         const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
         this.agentsFiles = resolvedAgentsFiles.agentsFiles;
@@ -344,6 +335,91 @@ export class DefaultResourceLoader {
         this.appendSystemPrompt = this.appendSystemPromptOverride
             ? this.appendSystemPromptOverride(baseAppend)
             : baseAppend;
+    }
+    async loadCurrentExtensionSet(options) {
+        const resolvedPaths = await this.packageManager.resolve();
+        const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
+            temporary: true,
+        });
+        const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
+        const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
+        const extensionPaths = this.noExtensions
+            ? cliEnabledExtensions
+            : this.mergePaths(cliEnabledExtensions, enabledExtensions);
+        const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+        if (!options.includeInlineFactories) {
+            return extensionsResult;
+        }
+        const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
+        extensionsResult.extensions.push(...inlineExtensions.extensions);
+        extensionsResult.errors.push(...inlineExtensions.errors);
+        return extensionsResult;
+    }
+    resolveExtensionLoadPath(path) {
+        return resolvePath(path, this.cwd, { normalizeUnicodeSpaces: true });
+    }
+    async loadFinalExtensionSet(extensionPaths, preTrustExtensions) {
+        if (!preTrustExtensions) {
+            const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+            const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
+            extensionsResult.extensions.push(...inlineExtensions.extensions);
+            extensionsResult.errors.push(...inlineExtensions.errors);
+            this.addExtensionConflictDiagnostics(extensionsResult);
+            return extensionsResult;
+        }
+        const preloadedByPath = new Map(preTrustExtensions.extensions
+            .filter((extension) => !extension.path.startsWith("<inline:"))
+            .map((extension) => [extension.resolvedPath, extension]));
+        const failedPreloadPaths = new Set(preTrustExtensions.errors.map((error) => this.resolveExtensionLoadPath(error.path)));
+        const remainingPaths = extensionPaths.filter((path) => {
+            const resolvedPath = this.resolveExtensionLoadPath(path);
+            return !preloadedByPath.has(resolvedPath) && !failedPreloadPaths.has(resolvedPath);
+        });
+        const remainingExtensions = await loadExtensions(remainingPaths, this.cwd, this.eventBus, preTrustExtensions.runtime);
+        const loadedByPath = new Map(preloadedByPath);
+        for (const extension of remainingExtensions.extensions) {
+            loadedByPath.set(extension.resolvedPath, extension);
+        }
+        const inlineExtensions = preTrustExtensions.extensions.filter((extension) => extension.path.startsWith("<inline:"));
+        const orderedExtensions = extensionPaths
+            .map((path) => loadedByPath.get(this.resolveExtensionLoadPath(path)))
+            .filter((extension) => extension !== undefined);
+        orderedExtensions.push(...inlineExtensions);
+        const extensionsResult = {
+            extensions: orderedExtensions,
+            errors: [...preTrustExtensions.errors, ...remainingExtensions.errors],
+            runtime: preTrustExtensions.runtime,
+        };
+        this.addExtensionConflictDiagnostics(extensionsResult);
+        return extensionsResult;
+    }
+    addExtensionConflictDiagnostics(extensionsResult) {
+        // Detect extension conflicts (tools, commands, flags with same names from different extensions)
+        // Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
+        // Tool conflicts are intentional when user extensions override package tools — suppress the diagnostic.
+        this.detectExtensionConflicts(extensionsResult.extensions);
+    }
+    mapSkillPath(resource, metadataByPath) {
+        if (resource.metadata.source !== "auto" && resource.metadata.origin !== "package") {
+            return resource.path;
+        }
+        try {
+            const stats = statSync(resource.path);
+            if (!stats.isDirectory()) {
+                return resource.path;
+            }
+        }
+        catch {
+            return resource.path;
+        }
+        const skillFile = join(resource.path, "SKILL.md");
+        if (existsSync(skillFile)) {
+            if (!metadataByPath.has(skillFile)) {
+                metadataByPath.set(skillFile, resource.metadata);
+            }
+            return skillFile;
+        }
+        return resource.path;
     }
     normalizeExtensionPaths(entries) {
         return entries.map((entry) => {
@@ -664,7 +740,7 @@ export class DefaultResourceLoader {
     }
     discoverSystemPromptFile() {
         const projectPath = join(this.cwd, CONFIG_DIR_NAME, "SYSTEM.md");
-        if (existsSync(projectPath)) {
+        if (this.settingsManager.isProjectTrusted() && existsSync(projectPath)) {
             return projectPath;
         }
         const globalPath = join(this.agentDir, "SYSTEM.md");
@@ -675,7 +751,7 @@ export class DefaultResourceLoader {
     }
     discoverAppendSystemPromptFile() {
         const projectPath = join(this.cwd, CONFIG_DIR_NAME, "APPEND_SYSTEM.md");
-        if (existsSync(projectPath)) {
+        if (this.settingsManager.isProjectTrusted() && existsSync(projectPath)) {
             return projectPath;
         }
         const globalPath = join(this.agentDir, "APPEND_SYSTEM.md");

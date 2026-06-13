@@ -19,12 +19,14 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.74.0) — @earendil-works/pi-coding-agent
+pi CLI (v0.79.2) — @earendil-works/pi-coding-agent
+  ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
+  │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (OAuth rewrite for Claude Max)
        └─ Claude API
 ```
 
-Primary provider is `anthropic` with Claude Opus 4-6 via Claude Max subscription. `pi-claude-code-use` intercepts OAuth payloads for subscription-based access.
+Current default provider is `kimi-code` with `kimi-for-coding` (K2.7 Code) via Kimi Code subscription OAuth. Claude remains available through `anthropic` with `pi-claude-code-use` for Claude Max subscription access.
 
 **Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
@@ -290,7 +292,7 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.78.1 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.79.2 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.4 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
 | `pi-web-access` | 0.10.7 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
@@ -304,6 +306,8 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 | `pi-codex-goal` | 0.1.24 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 
 **Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`
+
+**Kimi Code usage:** `/model kimi-code/kimi-for-coding:high`. Uses `~/.kimi-code/credentials/kimi-code.json` and `pi-setup/extensions/kimi-code-token.mjs` to refresh Kimi Code subscription OAuth tokens.
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
@@ -436,6 +440,7 @@ Shared code used by multiple tools:
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | 1M context, thinking mode, OpenAI-compatible API |
 | `local-llama` | Qwen3.6 35B-A3B MoE, Gemma 4 E2B | llama-server on localhost:8080 |
 | `nvidia` | GLM-5.1, DeepSeek V4 Pro | NVIDIA NIM API (requires NVIDIA_API_KEY) |
+| `kimi-code` | `kimi-for-coding` (K2.7 Code, 262K ctx) | Kimi Code subscription OAuth via `~/.kimi-code/credentials/kimi-code.json`; token helper refreshes through `https://auth.kimi.com/api/oauth/token` |
 
 ### Sub-agent Models
 - **finder**: `claude-haiku-4-5` (cheapest, fast parallel search)
@@ -447,8 +452,8 @@ Shared code used by multiple tools:
 
 ```json
 {
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
+  "defaultProvider": "kimi-code",
+  "defaultModel": "kimi-for-coding",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }

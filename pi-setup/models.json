@@ -13,7 +13,7 @@
     "deepseek": {
       "baseUrl": "https://api.deepseek.com/v1",
       "api": "openai-completions",
-      "apiKey": "DEEPSEEK_API_KEY",
+      "apiKey": "$DEEPSEEK_API_KEY",
       "compat": {
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": true,
@@ -116,7 +116,7 @@
     "nvidia": {
       "baseUrl": "https://integrate.api.nvidia.com/v1",
       "api": "openai-completions",
-      "apiKey": "NVIDIA_API_KEY",
+      "apiKey": "$NVIDIA_API_KEY",
       "compat": {
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
@@ -156,6 +156,31 @@
           },
           "compat": {
             "thinkingFormat": "deepseek"
+          }
+        }
+      ]
+    },
+    "kimi-code": {
+      "baseUrl": "https://api.kimi.com/coding",
+      "api": "anthropic-messages",
+      "apiKey": "!node $HOME/.pi/agent/extensions/kimi-code-token.mjs",
+      "authHeader": true,
+      "headers": {
+        "User-Agent": "KimiCLI/1.5"
+      },
+      "models": [
+        {
+          "id": "kimi-for-coding",
+          "name": "K2.7 Code — Kimi Code subscription OAuth",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 262144,
+          "maxTokens": 32768,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
           }
         }
       ]
