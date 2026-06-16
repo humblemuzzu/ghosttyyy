@@ -19,14 +19,14 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.79.2) — @earendil-works/pi-coding-agent
+pi CLI (v0.79.4) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
-  └─ anthropic provider (native) + pi-claude-code-use (OAuth rewrite for Claude Max)
+  └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
        └─ Claude API
 ```
 
-Current default provider is `kimi-code` with `kimi-for-coding` (K2.7 Code) via Kimi Code subscription OAuth. Claude remains available through `anthropic` with `pi-claude-code-use` for Claude Max subscription access.
+Current default provider is `openai-codex` with `gpt-5.5` (set in settings.json). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and Claude through `anthropic` with `pi-claude-code-use` for Claude Max subscription access. Switch the default any time with `/model`.
 
 **Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
@@ -210,9 +210,57 @@ this.detectExtensionConflicts(extensionsResult.extensions);
 
 ### Re-apply after pi update
 
+Auto-applied by `pi-setup/install.sh` (pi core patches block). To apply manually:
+
 ```bash
 cp pi-setup/pi-core-patches/resource-loader.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/resource-loader.js
 ```
+
+---
+
+## Pi Core: Session Pinning Patch
+
+**Files:**
+- `dist/modes/interactive/components/session-selector.js`
+- `dist/core/keybindings.js`
+
+**Patches stored:** `pi-setup/pi-core-patches/session-selector.js`, `pi-setup/pi-core-patches/keybindings.js`
+
+### What It Does
+
+Adds the ability to **pin sessions to the top** of the `/resume` picker. Pins persist across pi updates' data (stored separately from the patched code) in `~/.pi/agent/pinned-sessions.json` — a JSON array of canonical session file paths.
+
+- **`Ctrl+B`** in the `/resume` picker toggles pin/unpin on the selected session
+- Pinned sessions float to the **top** of the list (in every sort mode and scope), flattened to depth 0, marked with a 📌 prefix
+- A `pin` hint appears in the picker's hint line
+- Pinning is non-destructive and global: the pin file references session paths, so a pinned session from another project shows in "All" scope
+
+The native **rename** (`Ctrl+R`) was already built into pi — this patch only adds pinning.
+
+### How It Works
+
+**`keybindings.js`** — registered `app.session.pin` (default `ctrl+b`) in the `KEYBINDINGS` defaults map and added a `pinSession` alias. `ctrl+b` was chosen because `ctrl+g` (external editor), `ctrl+t` (thinking toggle), `ctrl+r/d/n/p/s` (session actions) are all taken.
+
+**`session-selector.js`** — all additions are marked with `// LOCAL PATCH` comments:
+1. **Imports** — added `mkdirSync/readFileSync/writeFileSync`, `dirname/join`, and `getAgentDir` from `../../../config.js`
+2. **Pin-file helpers** (module-level) — `getPinFilePath()`, `readPinnedPaths()`, `writePinnedPaths()`, `isPinnedPath()`, `togglePinnedPath()`, and `applyPinning()` (reorders the flattened display list so pinned entries come first at depth 0)
+3. **`SessionList.pinnedSet`** field + **`filterSessions()`** re-reads pins and calls `applyPinning()` after the normal sort
+4. **Render loop** — pinned nodes render a `📌 ` prefix instead of the tree prefix
+5. **`handleInput()`** — `app.session.pin` match toggles the pin, re-filters, and re-renders
+6. **`SessionSelectorComponent`** — wires `onTogglePin` to `requestRender()`; header hint adds `pin`
+
+### Re-apply after pi update
+
+**`install.sh` now auto-applies all pi-core patches** (resource-loader + session-selector + keybindings) in its "pi core patches" block. Re-running `pi-setup/install.sh` after a pi update restores them. To apply manually without the full installer:
+
+```bash
+cp pi-setup/pi-core-patches/session-selector.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/session-selector.js
+cp pi-setup/pi-core-patches/keybindings.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js
+```
+
+**Note:** The pin data file (`~/.pi/agent/pinned-sessions.json`) is user data, not code — npm updates never touch it. Only the two `.js` files above get overwritten on update and need re-applying.
+
+**If the upstream selector changed significantly**, re-derive the patch by re-applying the `// LOCAL PATCH` blocks onto the fresh `session-selector.js` rather than blindly overwriting (the surrounding code may have shifted).
 
 ---
 
@@ -292,8 +340,8 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.79.2 | The pi agent itself (installed via homebrew npm) | No |
-| `@benvargas/pi-claude-code-use` | 1.0.4 | Patches Anthropic OAuth payloads for Claude Max subscription use (primary Claude method) | No |
+| `@earendil-works/pi-coding-agent` | 0.79.4 | The pi agent itself (installed via homebrew npm) | No |
+| `@benvargas/pi-claude-code-use` | 1.0.4 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-web-access` | 0.10.7 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
@@ -303,13 +351,13 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-gpt-config` | 1.1.1 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
 | `pi-ask` | 1.0.2 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
-| `pi-codex-goal` | 0.1.24 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-codex-goal` | 0.1.27 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 
 **Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`
 
 **Kimi Code usage:** `/model kimi-code/kimi-for-coding:high`. Uses `~/.kimi-code/credentials/kimi-code.json` and `pi-setup/extensions/kimi-code-token.mjs` to refresh Kimi Code subscription OAuth tokens.
 
-**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts OAuth requests and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
+**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
 **Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
@@ -452,9 +500,9 @@ Shared code used by multiple tools:
 
 ```json
 {
-  "defaultProvider": "kimi-code",
-  "defaultModel": "kimi-for-coding",
-  "defaultThinkingLevel": "high",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "xhigh",
   "theme": "gruvbox",
   "compaction": { "enabled": true }
 }
@@ -473,7 +521,6 @@ pi-setup/
 ├── permissions.json            # Git/rm safety rules
 ├── pi-sub-bar-settings.json    # @marckrenn/pi-sub-bar widget layout
 ├── pi-sub-core-settings.json   # pi-sub-core provider/refresh config
-├── pi-vcc-config.json          # @sting8k/pi-vcc compaction config
 ├── README.md                   # Setup docs + session log
 ├── claude-bridge-patches/
 │   ├── index.ts                # Patched pi-claude-bridge (our custom build)
@@ -542,6 +589,10 @@ When pi or any package gets updated:
 ```bash
 # pi core — suppress tool conflict errors (needed for web_search override)
 cp pi-setup/pi-core-patches/resource-loader.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/resource-loader.js
+
+# pi core — session pinning (Ctrl+B in /resume picker)
+cp pi-setup/pi-core-patches/session-selector.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/session-selector.js
+cp pi-setup/pi-core-patches/keybindings.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js
 
 # condensed-milk (CRITICAL — data loss without it)
 cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts

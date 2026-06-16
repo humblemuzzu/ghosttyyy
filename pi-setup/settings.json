@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.78.0",
+  "lastChangelogVersion": "0.79.4",
   "hideThinkingBlock": false,
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "xhigh",
   "theme": "gruvbox",
-  "defaultProvider": "kimi-code",
-  "defaultModel": "kimi-for-coding",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -27,6 +27,7 @@
     "enabled": true
   },
   "enabledModels": [
+    "anthropic/claude-opus-4-8",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-opus-4-7",
     "crof/kimi-k2.6",

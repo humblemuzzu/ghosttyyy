@@ -6,4 +6,4 @@
 
 **Skills are loadable instruction files.** The `skill` tool loads a markdown instruction file into your context. Skills live in `~/.config/agents/skills/` or in the project's `.pi/` directory. Use `skill` by name when you need domain-specific guidance: e.g., `skill: git` before committing, `skill: review` before a code review. Skills are how specialized workflows are stored — check if one exists before reinventing a process.
 
-**Compaction is enabled.** When context gets large, pi automatically compacts the conversation — summarizing older messages to free space. Your work continues in the same session. Use `/pi-vcc` for manual algorithmic compaction when you want more control. If a goal is active, compaction preserves goal state automatically.
+**Compaction is enabled.** When context gets large, pi automatically compacts the conversation — summarizing older messages to free space. Your work continues in the same session. Use `/compact` to manually trigger compaction when you want more control. If a goal is active, compaction preserves goal state automatically.

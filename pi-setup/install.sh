@@ -19,7 +19,6 @@
 #   ~/.pi/agent/permissions.json
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
-#   ~/.pi/agent/pi-vcc-config.json        — pi-vcc compaction config
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
 #   6 pi packages (npm/git)     — web-access, context, token-burden, claude-bridge, claude-code-use, sub-bar, autoresearch
 #   1 global npm package        — pi-claude-bridge (active Claude bridge)
@@ -157,28 +156,33 @@ backup_if_exists "$PI_AGENT/permissions.json"
 cp "$SCRIPT_DIR/permissions.json" "$PI_AGENT/permissions.json"
 ok "Permissions installed"
 
-# ── Pi package configs (sub-bar, sub-core, vcc) ──
+# ── Pi package configs (sub-bar, sub-core) ──
+# pi-vcc was removed (using pi's native compaction). Its config is no longer deployed.
 info "Installing pi package configs..."
-for cfg in pi-sub-bar-settings.json pi-sub-core-settings.json pi-vcc-config.json; do
+for cfg in pi-sub-bar-settings.json pi-sub-core-settings.json; do
     if [ -f "$SCRIPT_DIR/$cfg" ]; then
         backup_if_exists "$PI_AGENT/$cfg"
         cp "$SCRIPT_DIR/$cfg" "$PI_AGENT/$cfg"
     fi
 done
-ok "Pi package configs installed (sub-bar, sub-core, vcc)"
+ok "Pi package configs installed (sub-bar, sub-core)"
 
 # ── Pi packages (npm, discovered by pi at runtime) ──
 info "Installing pi packages..."
+# Mirror of settings.json "packages" (source of truth). pi-claude-bridge is NOT
+# here — it's a legacy fallback installed globally above, not an active package.
 packages=(
     "npm:pi-web-access"
     "npm:pi-context"
     "npm:pi-token-burden"
-    "npm:pi-claude-bridge"
     "npm:@benvargas/pi-claude-code-use"
     "npm:@marckrenn/pi-sub-bar"
-    "npm:@sting8k/pi-vcc"
+    "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"
     "npm:@tomooshi/condensed-milk-pi"
+    "https://github.com/edxeth/pi-gpt-config"
+    "https://github.com/eko24ive/pi-ask"
+    "npm:pi-codex-goal"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
@@ -232,6 +236,24 @@ else
     warn "pi-sub-bar not found or patch files missing — apply patches manually"
 fi
 
+# ── pi core patches (dist/) ──
+# These patch the pi CLI itself. resource-loader.js is CRITICAL — without it pi
+# refuses to start (our web_search override conflicts with pi-web-access).
+# session-selector.js + keybindings.js add session pinning (Ctrl+B in /resume).
+PI_CORE_DIST="/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist"
+if [ -d "$PI_CORE_DIST" ] && [ -d "$SCRIPT_DIR/pi-core-patches" ]; then
+    info "Applying pi core patches (tool-conflict suppression + session pinning)..."
+    [ -f "$SCRIPT_DIR/pi-core-patches/resource-loader.js" ] && \
+        cp "$SCRIPT_DIR/pi-core-patches/resource-loader.js" "$PI_CORE_DIST/core/resource-loader.js"
+    [ -f "$SCRIPT_DIR/pi-core-patches/session-selector.js" ] && \
+        cp "$SCRIPT_DIR/pi-core-patches/session-selector.js" "$PI_CORE_DIST/modes/interactive/components/session-selector.js"
+    [ -f "$SCRIPT_DIR/pi-core-patches/keybindings.js" ] && \
+        cp "$SCRIPT_DIR/pi-core-patches/keybindings.js" "$PI_CORE_DIST/core/keybindings.js"
+    ok "pi core patches applied (resource-loader + session pinning)"
+else
+    warn "pi core dist or patch files missing — apply pi-core-patches manually"
+fi
+
 # ── pi-tool-display config ──
 TOOL_DISPLAY_CONFIG="$PI_AGENT/extensions/pi-tool-display/config.json"
 if [ -f "$SCRIPT_DIR/extensions/pi-tool-display/config.json" ]; then
@@ -257,6 +279,7 @@ echo "│   • 9 pi packages                       │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
 echo "│   • condensed-milk patched              │"
+echo "│   • pi core patched (conflict + pins)   │"
 echo "│   • pi-tool-display configured          │"
 echo "│                                         │"
 echo "│   Claude Max (OAuth):                   │"
