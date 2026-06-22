@@ -1,8 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { registerApiProvider } from "../api-registry.js";
 import { calculateCost } from "../models.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.js";
+import { getProviderEnvValue } from "../utils/provider-env.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { resolveCloudflareBaseUrl } from "./cloudflare.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
@@ -12,17 +14,17 @@ import { transformMessages } from "./transform-messages.js";
  * Resolve cache retention preference.
  * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
  */
-function resolveCacheRetention(cacheRetention) {
+function resolveCacheRetention(cacheRetention, env) {
     if (cacheRetention) {
         return cacheRetention;
     }
-    if (typeof process !== "undefined" && process.env.PI_CACHE_RETENTION === "long") {
+    if (getProviderEnvValue("PI_CACHE_RETENTION", env) === "long") {
         return "long";
     }
     return "short";
 }
-function getCacheControl(model, cacheRetention) {
-    const retention = resolveCacheRetention(cacheRetention);
+function getCacheControl(model, cacheRetention, env) {
+    const retention = resolveCacheRetention(cacheRetention, env);
     if (retention === "none") {
         return { retention };
     }
@@ -115,6 +117,7 @@ function getAnthropicCompat(model) {
         supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? !isFireworks,
         sendSessionAffinityHeaders: model.compat?.sendSessionAffinityHeaders ?? !!(isFireworks || isCloudflareAiGatewayAnthropic),
         supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
+        supportsTemperature: model.compat?.supportsTemperature ?? true,
         allowEmptySignature: model.compat?.allowEmptySignature ?? false,
     };
 }
@@ -318,9 +321,9 @@ export const streamAnthropic = (model, context, options) => {
                         hasImages,
                     });
                 }
-                const cacheRetention = options?.cacheRetention ?? resolveCacheRetention();
+                const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
                 const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-                const created = createClient(model, apiKey, options?.interleavedThinking ?? true, shouldUseFineGrainedToolStreamingBeta(model, context), options?.headers, copilotDynamicHeaders, cacheSessionId);
+                const created = createClient(model, apiKey, options?.interleavedThinking ?? true, shouldUseFineGrainedToolStreamingBeta(model, context), options?.headers, copilotDynamicHeaders, cacheSessionId, options?.env);
                 client = created.client;
                 isOAuth = created.isOAuthToken;
             }
@@ -347,6 +350,7 @@ export const streamAnthropic = (model, context, options) => {
                     output.usage.output = event.message.usage.output_tokens || 0;
                     output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
                     output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
+                    output.usage.cacheWrite1h = event.message.usage.cache_creation?.ephemeral_1h_input_tokens || 0;
                     // Anthropic doesn't provide total_tokens, compute from components
                     output.usage.totalTokens =
                         output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
@@ -485,7 +489,11 @@ export const streamAnthropic = (model, context, options) => {
                 }
                 else if (event.type === "message_delta") {
                     if (event.delta.stop_reason) {
-                        output.stopReason = mapStopReason(event.delta.stop_reason);
+                        const stopReasonResult = mapStopReason(event.delta.stop_reason, event.delta.stop_details);
+                        output.stopReason = stopReasonResult.stopReason;
+                        if (stopReasonResult.errorMessage) {
+                            output.errorMessage = stopReasonResult.errorMessage;
+                        }
                     }
                     // Only update usage fields if present (not null).
                     // Preserves input_tokens from message_start when proxies omit it in message_delta.
@@ -511,7 +519,7 @@ export const streamAnthropic = (model, context, options) => {
                 throw new Error("Request was aborted");
             }
             if (output.stopReason === "aborted" || output.stopReason === "error") {
-                throw new Error("An unknown error occurred");
+                throw new Error(output.errorMessage || "An unknown error occurred");
             }
             stream.push({ type: "done", reason: output.stopReason, message: output });
             stream.end();
@@ -532,7 +540,7 @@ export const streamAnthropic = (model, context, options) => {
 };
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- * Note: effort "max" is only valid on Opus 4.6, while Opus 4.7 supports "xhigh".
+ * Note: effort "max" is only valid on Opus 4.6, while Opus 4.7+ and Fable 5 support "xhigh".
  */
 function mapThinkingLevelToEffort(model, level) {
     const mapped = level ? model.thinkingLevelMap?.[level] : undefined;
@@ -579,10 +587,17 @@ export const streamSimpleAnthropic = (model, context, options) => {
         thinkingBudgetTokens: adjusted.thinkingBudget,
     });
 };
+export function register() {
+    registerApiProvider({
+        api: "anthropic-messages",
+        stream: streamAnthropic,
+        streamSimple: streamSimpleAnthropic,
+    });
+}
 function isOAuthToken(apiKey) {
     return apiKey.includes("sk-ant-oat");
 }
-function createClient(model, apiKey, interleavedThinking, useFineGrainedToolStreamingBeta, optionsHeaders, dynamicHeaders, sessionId) {
+function createClient(model, apiKey, interleavedThinking, useFineGrainedToolStreamingBeta, optionsHeaders, dynamicHeaders, sessionId, env) {
     // Adaptive thinking models have interleaved thinking built in, so skip the beta header.
     const needsInterleavedBeta = interleavedThinking && model.compat?.forceAdaptiveThinking !== true;
     const betaFeatures = [];
@@ -596,7 +611,7 @@ function createClient(model, apiKey, interleavedThinking, useFineGrainedToolStre
         const client = new Anthropic({
             apiKey: null,
             authToken: null,
-            baseURL: resolveCloudflareBaseUrl(model),
+            baseURL: resolveCloudflareBaseUrl(model, env),
             dangerouslyAllowBrowser: true,
             defaultHeaders: mergeHeaders({
                 accept: "application/json",
@@ -657,10 +672,11 @@ function createClient(model, apiKey, interleavedThinking, useFineGrainedToolStre
     return { client, isOAuthToken: false };
 }
 function buildParams(model, context, isOAuthToken, options) {
-    const { cacheControl } = getCacheControl(model, options?.cacheRetention);
+    const { cacheControl } = getCacheControl(model, options?.cacheRetention, options?.env);
+    const compat = getAnthropicCompat(model);
     const params = {
         model: model.id,
-        messages: convertMessages(context.messages, model, isOAuthToken, cacheControl, getAnthropicCompat(model).allowEmptySignature),
+        messages: convertMessages(context.messages, model, isOAuthToken, cacheControl, compat.allowEmptySignature),
         max_tokens: options?.maxTokens ?? model.maxTokens,
         stream: true,
     };
@@ -691,12 +707,11 @@ function buildParams(model, context, isOAuthToken, options) {
             },
         ];
     }
-    // Temperature is incompatible with extended thinking (adaptive or budget-based).
-    if (options?.temperature !== undefined && !options?.thinkingEnabled) {
+    // Temperature is incompatible with extended thinking and unsupported on Claude Opus 4.7+.
+    if (options?.temperature !== undefined && !options?.thinkingEnabled && compat.supportsTemperature) {
         params.temperature = options.temperature;
     }
     if (context.tools && context.tools.length > 0) {
-        const compat = getAnthropicCompat(model);
         params.tools = convertTools(context.tools, isOAuthToken, compat.supportsEagerToolInputStreaming, compat.supportsCacheControlOnTools ? cacheControl : undefined);
     }
     // Configure thinking mode: adaptive, budget-based, or explicitly disabled.
@@ -725,7 +740,7 @@ function buildParams(model, context, isOAuthToken, options) {
                 };
             }
         }
-        else if (options?.thinkingEnabled === false) {
+        else if (options?.thinkingEnabled === false && model.thinkingLevelMap?.off !== null) {
             params.thinking = { type: "disabled" };
         }
     }
@@ -753,16 +768,6 @@ function convertMessages(messages, model, isOAuthToken, cacheControl, allowEmpty
     const params = [];
     // Transform messages for cross-provider compatibility
     const transformedMessages = transformMessages(messages, model, normalizeToolCallId);
-    // The Anthropic API requires thinking blocks in the latest assistant message
-    // to be replayed verbatim (no filtering, no text modification). Historical
-    // assistant messages may have their thinking blocks omitted or modified.
-    let lastAssistantIdx = -1;
-    for (let k = transformedMessages.length - 1; k >= 0; k--) {
-        if (transformedMessages[k].role === "assistant") {
-            lastAssistantIdx = k;
-            break;
-        }
-    }
     for (let i = 0; i < transformedMessages.length; i++) {
         const msg = transformedMessages[i];
         if (msg.role === "user") {
@@ -824,17 +829,6 @@ function convertMessages(messages, model, isOAuthToken, cacheControl, allowEmpty
                         blocks.push({
                             type: "redacted_thinking",
                             data: block.thinkingSignature,
-                        });
-                        continue;
-                    }
-                    // Latest assistant message: pass signed thinking blocks through
-                    // verbatim. The Anthropic API rejects requests where these blocks
-                    // differ from the original response.
-                    if (i === lastAssistantIdx && block.thinkingSignature?.trim()) {
-                        blocks.push({
-                            type: "thinking",
-                            thinking: block.thinking,
-                            signature: block.thinkingSignature,
                         });
                         continue;
                     }
@@ -955,22 +949,25 @@ function convertTools(tools, isOAuthToken, supportsEagerToolInputStreaming, cach
         };
     });
 }
-function mapStopReason(reason) {
+function mapStopReason(reason, stopDetails) {
     switch (reason) {
         case "end_turn":
-            return "stop";
+            return { stopReason: "stop" };
         case "max_tokens":
-            return "length";
+            return { stopReason: "length" };
         case "tool_use":
-            return "toolUse";
+            return { stopReason: "toolUse" };
         case "refusal":
-            return "error";
+            return {
+                stopReason: "error",
+                errorMessage: stopDetails?.explanation || `The model refused to complete the request`,
+            };
         case "pause_turn": // Stop is good enough -> resubmit
-            return "stop";
+            return { stopReason: "stop" };
         case "stop_sequence":
-            return "stop"; // We don't supply stop sequences, so this should never happen
+            return { stopReason: "stop" }; // We don't supply stop sequences, so this should never happen
         case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-            return "error";
+            return { stopReason: "error" };
         default:
             // Handle unknown stop reasons gracefully (API may add new values)
             throw new Error(`Unhandled stop reason: ${reason}`);

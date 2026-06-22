@@ -19,14 +19,14 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.79.4) — @earendil-works/pi-coding-agent
+pi CLI (v0.79.8) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
        └─ Claude API
 ```
 
-Current default provider is `openai-codex` with `gpt-5.5` (set in settings.json). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and Claude through `anthropic` with `pi-claude-code-use` for Claude Max subscription access. Switch the default any time with `/model`.
+Current default provider is `anthropic` with `claude-opus-4-6` (set in settings.json). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and `openai-codex` with `gpt-5.5` is also available. Switch the default any time with `/model`.
 
 **Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
@@ -340,7 +340,7 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.79.4 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.79.8 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.4 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-web-access` | 0.10.7 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
@@ -489,6 +489,7 @@ Shared code used by multiple tools:
 | `local-llama` | Qwen3.6 35B-A3B MoE, Gemma 4 E2B | llama-server on localhost:8080 |
 | `nvidia` | GLM-5.1, DeepSeek V4 Pro | NVIDIA NIM API (requires NVIDIA_API_KEY) |
 | `kimi-code` | `kimi-for-coding` (K2.7 Code, 262K ctx) | Kimi Code subscription OAuth via `~/.kimi-code/credentials/kimi-code.json`; token helper refreshes through `https://auth.kimi.com/api/oauth/token` |
+| `sakana` | `fugu`, `fugu-ultra` (both 1M ctx, text+image) | Sakana AI "Fugu" multi-agent orchestration. OpenAI **Responses** API at `https://api.sakana.ai/v1` (`api: openai-responses`), Bearer `$SAKANA_API_KEY`. $20/mo "Standard" subscription. See "Sakana AI (Fugu)" section below. |
 
 ### Sub-agent Models
 - **finder**: `claude-haiku-4-5` (cheapest, fast parallel search)
@@ -500,13 +501,61 @@ Shared code used by multiple tools:
 
 ```json
 {
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "xhigh",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }
 }
 ```
+
+---
+
+## Sakana AI (Fugu) Provider
+
+**Added:** 2026-06-22. **Config-only** (no extension, no patches) — lives in `models.json` as the `sakana` provider, exactly how pi is designed to absorb a new OpenAI-compatible provider.
+
+### What it is
+
+Sakana's API serves **"Fugu"** — a multi-agent orchestration system exposed as a single OpenAI-compatible model. Two models registered: `fugu` and `fugu-ultra` (both 1M context, text+image vision). $20/mo "Standard" subscription.
+
+- **Base URL:** `https://api.sakana.ai/v1`
+- **Wire API:** `openai-responses` (Sakana **recommends** Responses over Chat Completions; required for proper reasoning/tool management).
+- **Auth:** Bearer `$SAKANA_API_KEY` (env var in `~/.zshrc`, same as DEEPSEEK/NVIDIA/CROF). Key from `https://console.sakana.ai/api-keys`.
+
+### Why `openai-responses` is safe here (verified against pi source)
+
+Read `@earendil-works/pi-ai/dist/providers/openai-responses.js` before changing anything:
+
+1. **`store: false` is hardcoded** (`buildParams`, ~line 190) and pi never sends `previous_response_id` — it rebuilds full history each turn (`input: messages`). Sakana is **stateless** (rejects `previous_response_id`), so pi's behavior matches Sakana exactly. This is also why "store like deepseek" is automatic: no server-side session either way.
+2. **Reasoning summaries** (~lines 204-213): when effort is set, pi sends `reasoning: { effort, summary: "auto" }` + `include: ["reasoning.encrypted_content"]`, and parses `response.reasoning_summary_text.delta` back into thinking blocks. `fugu-ultra` supports reasoning summaries → "proper thinking" displays.
+3. **The one trap** (~lines 215-219): if effort is unset and `thinkingLevelMap.off !== null`, pi sends `effort: "none"` — which **Sakana rejects** (it only accepts `high` and `xhigh`/`max`). Mitigated by `"off": null` in the map (pi then sends no reasoning param → Sakana uses its default) and by mapping every other level to `high`/`xhigh`.
+
+### thinkingLevelMap (mandatory shape)
+
+Sakana rejects any effort other than `high`/`xhigh`(==`max`), so all levels collapse:
+```json
+"thinkingLevelMap": { "off": null, "minimal": "high", "low": "high", "medium": "high", "high": "high", "xhigh": "xhigh" }
+```
+
+### Pricing
+
+Only `fugu-ultra` carries published PAYG rates (input $5 / output $30 / cached-in $0.50 per 1M, <272K ctx). `fugu` is routed across providers with unpublished per-token rates → set to `0` (not invented). Under the $20 subscription these cost numbers are informational only.
+
+### Known unknowns (deliberately NOT invented)
+
+- `maxTokens` ceiling undocumented → set to `32768` (flagged guess; bump once observed).
+- Numeric rate limits / $20 token allowance unpublished.
+- `include: ["reasoning.encrypted_content"]` support not explicitly documented by Sakana — but their official Codex integration uses stateless Responses (`store:false`) with encrypted reasoning, so it's almost certainly supported. **If reasoning requests 4xx on `encrypted_content`/`developer` role, fallback:** switch `api` to `openai-completions` (loses fugu-ultra reasoning-summary display but keeps everything else), optionally with `compat.supportsDeveloperRole: false`.
+
+### Setup steps to reproduce
+
+1. `models.json` → `sakana` provider block (done).
+2. `settings.json` → `enabledModels` adds `sakana/fugu`, `sakana/fugu-ultra` (done).
+3. `~/.zshrc` → `export SAKANA_API_KEY="..."` next to the other provider keys.
+4. New shell (or `source ~/.zshrc`), launch pi: `/model sakana/fugu-ultra:high`.
+
+`models.json` hot-reloads when you open `/model` — no restart needed.
 
 ---
 

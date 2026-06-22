@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.79.4",
-  "hideThinkingBlock": false,
-  "defaultThinkingLevel": "xhigh",
+  "lastChangelogVersion": "0.79.8",
+  "hideThinkingBlock": true,
+  "defaultThinkingLevel": "high",
   "theme": "gruvbox",
-  "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.5",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -36,7 +36,9 @@
     "crof/glm-5.1",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
-    "openai-codex/gpt-5.5"
+    "openai-codex/gpt-5.5",
+    "sakana/fugu",
+    "sakana/fugu-ultra"
   ],
   "steeringMode": "all",
   "followUpMode": "all",
