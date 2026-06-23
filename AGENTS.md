@@ -19,7 +19,7 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.79.8) — @earendil-works/pi-coding-agent
+pi CLI (v0.79.10) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
@@ -294,6 +294,34 @@ Changed `pi.sendUserMessage(prompt)` → `ctx.ui.setEditorText(prompt)` in `exec
 
 ---
 
+## Clipboard Image Paste Placeholder (editor.ts feature)
+
+**File:** `extensions/editor/index.ts`
+
+### The Problem
+
+pi core's `handleClipboardImagePaste()` (in `interactive-mode.js`) writes the pasted clipboard image to a temp file and inserts the **raw path** (`/var/folders/.../pi-clipboard-<uuid>.png`) into the editor as literal text. That long path is what you stare at while composing, and the model only gets it as text (it has to `read` the path to see the image).
+
+### The Fix (opencode-style placeholder, zero core patches)
+
+Our `LabeledEditor` now sets its own `onPasteImage`. Core's editor-swap only wires the default handler when ours is unset (`if (!customEditor.onPasteImage)`), so ours wins with no core changes. On paste:
+
+1. Read the clipboard image's **raw bytes** via `@mariozechner/clipboard`'s `getImageBinary()` and base64-encode them with `Buffer.toString("base64")`. **Do not use `getImageBase64()`** — it omits the trailing `=` padding, so any image whose byte length isn't a multiple of 3 yields unpadded base64 that Anthropic rejects with `invalid base64 data` (400). The `Buffer` path matches pi core's own read-tool image handling and is always correctly padded.
+2. Insert a short token `[image #N]` into the editor (N increments per paste; resets after each submit).
+3. Register the base64 in a module-level `pastedImages` map keyed by the token.
+
+A `pi.on("input", …)` hook then expands tokens at submit: for each `[image #N]` found in the text it pushes an inline `{ type: "image", data, mimeType }` content block (returned via `{ action: "transform", text, images }`), so vision models receive the image **directly** — no temp file, no `read` round-trip. The token text stays in the message for a readable transcript. Multiple pastes stack as `[image #1] [image #2] …`.
+
+### Clipboard module resolution
+
+`@mariozechner/clipboard` is **not** a jiti-aliased package (jiti only aliases `@mariozechner/pi-*`), and the `~/.pi/agent/node_modules/@mariozechner/*` symlinks are stale. `loadClipboard()` resolves it with `require.resolve(..., { paths })` anchored at the **running pi binary's** `node_modules` (clipboard is pi's own dep, always present), then `extensions/tools/node_modules` and known global npm roots. If resolution fails, `onPasteImage` is left unset and pi's default path-insert behavior transparently takes over — **no regression**.
+
+### After pi update
+
+Nothing to re-apply — this is an extension, deployed by `install.sh` (`cp -R extensions`). Survives pi npm updates. The only dependency is `@mariozechner/clipboard`, which ships inside pi's own `node_modules` and is also installed under `extensions/tools` by `install.sh`'s `npm install`.
+
+---
+
 ## Agent Mention Directives (@oracle, @finder, @codereview, @task)
 
 **Files:** `extensions/tools/lib/mentions/agent-source.ts` (new), plus modifications to `types.ts`, `sources.ts`, `parse.ts`, `render.ts`, `provider.ts`, `index.ts`, and `extensions/mentions.ts`.
@@ -340,7 +368,7 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.79.8 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.79.10 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.4 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-web-access` | 0.10.7 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
@@ -350,8 +378,8 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 | `pi-tool-display` | 0.4.2 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-gpt-config` | 1.1.1 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
-| `pi-ask` | 1.0.2 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
-| `pi-codex-goal` | 0.1.27 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-ask` | 1.1.0 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
+| `pi-codex-goal` | 0.1.29 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 
 **Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`
 

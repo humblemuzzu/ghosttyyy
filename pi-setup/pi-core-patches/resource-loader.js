@@ -5,7 +5,7 @@ import { CONFIG_DIR_NAME } from "../config.js";
 import { loadThemeFromPath } from "../modes/interactive/theme/theme.js";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.js";
 import { createEventBus } from "./event-bus.js";
-import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
+import { clearExtensionCache, createExtensionRuntime, loadExtensionFromFactory, loadExtensionsCached, } from "./extensions/loader.js";
 import { DefaultPackageManager } from "./package-manager.js";
 import { loadPromptTemplates } from "./prompt-templates.js";
 import { SettingsManager } from "./settings-manager.js";
@@ -114,6 +114,7 @@ export class DefaultResourceLoader {
     extensionThemeSourceInfos;
     lastPromptPaths;
     lastThemePaths;
+    loaded;
     constructor(options) {
         this.cwd = resolvePath(options.cwd);
         this.agentDir = resolvePath(options.agentDir);
@@ -158,6 +159,7 @@ export class DefaultResourceLoader {
         this.extensionThemeSourceInfos = new Map();
         this.lastPromptPaths = [];
         this.lastThemePaths = [];
+        this.loaded = false;
     }
     getExtensions() {
         return this.extensionsResult;
@@ -214,6 +216,9 @@ export class DefaultResourceLoader {
         return this.loadCurrentExtensionSet({ includeInlineFactories: true });
     }
     async reload(options) {
+        if (this.loaded) {
+            clearExtensionCache();
+        }
         let preTrustExtensions;
         if (options?.resolveProjectTrust) {
             preTrustExtensions = await this.loadProjectTrustExtensions();
@@ -335,6 +340,7 @@ export class DefaultResourceLoader {
         this.appendSystemPrompt = this.appendSystemPromptOverride
             ? this.appendSystemPromptOverride(baseAppend)
             : baseAppend;
+        this.loaded = true;
     }
     async loadCurrentExtensionSet(options) {
         const resolvedPaths = await this.packageManager.resolve();
@@ -346,7 +352,7 @@ export class DefaultResourceLoader {
         const extensionPaths = this.noExtensions
             ? cliEnabledExtensions
             : this.mergePaths(cliEnabledExtensions, enabledExtensions);
-        const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+        const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
         if (!options.includeInlineFactories) {
             return extensionsResult;
         }
@@ -360,7 +366,7 @@ export class DefaultResourceLoader {
     }
     async loadFinalExtensionSet(extensionPaths, preTrustExtensions) {
         if (!preTrustExtensions) {
-            const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+            const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
             const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
             extensionsResult.extensions.push(...inlineExtensions.extensions);
             extensionsResult.errors.push(...inlineExtensions.errors);
@@ -375,7 +381,7 @@ export class DefaultResourceLoader {
             const resolvedPath = this.resolveExtensionLoadPath(path);
             return !preloadedByPath.has(resolvedPath) && !failedPreloadPaths.has(resolvedPath);
         });
-        const remainingExtensions = await loadExtensions(remainingPaths, this.cwd, this.eventBus, preTrustExtensions.runtime);
+        const remainingExtensions = await loadExtensionsCached(remainingPaths, this.cwd, this.eventBus, preTrustExtensions.runtime);
         const loadedByPath = new Map(preloadedByPath);
         for (const extension of remainingExtensions.extensions) {
             loadedByPath.set(extension.resolvedPath, extension);

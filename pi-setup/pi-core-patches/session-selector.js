@@ -4,8 +4,8 @@ import { unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as os from "node:os";
 import { Container, getKeybindings, Input, Spacer, Text, truncateToWidth, visibleWidth, } from "@earendil-works/pi-tui";
-import { getAgentDir } from "../../../config.js";
 import { KeybindingsManager } from "../../../core/keybindings.js";
+import { getAgentDir } from "../../../config.js";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -296,6 +296,7 @@ class SessionList {
     }
     allSessions = [];
     filteredSessions = [];
+    pinnedSet = new Set();
     selectedIndex = 0;
     searchInput;
     showCwd = false;
@@ -305,7 +306,6 @@ class SessionList {
     showPath = false;
     confirmingDeletePath = null;
     currentSessionCanonicalPath;
-    pinnedSet = new Set();
     onSelect;
     onCancel;
     onExit = () => { };
@@ -313,10 +313,10 @@ class SessionList {
     onToggleSort;
     onToggleNameFilter;
     onTogglePath;
+    onTogglePin;
     onDeleteConfirmationChange;
     onDeleteSession;
     onRenameSession;
-    onTogglePin;
     onError;
     maxVisible = 10; // Max sessions visible (one line each)
     // Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -666,6 +666,7 @@ export class SessionSelectorComponent extends Container {
         }
         this.sessionList.handleInput(data);
     }
+    onCancel;
     canRename = true;
     sessionList;
     header;
@@ -677,7 +678,6 @@ export class SessionSelectorComponent extends Container {
     allSessions = null;
     currentSessionsLoader;
     allSessionsLoader;
-    onCancel;
     requestRender;
     renameSession;
     currentLoading = false;

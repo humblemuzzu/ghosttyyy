@@ -17,12 +17,85 @@ import type { TUI, EditorTheme } from "@mariozechner/pi-tui";
 import { visibleWidth } from "@mariozechner/pi-tui";
 import { HorizontalLineWidget, WidgetRowRegistry } from "./widget-row";
 import type { KeybindingsManager } from "@mariozechner/pi-coding-agent";
-import type { AgentMessage, AssistantMessage, TextContent } from "@mariozechner/pi-ai";
+import type { AgentMessage, AssistantMessage, ImageContent, TextContent } from "@mariozechner/pi-ai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { hasToolCost } from "../tools/lib/tool-cost";
 
 const execFileAsync = promisify(execFile);
+
+// ---------------------------------------------------------------------------
+// clipboard image paste → compact "[image #N]" placeholder
+//
+// pi's core paste handler (interactive-mode handleClipboardImagePaste) writes
+// the clipboard image to a temp file and dumps the raw path
+// (/var/folders/.../pi-clipboard-<uuid>.png) into the editor as literal text —
+// that long path is what you end up staring at while composing.
+//
+// instead we show a short "[image #N]" token in the editor and carry the real
+// image inline (base64) to the model via the "input" hook. this mirrors
+// opencode's placeholder UX without needing virtual-text / extmark support in
+// pi's plain-text editor. multiple pastes stack as [image #1], [image #2], ...
+//
+// the editor-swap path in core only wires its default paste handler when ours
+// is unset (`if (!customEditor.onPasteImage)`), so if the native clipboard
+// module can't be loaded we simply DON'T set onPasteImage and pi's default
+// (insert path) transparently takes back over — zero regression.
+// ---------------------------------------------------------------------------
+
+interface PastedImage {
+	/** bare base64 (no data: prefix) — matches pi's ImageContent.data shape */
+	data: string;
+	mime: string;
+}
+
+/** visible token in the editor -> image payload. shared by editor + input hook. */
+const pastedImages = new Map<string, PastedImage>();
+let pasteCounter = 0;
+
+type ClipboardModule = {
+	hasImage?: () => boolean;
+	/**
+	 * Raw image bytes (NAPI returns number[]). We base64-encode these via Buffer
+	 * to get correctly *padded* standard base64. NOTE: the module's
+	 * getImageBase64() helper omits the trailing "=" padding, which Anthropic
+	 * rejects with "invalid base64 data" for any image whose byte length isn't a
+	 * multiple of 3 — so we deliberately do NOT use it.
+	 */
+	getImageBinary?: () => Promise<number[] | Uint8Array>;
+};
+
+let clipboardCache: ClipboardModule | null | undefined;
+
+/**
+ * Resolve @mariozechner/clipboard (pi's native clipboard dependency).
+ *
+ * We can't bare-import it: jiti only aliases the @mariozechner/pi-* packages
+ * for extensions, not clipboard, and the ~/.pi/agent/node_modules symlinks are
+ * stale. So we anchor require.resolve at the running pi binary's node_modules
+ * (clipboard is pi's own dep, guaranteed present there) plus a few fallbacks.
+ * Returns null if unavailable.
+ */
+function loadClipboard(): ClipboardModule | null {
+	if (clipboardCache !== undefined) return clipboardCache;
+	try {
+		const req = createRequire(process.argv[1] || join(homedir(), ".pi", "noop.js"));
+		const searchPaths: string[] = [];
+		const piEntry = process.argv[1]; // e.g. .../pi-coding-agent/dist/cli.js
+		if (piEntry) searchPaths.push(join(dirname(piEntry), "..", "node_modules"));
+		searchPaths.push(join(homedir(), ".pi", "agent", "extensions", "tools", "node_modules"));
+		searchPaths.push("/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules");
+		searchPaths.push("/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules");
+		const resolved = req.resolve("@mariozechner/clipboard", { paths: searchPaths });
+		clipboardCache = req(resolved) as ClipboardModule;
+	} catch {
+		clipboardCache = null;
+	}
+	return clipboardCache;
+}
 
 interface Label {
 	key: string;
@@ -53,6 +126,7 @@ const VERTICAL = "│";
 class LabeledEditor extends CustomEditor {
 	private labels: Map<string, Label> = new Map();
 	private appTheme: Theme;
+	private tuiRef: TUI;
 	private borderCache: Record<"top" | "bottom", { key: string; line: string } | null> = {
 		top: null,
 		bottom: null,
@@ -61,6 +135,41 @@ class LabeledEditor extends CustomEditor {
 	constructor(tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager, appTheme: Theme) {
 		super(tui, editorTheme, keybindings);
 		this.appTheme = appTheme;
+		this.tuiRef = tui;
+		this.setupImagePaste();
+	}
+
+	/**
+	 * Override clipboard image paste to insert a compact "[image #N]" token
+	 * instead of the raw temp-file path. The real image is registered in
+	 * `pastedImages` and attached inline by the "input" hook on submit.
+	 *
+	 * Only installed when the native clipboard module is available; otherwise
+	 * `onPasteImage` is left unset and pi core wires its default handler.
+	 */
+	private setupImagePaste(): void {
+		const clipboard = loadClipboard();
+		if (!clipboard?.hasImage || !clipboard.getImageBinary) return;
+		this.onPasteImage = async () => {
+			try {
+				if (!clipboard.hasImage!()) return;
+				const bytes = await clipboard.getImageBinary!();
+				if (!bytes || bytes.length === 0) return;
+				// Buffer.toString("base64") produces correctly *padded* standard
+				// base64 — the only form Anthropic accepts. (Do NOT swap this for
+				// clipboard.getImageBase64(): it omits "=" padding → API 400.)
+				const data = Buffer.from(bytes).toString("base64");
+				if (!data) return;
+				// fresh paste after a submit (registry drained) restarts numbering
+				if (pastedImages.size === 0) pasteCounter = 0;
+				const token = `[image #${++pasteCounter}]`;
+				pastedImages.set(token, { data, mime: "image/png" });
+				this.insertTextAtCursor(`${token} `);
+				this.tuiRef.requestRender();
+			} catch {
+				// clipboard read failed — leave the editor untouched
+			}
+		};
 	}
 
 	/** always-dim color for box chrome (corners, lines, rails) */
@@ -433,6 +542,28 @@ export default function (pi: ExtensionAPI) {
 	let branchUnsub: (() => void) | null = null;
 	let statusRow: WidgetRowRegistry | null = null;
 	const activity = createActivityState();
+
+	// expand "[image #N]" paste tokens into inline image attachments at submit.
+	// the token text stays in the message (readable transcript); the matching
+	// base64 image is attached so vision models receive it directly, with no
+	// temp file and no `read` round-trip.
+	pi.on("input", (event) => {
+		if (pastedImages.size === 0) return { action: "continue" } as const;
+		const images: ImageContent[] = [...(event.images ?? [])];
+		let matched = false;
+		for (const [token, img] of pastedImages) {
+			if (event.text.includes(token)) {
+				images.push({ type: "image", data: img.data, mimeType: img.mime });
+				matched = true;
+			}
+		}
+		// a submit resets the editor, so any unreferenced tokens are gone for good
+		pastedImages.clear();
+		pasteCounter = 0;
+		return matched
+			? ({ action: "transform", text: event.text, images } as const)
+			: ({ action: "continue" } as const);
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
