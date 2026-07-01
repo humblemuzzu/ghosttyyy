@@ -243,7 +243,7 @@ function buildSessionTree(sessions) {
     const byPath = new Map();
     for (const session of sessions) {
         const sessionPath = canonicalizePath(session.path) ?? session.path;
-        byPath.set(sessionPath, { session, children: [] });
+        byPath.set(sessionPath, { session, children: [], latestActivity: session.modified.getTime() });
     }
     const roots = [];
     for (const session of sessions) {
@@ -257,9 +257,20 @@ function buildSessionTree(sessions) {
             roots.push(node);
         }
     }
-    // Sort children and roots by modified date (descending)
+    const updateLatestActivity = (node) => {
+        let latestActivity = node.session.modified.getTime();
+        for (const child of node.children) {
+            latestActivity = Math.max(latestActivity, updateLatestActivity(child));
+        }
+        node.latestActivity = latestActivity;
+        return latestActivity;
+    };
+    for (const root of roots) {
+        updateLatestActivity(root);
+    }
+    // Sort children and roots by latest activity in each subtree (descending)
     const sortNodes = (nodes) => {
-        nodes.sort((a, b) => b.session.modified.getTime() - a.session.modified.getTime());
+        nodes.sort((a, b) => b.latestActivity - a.latestActivity);
         for (const node of nodes) {
             sortNodes(node.children);
         }

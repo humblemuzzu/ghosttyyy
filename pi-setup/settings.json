@@ -55,7 +55,8 @@
     "npm:@tomooshi/condensed-milk-pi",
     "https://github.com/edxeth/pi-gpt-config",
     "https://github.com/eko24ive/pi-ask",
-    "npm:pi-codex-goal"
+    "npm:pi-codex-goal",
+    "npm:pi-mcp-adapter"
   ],
   "terminal": {
     "clearOnShrink": true

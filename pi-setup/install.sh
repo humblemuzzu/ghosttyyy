@@ -17,6 +17,7 @@
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
+#   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
@@ -155,6 +156,14 @@ info "Installing permissions..."
 backup_if_exists "$PI_AGENT/permissions.json"
 cp "$SCRIPT_DIR/permissions.json" "$PI_AGENT/permissions.json"
 ok "Permissions installed"
+
+# ── MCP servers (pi-mcp-adapter global config) ──
+if [ -f "$SCRIPT_DIR/mcp.json" ]; then
+    info "Installing global MCP config..."
+    backup_if_exists "$PI_AGENT/mcp.json"
+    cp "$SCRIPT_DIR/mcp.json" "$PI_AGENT/mcp.json"
+    ok "Global MCP config installed (astro @ 127.0.0.1:8089)"
+fi
 
 # ── Pi package configs (sub-bar, sub-core) ──
 # pi-vcc was removed (using pi's native compaction). Its config is no longer deployed.

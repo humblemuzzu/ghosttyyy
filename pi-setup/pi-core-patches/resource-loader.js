@@ -11,6 +11,7 @@ import { loadPromptTemplates } from "./prompt-templates.js";
 import { SettingsManager } from "./settings-manager.js";
 import { loadSkills } from "./skills.js";
 import { createSourceInfo } from "./source-info.js";
+import { resetTimings } from "./timings.js";
 function resolvePromptInput(input, description) {
     if (!input) {
         return undefined;
@@ -216,6 +217,7 @@ export class DefaultResourceLoader {
         return this.loadCurrentExtensionSet({ includeInlineFactories: true });
     }
     async reload(options) {
+        resetTimings("extensions");
         if (this.loaded) {
             clearExtensionCache();
         }

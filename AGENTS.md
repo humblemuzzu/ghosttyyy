@@ -19,7 +19,7 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.79.10) — @earendil-works/pi-coding-agent
+pi CLI (v0.80.3) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
@@ -364,13 +364,61 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 
 ---
 
+## pi-mcp-adapter: On-Demand MCP Gateway
+
+**Upstream:** https://github.com/nicobailon/pi-mcp-adapter (v2.10.0, MIT)
+**Status:** Active in `settings.json` packages. **No patches.** Installed via `pi install npm:pi-mcp-adapter` → `~/.pi/agent/npm/node_modules/pi-mcp-adapter`.
+
+### Why It Was Chosen (and why it's safe)
+
+Built on Mario Zechner's "you don't need MCP" philosophy — MCP tool definitions are verbose (10k+ tokens per server) and you pay that whether you use them or not. This adapter exposes **one proxy tool** (`mcp`, ~200 tokens) instead of dumping every server's tools into context. The model discovers tools on demand via `mcp({ search })` → `mcp({ tool, args })`. Servers are **lazy** — no process spawns until a tool is actually called.
+
+**It does NOT conflict with our setup:**
+- Registers exactly **one tool named `mcp`** + commands `/mcp`, `/mcp-auth` + flag `--mcp-config`. No name collision with any of our 25 custom tools or commands.
+- **Does NOT override pi built-ins** (`read`/`bash`/`edit`/etc.) — unlike pi-tool-display. Purely additive, so it cannot clobber our custom tools' mutex locking / secret scrubbing / git trailers.
+- Uses only the public `ExtensionAPI` (`registerTool`/`registerCommand`/`registerFlag`/`on`). **No core patching.**
+- Compatible with our pi 0.80.3 (devDep `pi-coding-agent ^0.79.1`, runtime `pi-ai`/`pi-tui ^0.74.0`).
+
+### Behavior: "invoke MCP only when wanted"
+
+- **With no config file present, it's inert** — just the proxy tool in the list, no servers, no overhead.
+- The model only calls `mcp` when relevant; servers connect on first tool call; `directTools` (promoting MCP tools to first-class entries) is strictly opt-in.
+- Set `disableProxyTool: true` to hide even the proxy once direct tools are cached.
+
+### Config Files (precedence)
+
+1. `~/.config/mcp/mcp.json` (user-global shared)
+2. `<agent dir>/mcp.json` (`~/.pi/agent/mcp.json` — Pi global override)
+3. `.mcp.json` (project-local shared)
+4. `.pi/mcp.json` (Pi project override)
+
+### Configured Servers
+
+**Global (pi-only, all folders):** `~/.pi/agent/mcp.json` → backed up as `pi-setup/mcp.json`, deployed by `install.sh`.
+
+| Server | Transport | Config | Notes |
+|--------|-----------|--------|-------|
+| `astro` | HTTP (`url`) | `http://127.0.0.1:8089/mcp`, `auth: false` | [Astro](https://tryastro.app/docs/mcp/) ASO tool. **Local HTTP server that runs inside the Astro Mac app** — must be enabled in Astro → Settings → MCP Server (default port 8089). `auth: false` because Astro is localhost-only with no token; this stops the adapter from probing OAuth. Lazy (default): pi only connects when an `astro` tool is actually called, so the Astro app must be open + MCP enabled at call time. 60 req/min limit. Tools: `list_apps`, `search_rankings`, `get_app_keywords`, `get_app_ratings`, `extract_competitors_keywords`, `add_app`, `add_keywords`, `set_keyword_note`, `set_keyword_tag`, `manage_tag`, `search_app_store`, `get_keyword_suggestions`. |
+
+To add more servers: edit `~/.pi/agent/mcp.json` (global) or a project `.mcp.json`. stdio servers use `command`/`args`; HTTP servers use `url` (+ optional `headers`/`auth`).
+
+```json
+{ "mcpServers": { "astro": { "url": "http://127.0.0.1:8089/mcp", "auth": false } } }
+```
+
+### After pi/package update
+
+No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched). Backed up as the `npm:pi-mcp-adapter` entry in `pi-setup/settings.json` (package) + `pi-setup/mcp.json` (server config); `install.sh` re-adds both on deploy.
+
+---
+
 ## Packages (npm)
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.79.10 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.80.3 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.4 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
-| `pi-web-access` | 0.10.7 | Web access: read pages, search, GitHub API, librarian skill | No |
+| `pi-web-access` | 0.13.0 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
@@ -379,15 +427,41 @@ Agent kinds appear in autocomplete when typing `@`. They complete with a trailin
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-gpt-config` | 1.1.1 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
 | `pi-ask` | 1.1.0 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
-| `pi-codex-goal` | 0.1.29 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-codex-goal` | 0.1.32 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-mcp-adapter` | 2.10.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`, `pi-mcp-adapter`
 
 **Kimi Code usage:** `/model kimi-code/kimi-for-coding:high`. Uses `~/.kimi-code/credentials/kimi-code.json` and `pi-setup/extensions/kimi-code-token.mjs` to refresh Kimi Code subscription OAuth tokens.
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
 **Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
+
+### pi 0.80.3 migration (2026-07-01) — actual live migration off 0.79.10
+
+The live system was still on **0.79.10** until this migration (the earlier 0.80.2 notes below described a prepared/documented migration that had not been applied live). This step actually updated `pi update` → **0.80.3** and re-applied all patches. What was required and verified:
+
+- **`@mariozechner/*` aliases still present in 0.80.3** `loader.js` (`pi-ai`, `pi-tui`, `pi-coding-agent`, `pi-agent-core`, `/oauth`) + pi-ai root→`compat` alias → all ~46 extension files resolve unchanged. Runtime pi-ai funcs (`complete`/`completeSimple`/`streamSimple`/`StringEnum`) keep working. ✓
+- **0.80.3 upstream changes are additive/fixes only** — no `Removed` section. Notable: default OpenAI model → `gpt-5.5` (we default to anthropic, no impact), Codex SSE timeout now respects configured HTTP timeout, `streamSimple()` max-token cap fix (helps `btw.ts`). Claude Sonnet 5, `outputPad`, `externalEditor`, RPC `get_entries`/`get_tree`, `session_info_changed` all additive.
+- **Core patches — precise per-file handling (not blind copy):**
+  - `keybindings.js` — stock **byte-identical** 0.79.10↔0.80.3 → stored patch (stock + pin binding) copied as-is. ✓
+  - `session-selector.js` — stored patch already = **stock 0.80.3 + LOCAL PATCH blocks** (diff vs stock-0.80.3 shows only our 7 pin blocks; upstream `latestActivity` threaded-tree code already baked in) → copied as-is. ✓
+  - `resource-loader.js` — **re-derived**, NOT blind-copied. 0.80.3 added `resetTimings` (import line 14 + call ~line 220) that our 0.79.10-based stored patch lacked. Rebuilt from stock 0.80.3 + only the conflict-suppression edit (`detectExtensionConflicts` without the `errors.push` loop). Repo copy updated. Verified: `resetTimings` count 2 + suppression present + zero conflict-push. ✓
+- **Smoke-tested:** `pi --version` = 0.80.3; `pi list` clean; `pi -p` full boot loads all extensions, registers `web_search`/`mcp`/`oracle`/`finder` with **no fatal conflict** (proves resource-loader patch works), prompt round-trip returns. ✓
+- `condensed-milk` (`$ ` strip + `cmd` param) + `gpt-config` patches intact (separate packages, untouched by core update). ✓
+
+Rollback backup from this migration: `~/pi-migration-backup-20260701_*` (auth.json + 0.79.10 patched dist files + VERSION).
+
+### pi 0.80.2 migration (2026-06-28) — prepared notes (superseded by 0.80.3 above)
+
+Previously `pi-web-access@0.10.7` and `pi-codex-goal@0.1.29` were **pinned** because newer versions import `@earendil-works/pi-ai/compat`, which only exists in pi **0.80.0+**. On 0.79.10 they failed with `Cannot find module '.../pi-ai/dist/index.js/compat'`. Both are now unpinned (`pi-web-access 0.13.0`, `pi-codex-goal 0.1.32`).
+
+- **`/compat` entrypoint** exists in pi 0.80.0+ (`.../pi-ai/dist/compat.js`) → the two packages load. ✓
+- **Removed two orphan non-patches** found during the audit: `pi-core-patches/runner.js` (live was stock — never actually patched; repo copy was stale) and `pi-ai-patches/anthropic.js` (byte-identical to stock pi-ai — a backup copy, not a patch). Neither was in `install.sh`.
+- `condensed-milk` + `gpt-config` patches untouched by `pi update --self` (separate packages).
+
+**Caution carried forward:** the `/compat` entrypoint and `@mariozechner/*` aliases are still slated for removal "in a future release" (no version announced). When that lands, the 48 files must be renamed `@mariozechner/*` → `@earendil-works/*` (sed command in the migration log) and runtime pi-ai imports moved to `/compat` or the new `createModels()` API.
 
 ---
 
@@ -596,6 +670,7 @@ pi-setup/
 ├── models.json                 # Model overrides + custom providers
 ├── keybindings.json            # Model cycling keys
 ├── permissions.json            # Git/rm safety rules
+├── mcp.json                    # pi-mcp-adapter global MCP servers (astro)
 ├── pi-sub-bar-settings.json    # @marckrenn/pi-sub-bar widget layout
 ├── pi-sub-core-settings.json   # pi-sub-core provider/refresh config
 ├── README.md                   # Setup docs + session log
