@@ -13,6 +13,7 @@ import * as os from "node:os";
 import type { Message } from "@mariozechner/pi-ai";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Text, TruncatedText } from "@mariozechner/pi-tui";
+import { normalizeForDisplay } from "./box-format";
 import type { UsageStats } from "./pi-spawn";
 import type { ToolCostDetails } from "./tool-cost";
 
@@ -184,7 +185,7 @@ function renderToolLine(
 		item.isError === true ? fg("error", "✕") :
 		item.isError === false ? fg("success", "✓") :
 		fg("muted", "⋯");
-	return `${icon} ${fg("accent", toolLabel(item.name))} ${fg("dim", toolArgSummary(item.name, item.args))}`;
+	return `${icon} ${fg("accent", toolLabel(item.name))} ${fg("dim", normalizeForDisplay(toolArgSummary(item.name, item.args)))}`;
 }
 
 // --- tree rendering ---
@@ -221,7 +222,7 @@ export function renderAgentTree(
 	}
 
 	if (isError && r.errorMessage) {
-		container.addChild(new Text(MID + fg("error", `Error: ${r.errorMessage}`), 0, 0));
+		container.addChild(new Text(MID + fg("error", `Error: ${normalizeForDisplay(r.errorMessage)}`), 0, 0));
 	}
 
 	const displayItems = getDisplayItems(r.messages);
@@ -236,7 +237,7 @@ export function renderAgentTree(
 		| { kind: "summary"; output: string };
 	const children: TreeChild[] = [];
 
-	if (showExpanded) children.push({ kind: "text", content: r.task });
+	if (showExpanded) children.push({ kind: "text", content: normalizeForDisplay(r.task) });
 
 	const visibleTools = showExpanded ? toolCalls : toolCalls.slice(-COLLAPSED_ITEM_COUNT);
 	const skippedTools = showExpanded ? 0 : toolCalls.length - visibleTools.length;
@@ -253,14 +254,16 @@ export function renderAgentTree(
 			const connector = isLast ? END : MID;
 
 			if (child.kind === "text") {
-				container.addChild(new Text(connector + fg("dim", child.content), 0, 0));
+				container.addChild(new Text(connector + fg("dim", normalizeForDisplay(child.content)), 0, 0));
 			} else if (child.kind === "tool") {
 				container.addChild(new TruncatedText(connector + renderToolLine(child.item, fg), 0, 0));
 			} else if (child.kind === "summary") {
 				container.addChild(new Text(connector + fg("muted", "Summary:"), 0, 0));
 				const indent = isLast ? "    " : CONT;
 				container.addChild(new Text(indent, 0, 0));
-				container.addChild(new Markdown(child.output, 0, 0, mdTheme));
+				// normalizeForDisplay: subagent summaries are arbitrary model text —
+				// same width-desync class as tool output (see box-format.ts)
+				container.addChild(new Markdown(normalizeForDisplay(child.output), 0, 0, mdTheme));
 			}
 		}
 	}

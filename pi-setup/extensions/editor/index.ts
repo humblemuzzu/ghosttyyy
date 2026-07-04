@@ -116,6 +116,18 @@ interface RemoveLabelPayload {
 }
 
 const SEPARATOR = " · ";
+
+/**
+ * make a string safe to embed in a single border/status line: collapse
+ * newlines/tabs/control chars (width-0 to every width check, but they move
+ * the real cursor — the TUI desync class) into single spaces.
+ */
+export function flattenLabelText(text: string): string {
+	return text
+		.replace(/[\r\n\t\v\f]+/g, " ")              // cursor-moving whitespace → space
+		.replace(/[\x00-\x08\x0e-\x1a\x1c-\x1f\x7f]+/g, "") // other C0/DEL (keeps \x1b: ANSI colors stay intact)
+		.replace(/ {2,}/g, " ");
+}
 const CORNER_TL = "╭";
 const CORNER_TR = "╮";
 const CORNER_BL = "╰";
@@ -178,7 +190,13 @@ class LabeledEditor extends CustomEditor {
 	}
 
 	setLabel(key: string, text: string, position: "top" | "bottom" = "top", align: "left" | "right" = "left"): void {
-		this.labels.set(key, { key, text, position, align });
+		// SINK GUARD: labels are embedded into single border lines. An embedded
+		// \n renders as an extra terminal row the TUI doesn't account for —
+		// visibleWidth counts it as 0, so no width check catches it — and the
+		// differential renderer desyncs (screen smear). Flatten ALL control
+		// chars here so no label source (incl. other extensions via the
+		// editor-set-label event) can ever inject one.
+		this.labels.set(key, { key, text: flattenLabelText(text), position, align });
 	}
 
 	removeLabel(key: string): void {
@@ -487,13 +505,18 @@ function describeToolCall(toolName: string, args: any): string {
 	// common pi tools have a `path` or `pattern` arg — show it if short
 	const hint = args?.path ?? args?.pattern ?? args?.query ?? args?.filePattern ?? args?.cmd;
 	if (typeof hint === "string") {
-		// just the basename or first 24 chars
-		const short = hint.includes("/")
-			? hint.split("/").pop()!
-			: hint.length > 24
-				? hint.slice(0, 24) + "…"
-				: hint;
-		return `${toolName}(${short})`;
+		// ROOT-CAUSE FIX (2026-07-04 smear bug): bash `cmd` is often a MULTILINE
+		// script. The old `hint.split("/").pop()` took everything after the
+		// last "/" — unbounded, newlines included — and that string ended up
+		// embedded in a border/status line, moving the real cursor rows the
+		// TUI didn't know about → whole-screen smear. First line only, then
+		// basename only for path-like tokens, then a hard cap. flattenLabelText
+		// at the sinks is the safety net; this keeps the label meaningful.
+		const firstLine = hint.split("\n", 1)[0].trim();
+		const pathLike = firstLine.includes("/") && !firstLine.includes(" ");
+		const base = pathLike ? (firstLine.split("/").pop() ?? firstLine) : firstLine;
+		const short = base.length > 24 ? base.slice(0, 24) + "…" : base;
+		return short ? `${toolName}(${short})` : toolName;
 	}
 	return toolName;
 }

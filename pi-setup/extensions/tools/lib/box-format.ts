@@ -23,11 +23,144 @@
  * rendered line exceeds terminal width.
  */
 
-import { Text } from "@mariozechner/pi-tui";
+import { Text, visibleWidth as tuiVisibleWidth } from "@mariozechner/pi-tui";
 import { windowItems, type Excerpt } from "./show";
 
 const DIM = "\x1b[2m";
 const RST = "\x1b[0m";
+
+// --- display width normalization ---
+//
+// THE DESYNC BUG (root cause of the "smeared TUI on heavy output" breakage):
+// pi-tui measures text in grapheme clusters (Intl.Segmenter + width of the
+// base char), but real terminals (Ghostty, tmux, kitty) advance the cursor
+// per spacing codepoint for complex scripts. Example: the Devanagari
+// conjunct "क्त्र" is ONE grapheme cluster — pi-tui counts width 1, the
+// terminal renders 3 columns. pi-tui's Box pads every tool line to exactly
+// terminal width using its own measure, so a single undercounted cluster
+// makes the padded line wider than the terminal → hard-wrap → the terminal
+// scrolls a row pi-tui doesn't know about → every subsequent differential
+// write lands on the wrong row → smeared screen (only a SIGWINCH redraw
+// recovers). Heavy streaming output makes hitting one such grapheme
+// near-certain. Reproduced and bisected in tmux (2026-07-04).
+//
+// THE FIX: normalize display text at this chokepoint. For every grapheme
+// cluster, compare pi-tui's width with a model of the terminal's cursor
+// advance; replace disagreeing clusters with U+FFFD "�" (width 1 in every
+// model). Display-only — the model-visible tool result text is untouched.
+// Single-codepoint clusters always agree by construction and are kept.
+
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const EXTENDED_PICTOGRAPHIC_RE = /\p{Extended_Pictographic}/u;
+const EMOJI_PRESENTATION_RE = /\p{Emoji_Presentation}/u;
+const EMOJI_MODIFIER_BASE_RE = /^\p{Emoji_Modifier_Base}/u;
+const UNASSIGNED_RE = /\p{Cn}/u;
+
+/** per-codepoint terminal width, using pi-tui's own tables for consistency */
+const cpWidthCache = new Map<number, number>();
+function codePointWidth(cp: number): number {
+	// lone surrogates: pi-tui says 0, terminals render a 1-col replacement
+	if (cp >= 0xd800 && cp <= 0xdfff) return 1;
+	// hangul V/T conjoining jamo: wcwidth 0 (they compose into the L syllable)
+	if ((cp >= 0x1160 && cp <= 0x11ff) || (cp >= 0xd7b0 && cp <= 0xd7ff)) return 0;
+	let w = cpWidthCache.get(cp);
+	if (w === undefined) {
+		w = tuiVisibleWidth(String.fromCodePoint(cp));
+		cpWidthCache.set(cp, w);
+	}
+	return w;
+}
+
+/**
+ * cursor advance a modern terminal performs for one grapheme cluster.
+ * modeled on Ghostty/tmux ≥3.4 behavior (validated empirically in tmux):
+ * emoji sequences (ZWJ/VS16/flags) render as 2 columns; everything else
+ * advances per spacing codepoint (combining marks are 0).
+ *
+ * returns NaN for AMBIGUOUS clusters — chars real terminals disagree on:
+ * - text-presentation pictographs (EP without Emoji_Presentation, e.g. 🖐 ☹):
+ *   tmux renders 2, others follow EAW and render 1
+ * - codepoints unassigned in this Node's ICU tables: pi-tui guesses 1,
+ *   terminals with newer Unicode data may render 0 or 2
+ * NaN never equals the pi-tui width, so these clusters are replaced.
+ */
+function terminalClusterWidth(cluster: string): number {
+	// regional indicator pairs (flags)
+	const first = cluster.codePointAt(0)!;
+	if (first >= 0x1f1e6 && first <= 0x1f1ff) return 2;
+	// ZWJ emoji sequences and VS16 emoji presentation
+	if (cluster.includes("\u200d") && EXTENDED_PICTOGRAPHIC_RE.test(cluster)) return 2;
+	if (cluster.includes("\ufe0f")) return 2;
+	let sum = 0;
+	for (const ch of cluster) {
+		const cp = ch.codePointAt(0)!;
+		if (cp >= 0x1f3fb && cp <= 0x1f3ff) {
+			// skin tone modifier: merges into a modifier base (width 0),
+			// renders as its own 2-col emoji after anything else
+			sum += EMOJI_MODIFIER_BASE_RE.test(cluster) ? 0 : 2;
+			continue;
+		}
+		if (UNASSIGNED_RE.test(ch)) return NaN;
+		const w = codePointWidth(cp);
+		if (w === 1 && EXTENDED_PICTOGRAPHIC_RE.test(ch) && !EMOJI_PRESENTATION_RE.test(ch)) {
+			return NaN;
+		}
+		sum += w;
+	}
+	return sum;
+}
+
+function isPlainAscii(s: string): boolean {
+	for (let i = 0; i < s.length; i++) {
+		const c = s.charCodeAt(i);
+		if (c < 0x20 || c > 0x7e) return false;
+	}
+	return true;
+}
+
+/** normalize one ANSI-free text run */
+function normalizeTextRun(run: string): string {
+	if (isPlainAscii(run)) return run;
+	// tabs → 3 spaces (matches pi-tui Text.render's own normalization)
+	// strip stray control chars that would move the cursor (defense for
+	// tools that render file/network content without bash's sanitizer)
+	const cleaned = run
+		.replace(/\t/g, "   ")
+		.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+	if (isPlainAscii(cleaned)) return cleaned;
+	let out = "";
+	for (const { segment } of graphemeSegmenter.segment(cleaned)) {
+		if (isPlainAscii(segment)) {
+			out += segment;
+			continue;
+		}
+		out += tuiVisibleWidth(segment) === terminalClusterWidth(segment) ? segment : "\ufffd";
+	}
+	return out;
+}
+
+/** matches the escape sequences our render pipeline legitimately emits */
+const ANSI_TOKEN_RE = /\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+/**
+ * make a display string width-safe for the TUI: every grapheme cluster in it
+ * measures identically under pi-tui and under a real terminal's cursor
+ * advance. ANSI SGR/OSC sequences are preserved untouched.
+ */
+export function normalizeForDisplay(text: string): string {
+	if (isPlainAscii(text)) return text;
+	if (!text.includes("\x1b")) return normalizeTextRun(text);
+	let out = "";
+	let last = 0;
+	ANSI_TOKEN_RE.lastIndex = 0;
+	for (let m = ANSI_TOKEN_RE.exec(text); m !== null; m = ANSI_TOKEN_RE.exec(text)) {
+		out += normalizeTextRun(text.slice(last, m.index));
+		out += m[0];
+		last = m.index + m[0].length;
+	}
+	out += normalizeTextRun(text.slice(last));
+	return out;
+}
 
 /**
  * ANSI-aware visible width + truncation.
@@ -127,9 +260,12 @@ interface VisualBoxLine {
 function expandBlock(block: BoxBlock, contentWidth: number): VisualBoxLine[] {
 	const result: VisualBoxLine[] = [];
 	for (const line of block.lines) {
+		// width-safety: replace graphemes whose terminal width disagrees with
+		// pi-tui's measure BEFORE wrapping/padding (see normalizeForDisplay)
+		const safeText = normalizeForDisplay(line.text);
 		const visualLines = contentWidth > 0
-			? new Text(line.text, 0, 0).render(contentWidth)
-			: [line.text];
+			? new Text(safeText, 0, 0).render(contentWidth)
+			: [safeText];
 
 		for (let i = 0; i < visualLines.length; i++) {
 			result.push({
@@ -212,7 +348,7 @@ export function formatBoxesWindowed(
 
 		// header (omitted for headless sections)
 		if (section.header != null) {
-			out.push(clamp(`${DIM}╭─[${RST}${section.header}${DIM}]${RST}`));
+			out.push(clamp(`${DIM}╭─[${RST}${normalizeForDisplay(section.header)}${DIM}]${RST}`));
 		}
 
 		let anyBlockTruncated = false;
@@ -273,7 +409,7 @@ export function formatBoxesWindowed(
 
 	if (notices?.length) {
 		out.push("");
-		out.push(clamp(`${DIM}[${notices.join(". ")}]${RST}`));
+		out.push(clamp(`${DIM}[${normalizeForDisplay(notices.join(". "))}]${RST}`));
 	}
 
 	return out.join("\n");
@@ -352,7 +488,8 @@ export function osc8Link(url: string, text: string): string {
  * usage: renderCallLine("Edit", "~/path/to/file.ts", theme)
  */
 export function renderCallLine(label: string, context: string, theme: any): { render(width: number): string[]; invalidate(): void } {
-	const line = theme.fg("toolTitle", theme.bold(label)) + (context ? " " + theme.fg("dim", context) : "");
+	const line = theme.fg("toolTitle", theme.bold(normalizeForDisplay(label))) +
+		(context ? " " + theme.fg("dim", normalizeForDisplay(context)) : "");
 	return {
 		render(_width: number): string[] {
 			return [line];

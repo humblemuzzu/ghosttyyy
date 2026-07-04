@@ -249,16 +249,28 @@ fi
 # These patch the pi CLI itself. resource-loader.js is CRITICAL — without it pi
 # refuses to start (our web_search override conflicts with pi-web-access).
 # session-selector.js + keybindings.js add session pinning (Ctrl+B in /resume).
+# pi-tui-utils.js is CRITICAL — conservative grapheme widths; without it heavy
+# output containing Indic matras/conjuncts or text-presentation emoji desyncs
+# the differential renderer and smears the whole TUI (see AGENTS.md).
 PI_CORE_DIST="/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist"
 if [ -d "$PI_CORE_DIST" ] && [ -d "$SCRIPT_DIR/pi-core-patches" ]; then
-    info "Applying pi core patches (tool-conflict suppression + session pinning)..."
+    info "Applying pi core patches (tool-conflict suppression + session pinning + TUI widths)..."
     [ -f "$SCRIPT_DIR/pi-core-patches/resource-loader.js" ] && \
         cp "$SCRIPT_DIR/pi-core-patches/resource-loader.js" "$PI_CORE_DIST/core/resource-loader.js"
     [ -f "$SCRIPT_DIR/pi-core-patches/session-selector.js" ] && \
         cp "$SCRIPT_DIR/pi-core-patches/session-selector.js" "$PI_CORE_DIST/modes/interactive/components/session-selector.js"
     [ -f "$SCRIPT_DIR/pi-core-patches/keybindings.js" ] && \
         cp "$SCRIPT_DIR/pi-core-patches/keybindings.js" "$PI_CORE_DIST/core/keybindings.js"
-    ok "pi core patches applied (resource-loader + session pinning)"
+    # pi-tui width patch: pi-tui exists in MANY copies (pi core + every npm
+    # package bundles its own). The script finds and patches ALL of them —
+    # a single unpatched copy (e.g. pi-tool-display's) still smears the TUI.
+    if [ -f "$SCRIPT_DIR/pi-core-patches/apply-pi-tui-width-patch.mjs" ]; then
+        node "$SCRIPT_DIR/pi-core-patches/apply-pi-tui-width-patch.mjs" || \
+            warn "pi-tui width patch failed on some copies — TUI may smear on exotic unicode (see AGENTS.md)"
+    else
+        warn "apply-pi-tui-width-patch.mjs missing — TUI smears on exotic unicode without it"
+    fi
+    ok "pi core patches applied (resource-loader + session pinning + pi-tui widths)"
 else
     warn "pi core dist or patch files missing — apply pi-core-patches manually"
 fi

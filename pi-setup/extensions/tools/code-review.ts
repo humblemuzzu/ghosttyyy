@@ -19,6 +19,7 @@ import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { normalizeForDisplay } from "./lib/box-format";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -217,7 +218,7 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				container.addChild(new Text(text?.type === "text" ? normalizeForDisplay(text.text) : "(no output)", 0, 0));
 				return container;
 			}
 

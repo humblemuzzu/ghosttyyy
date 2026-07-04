@@ -22,8 +22,9 @@
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { formatBoxesWindowed, type BoxSection, type Excerpt } from "./lib/box-format";
+import { formatBoxesWindowed, normalizeForDisplay, type BoxSection, type Excerpt } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { withFileLock } from "./lib/mutex";
@@ -228,8 +229,10 @@ export function createBashTool(): ToolDefinition {
 			const timeout = args.timeout;
 			const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
 			// show first line only for multiline commands
+			// normalizeForDisplay: commands can contain graphemes whose terminal
+			// width disagrees with pi-tui's measure — same desync class as output
 			const lines = cmd.split("\n");
-			const firstLine = lines[0];
+			const firstLine = normalizeForDisplay(lines[0]);
 			const multiSuffix = lines.length > 1 ? theme.fg("muted", " …") : "";
 			text.setText(
 				theme.fg("toolTitle", theme.bold(`$ ${firstLine}`)) + multiSuffix + timeoutSuffix,
@@ -401,6 +404,11 @@ async function runCommand(
 		let controlCarry = "";
 		let lastUpdateAt = 0;
 		let pendingUpdate: ReturnType<typeof setTimeout> | undefined;
+		// per-stream decoders: Buffer.toString("utf-8") on a chunk that splits a
+		// multibyte character mid-sequence produces permanent U+FFFD corruption.
+		// StringDecoder carries the partial sequence to the next chunk.
+		const stdoutDecoder = new StringDecoder("utf8");
+		const stderrDecoder = new StringDecoder("utf8");
 
 		let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 		if (timeout && timeout > 0) {
@@ -436,13 +444,13 @@ async function runCommand(
 			pendingUpdate = setTimeout(sendUpdate, STREAM_UPDATE_INTERVAL_MS - elapsed);
 		};
 
-		const handleData = (data: Buffer) => {
+		const handleData = (decoder: StringDecoder) => (data: Buffer) => {
 			// sanitize at source — strip terminal control sequences before they
 			// enter the buffer or reach onUpdate. prevents escape sequences from
 			// ever flowing through the TUI pipeline (even briefly via onUpdate).
 			// keep incomplete escape sequences across chunks so high-volume SSH
 			// output cannot leak a split CSI/OSC sequence as printable garbage.
-			const raw = controlCarry + data.toString("utf-8");
+			const raw = controlCarry + decoder.write(data);
 			const { display, carry } = splitIncompleteEscape(raw);
 			controlCarry = carry;
 			const sanitized = sanitizeForDisplay(display);
@@ -450,8 +458,8 @@ async function runCommand(
 			scheduleUpdate();
 		};
 
-		child.stdout?.on("data", handleData);
-		child.stderr?.on("data", handleData);
+		child.stdout?.on("data", handleData(stdoutDecoder));
+		child.stderr?.on("data", handleData(stderrDecoder));
 
 		child.on("error", (err) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
@@ -468,7 +476,7 @@ async function runCommand(
 			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
 
-			const finalCarry = sanitizeForDisplay(controlCarry);
+			const finalCarry = sanitizeForDisplay(controlCarry + stdoutDecoder.end() + stderrDecoder.end());
 			if (finalCarry) output.add(finalCarry);
 			controlCarry = "";
 			const { text: outputText } = output.format();

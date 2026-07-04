@@ -51,11 +51,23 @@ function sortByPriority(children: InlineSegment[]): InlineSegment[] {
 	return [...children].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 }
 
+/**
+ * SINK GUARD: a widget row is ONE terminal line. Newlines/tabs/control chars
+ * in segment text are width-0 to truncateToWidth but move the real cursor —
+ * the TUI-desync (screen smear) class. Flatten them; keep \x1b so ANSI
+ * colors in segments stay intact.
+ */
+function flattenSegmentText(text: string): string {
+	return text
+		.replace(/[\r\n\t\v\f]+/g, " ")
+		.replace(/[\x00-\x08\x0e-\x1a\x1c-\x1f\x7f]+/g, "");
+}
+
 function joinGroup(children: InlineSegment[], width: number, gap: string): string {
 	if (children.length === 0) return "";
 	const ordered = sortByPriority(children);
 	const parts = ordered
-		.map((child) => child.renderInline(width))
+		.map((child) => flattenSegmentText(child.renderInline(width)))
 		.filter((part) => part.length > 0);
 	return parts.join(gap);
 }

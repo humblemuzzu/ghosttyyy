@@ -264,6 +264,143 @@ cp pi-setup/pi-core-patches/keybindings.js /opt/homebrew/lib/node_modules/@earen
 
 ---
 
+## TUI Width Desync Fix (pi-tui core patch + box-format normalizeForDisplay)
+
+**Files:** `pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs` (THE root fix — patches EVERY installed pi-tui copy), `extensions/tools/lib/box-format.ts` (tool-output guard), `extensions/tools/bash.ts`, `extensions/tools/lib/sub-agent-render.ts`, `read-web-page.ts`, `code-review.ts`, `read-session.ts`
+**Harness:** `pi-setup/render-repro/` (tmux + Ghostty repro, DSR cursor verification, regression tests)
+
+### The Bug (fixed 2026-07-04, after multiple prior attempts)
+
+Heavy tool output containing certain Unicode smeared the whole TUI — stale
+duplicate tool boxes, content leaking below the editor, scattered spinner
+frames. Only a terminal resize (SIGWINCH full redraw) recovered. Prior
+attempts (commits `3b91aef`, `d7ca016`, `d5ae498`) fixed ANSI escape
+leakage and render churn but the smear kept coming back on heavy streams.
+
+**Root cause:** pi-tui measures text in grapheme clusters; real terminals
+advance the cursor per spacing codepoint for complex scripts. Example: the
+Devanagari conjunct `क्त्र` is ONE cluster — pi-tui width 1, Ghostty/tmux
+render 3 columns. pi-tui's `Box.applyBg` pads every tool line to *exactly*
+terminal width using its own measure, so one undercounted cluster makes the
+line wider than the terminal → hard-wrap → the terminal scrolls a row
+pi-tui doesn't know about → every subsequent differential write lands on
+the wrong row. Heavy streaming = hundreds of full-width lines = one exotic
+grapheme is enough. Reproduced and bisected empirically in tmux
+(`pi-setup/render-repro/`).
+
+Disagreeing classes found: Indic conjuncts (virama-joined), text-presentation
+pictographs (EP without Emoji_Presentation, e.g. 🖐 ☹ — terminals disagree
+with *each other*), skin-tone modifiers after non-modifier-base chars, and
+codepoints unassigned in Node's ICU tables.
+
+### The Fix — two layers
+
+**Layer 1 (THE root fix): pi-tui width patch on ALL copies** —
+`pi-core-patches/apply-pi-tui-width-patch.mjs`, an idempotent textual patcher.
+
+Three rounds to get here:
+- Round 1 guarded our tool renderers only → smear returned via pi core's OWN
+  components (assistant `Markdown`, editor, footer) — proven with a DSR
+  cursor-verified harness in a real Ghostty window.
+- Round 2 patched pi core's pi-tui copy → smear STILL returned because
+  **pi-tui exists in 15 copies**: every globally-installed package bundles its
+  own (`pi-tool-display` — user-message box + thinking labels, `pi-sub-bar` —
+  footer widget, `pi-token-burden`, `pi-claude-code-use`, …, plus
+  `~/.pi/agent/npm/node_modules/@earendil-works/pi-tui` used by npm packages).
+  Components from an unpatched copy render into the same screen with the old
+  width math — one bad line anywhere smears everything.
+- Round 3: the apply script `find`s every `*/pi-tui/dist/utils.js` under
+  `/opt/homebrew/lib/node_modules` and `~/.pi/agent`, and applies the patch
+  textually (anchor-based, version-tolerant 0.55→0.80, loud failure if
+  upstream changed, `--check` mode to audit).
+
+The patch makes `graphemeWidth()` **conservative — it can overcount but never
+undercount** the real terminal's cursor advance. Undercounts hard-wrap and
+desync; overcounts just pad a column short (invisible). Changes (all marked
+`// LOCAL PATCH`):
+1. `clusterAdvance(segment)` — per-codepoint advance sum: Mn/Me/Cf/ignorable/
+   control → 0, **Mc (spacing marks, Indic matras) → 1** (Ghostty gives them a
+   cell: हिंदी = 4 cols, DSR-measured; tmux gives 0 — counting 1 is exact in
+   Ghostty, benign overcount in tmux), hangul V/T jamo → 0, lone surrogates → 1,
+   text-presentation pictographs (🖐 ⚠ ☹) → max(EAW, 2).
+2. `graphemeWidth` returns `max(original heuristic, clusterAdvance(segment))`;
+   the all-marks early return routes through `clusterAdvance` too (standalone
+   matras render 1 col). RGI emoji / flags keep their early-return 2
+   (terminals render those 2 consistently — measured).
+
+**Layer 1b (separate mechanism — control chars in single-line sinks):**
+the custom editor's border labels and status widget row are ONE terminal line
+each. `describeToolCall` in `extensions/editor/index.ts` used
+`hint.split("/").pop()` on bash `cmd` — for a multiline script that returned
+an UNBOUNDED tail including `\n`s, embedded into the border/status line. A
+`\n` is width-0 to every width check but moves the real cursor a row → same
+smear, different mechanism (this is why the smear survived the width fixes:
+any heredoc/`python3 -c` script with a "/" in its tail triggered it —
+`crazy-math.py` did, `python3 /tmp/tui-torture.py` didn't because its tail
+was a short basename). Fixed at three layers: `describeToolCall` (first line
++ basename-only-for-paths + 24-char cap), `LabeledEditor.setLabel` sink guard
+(`flattenLabelText` — collapses `\r\n\t\v\f` + C0/DEL, preserves ANSI), and
+`widget-row.ts` `joinGroup` sink guard (`flattenSegmentText`).
+
+**Layer 2 (defense in depth): `normalizeForDisplay()` in `box-format.ts`** —
+display-only, at the render chokepoint of all box-rendering tools: strips stray
+control chars, expands tabs, and replaces any grapheme cluster whose pi-tui
+width disagrees with the modeled terminal advance with `�`. It derives from
+pi-tui's live (patched) tables via the `visibleWidth` import, so with Layer 1
+applied it replaces almost nothing — it exists to catch classes Layer 1 might
+miss after a pi update. Model-visible tool result text is NEVER modified.
+Applied at: `expandBlock`, headers, notices, `renderCallLine`, bash
+`renderCall`, sub-agent tree renders, and raw fallback paths of
+read-web-page/code-review/read-session.
+
+Also fixed in the same pass: `bash.ts` uses per-stream `StringDecoder`s so
+UTF-8 multibyte chars split across stdout/stderr chunk boundaries no longer
+corrupt into `U+FFFD` in the model-visible output.
+
+### Verified (2026-07-04)
+
+- DSR cursor-drift harness (`harness2.mjs`), 150 frames/phase: **0 desyncs**
+  in Ghostty AND tmux across ASCII-heavy, markdown-code, markdown+unicode,
+  and combined phases (before the pi-tui patch: markdown+unicode desynced in
+  BOTH terminals).
+- Ghostty per-token DSR width measurement (`dsr-widths.mjs`): **0 undercounts**
+  remaining (5 benign overcounts: क्त्र 3v2, 🖐⚠☹ 2v1, বাংলা 5v4).
+- tmux visual capture phases: all MATCH; fuzz: 0 fatal undercounts / 3386
+  clusters; 46/46 bun tests; pi boots clean.
+
+### After ANY pi/package update (IMPORTANT)
+
+`pi update --self`, npm package updates, and `pi install` ALL restore stock
+pi-tui copies (each package bundles one). Re-apply via `install.sh` or:
+
+```bash
+node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs          # patch all copies
+node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check  # audit
+```
+
+The script is idempotent and anchor-based; if upstream `graphemeWidth`
+changed shape it reports `no-*-anchor` and exits non-zero — then update the
+anchors in the script and re-run the harness suite.
+
+### If the smear ever returns
+
+1. Re-run `pi-setup/render-repro/` (see its README): DSR phases in Ghostty +
+   tmux must show 0 desyncs, visual phases MATCH, `find-bad-clusters.mjs`
+   must report `bad: 0` (fatal undercounts only).
+2. First suspect: an update restored a stock pi-tui copy — run
+   `node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check`
+   (a NEWLY INSTALLED package brings a fresh unpatched copy too).
+3. Measure the actual terminal with `dsr-widths.mjs` inside Ghostty — if a new
+   char class undercounts, extend `clusterAdvance` (and keep it conservative:
+   when in doubt, count MORE, never less).
+4. If widths are all clean, suspect the OTHER mechanism: a component embedding
+   `\n`/control chars into a single-line string (border label, widget row,
+   truncated summary). `\n` is width-0 to every check but moves the real
+   cursor. Grep the offending fragment from the smear screenshot to find the
+   source component; flatten at its sink like `flattenLabelText`.
+
+---
+
 ## Subagent Model Resolution (pi-spawn.ts patch)
 
 **File:** `extensions/tools/lib/pi-spawn.ts`
@@ -724,7 +861,7 @@ pi-setup/
 
 When pi or any package gets updated:
 
-1. **pi itself updated** (`@earendil-works/pi-coding-agent`): Check if any internal APIs changed that our extensions depend on. Look at the [changelog](https://github.com/earendil-works/pi). Our extensions override built-in tools — if the tool API changed, update our tool files accordingly. The `@mariozechner/*` backward-compat aliases are currently preserved but will eventually be removed — when that happens, rename imports in all 46 `.ts` files (see log.md for the sed command). **Must re-apply `resource-loader.js` patch** — without it, our `web_search` override conflicts with pi-web-access and pi refuses to start.
+1. **pi itself updated** (`@earendil-works/pi-coding-agent`): Check if any internal APIs changed that our extensions depend on. Look at the [changelog](https://github.com/earendil-works/pi). Our extensions override built-in tools — if the tool API changed, update our tool files accordingly. The `@mariozechner/*` backward-compat aliases are currently preserved but will eventually be removed — when that happens, rename imports in all 46 `.ts` files (see log.md for the sed command). **Must re-apply `resource-loader.js` patch** — without it, our `web_search` override conflicts with pi-web-access and pi refuses to start. **Must re-run `apply-pi-tui-width-patch.mjs`** — without it, heavy output with Indic matras/exotic unicode desyncs and smears the whole TUI; note EVERY package update/install brings a fresh unpatched pi-tui copy (see "TUI Width Desync Fix").
 
 2. **condensed-milk-pi updated**: npm update overwrites our patched `index.ts` and `filters/context-compress.ts`. **Must re-apply patches** — without the `$ ` prefix strip, git status compression returns wrong data. See "condensed-milk-pi: Patched Build" above.
 
@@ -745,6 +882,10 @@ cp pi-setup/pi-core-patches/resource-loader.js /opt/homebrew/lib/node_modules/@e
 # pi core — session pinning (Ctrl+B in /resume picker)
 cp pi-setup/pi-core-patches/session-selector.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/session-selector.js
 cp pi-setup/pi-core-patches/keybindings.js /opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/keybindings.js
+
+# pi-tui — conservative grapheme widths in ALL installed copies
+# (CRITICAL — TUI smears on exotic unicode without it; every package bundles its own pi-tui)
+node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs
 
 # condensed-milk (CRITICAL — data loss without it)
 cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts

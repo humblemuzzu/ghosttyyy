@@ -18,6 +18,7 @@ import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { normalizeForDisplay } from "./lib/box-format";
 import { headTailChars } from "./lib/output-buffer";
 
 const MODEL = "claude-haiku-4-5";
@@ -399,7 +400,7 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				container.addChild(new Text(text?.type === "text" ? normalizeForDisplay(text.text) : "(no output)", 0, 0));
 				return container;
 			}
 			renderAgentTree(details, container, expanded, theme, { label: "read_session", header: "statusOnly" });

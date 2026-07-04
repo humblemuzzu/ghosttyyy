@@ -17,6 +17,7 @@ import { Type } from "@sinclair/typebox";
 import { htmlToMarkdown } from "./lib/html-to-md";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { normalizeForDisplay } from "./lib/box-format";
 import { OutputBuffer, headTailChars } from "./lib/output-buffer";
 import { osc8Link } from "./lib/box-format";
 
@@ -269,7 +270,7 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 			const details = result.details as SingleResult | undefined;
 			if (!details) {
 				const text = result.content[0];
-				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
+				container.addChild(new Text(text?.type === "text" ? normalizeForDisplay(text.text) : "(no output)", 0, 0));
 				return container;
 			}
 			renderAgentTree(details, container, expanded, theme, { label: "read_web_page", header: "statusOnly" });
