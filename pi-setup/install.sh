@@ -192,6 +192,8 @@ packages=(
     "https://github.com/edxeth/pi-gpt-config"
     "https://github.com/eko24ive/pi-ask"
     "npm:pi-codex-goal"
+    "npm:pi-mcp-adapter"
+    "npm:pi-grok-cli"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
@@ -296,7 +298,7 @@ echo "│   • 18 config skills + 3 pi skills      │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core, vcc configs      │"
-echo "│   • 9 pi packages                       │"
+echo "│   • 13 pi packages                      │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
 echo "│   • condensed-milk patched              │"
@@ -312,3 +314,9 @@ echo "│   Debug: CLAUDE_BRIDGE_DEBUG=1 pi       │"
 echo "│   Then restart pi.                      │"
 echo "╰─────────────────────────────────────────╯"
 echo ""
+
+# ── final audit: verify every patch actually landed ──
+if [ -f "$SCRIPT_DIR/verify-patches.sh" ]; then
+    info "Verifying all patches are in place..."
+    bash "$SCRIPT_DIR/verify-patches.sh" || warn "Some patches missing — see FAIL lines above"
+fi

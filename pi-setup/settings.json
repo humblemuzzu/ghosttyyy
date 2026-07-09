@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.79.8",
+  "lastChangelogVersion": "0.80.3",
   "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
+  "defaultModel": "claude-opus-4-8",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -56,7 +56,8 @@
     "https://github.com/edxeth/pi-gpt-config",
     "https://github.com/eko24ive/pi-ask",
     "npm:pi-codex-goal",
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "npm:pi-grok-cli"
   ],
   "terminal": {
     "clearOnShrink": true

@@ -26,7 +26,7 @@ pi CLI (v0.80.3) — @earendil-works/pi-coding-agent
        └─ Claude API
 ```
 
-Current default provider is `anthropic` with `claude-opus-4-6` (set in settings.json). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and `openai-codex` with `gpt-5.5` is also available. Switch the default any time with `/model`.
+Current default provider is `anthropic` with `claude-opus-4-8` (set in settings.json). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and `openai-codex` with `gpt-5.5` is also available. Switch the default any time with `/model`.
 
 **Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
@@ -549,6 +549,49 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 
 ---
 
+## pi-grok-cli: Grok CLI Subscription Provider
+
+**Upstream:** https://github.com/kenryu42/pi-grok-cli (v0.3.2, MIT)
+**Status:** Active in `settings.json` packages. **No patches.** Installed via `pi install npm:pi-grok-cli` → `~/.pi/agent/npm/node_modules/pi-grok-cli`.
+
+### Why It Was Chosen (over pi-xai and pi-cursor-sdk)
+
+Goal: use **Composer 2.5** (Cursor's model) + **Grok 4.5** + **Grok Build** in pi, minimally, without breaking the custom setup. There are two xAI auth worlds:
+
+- **Subscription OAuth → `cli-chat-proxy.grok.com/v1`** (SuperGrok / X Premium): exposes `grok-composer-2.5-fast`, `grok-4.5`, `grok-build`, `grok-4.3`, `grok-4.20-*`. This is the endpoint the official `grok` CLI uses.
+- **API key → `api.x.ai/v1`** (public, pay-per-token): exposes grok-4.5 / grok-build / grok-4.3 only — **never Composer 2.5** (a Cursor model). pi-ai even ships a native `xai` provider for this path, but its bundled catalog is stale (no grok-4.5).
+
+**Composer 2.5 is physically unavailable via models.json + API key.** It requires the subscription proxy, which needs OAuth PKCE login, token auto-refresh, and version-gate headers (`x-xai-token-auth: xai-grok-cli`, `User-Agent: grok-pager/<ver>`, `x-grok-model-override`) — the proxy returns HTTP 426 without them. pi-grok-cli is the clean `ExtensionAPI`-only implementation of exactly this (`registerProvider` + `oauth` block + `streamSimple` + `before_provider_request` sanitize). **No pi-core patching.** Rejected alternatives: `pi-xai` (public API only → no real Composer, plus invasive undici/ws/protobufjs dep-patching); `pi-cursor-sdk` (~22.8k LOC, depends on `@cursor/sdk` + ConnectRPC + native binaries — heavy, wrong abstraction).
+
+### Why It Does NOT Break the Custom Setup
+
+- Registers **capitalized** tool shims (`Read`, `Write`, `StrReplace`, `Edit`, `Delete`, `LS`, `Grep`, `Glob`, `Shell`, `WebSearch`) for Cursor-trained models. Our 25 custom tools are all **lowercase** → **zero name collision**, cannot clobber mutex locking / secret scrubbing / git trailers.
+- Shims are **provider-scoped**: `syncGrokTools` (on `model_select` / `before_agent_start`) only adds them when `grok-cli` is the active provider, and strips them when you switch back to Claude/Kimi. On normal Opus workflow: **zero impact**.
+- Provider name `grok-cli` collides with nothing. Shares the hoisted **patched** pi-tui copy (no fresh unpatched copy added — verified).
+- Verified: `verify-patches.sh` all PASS, `apply-pi-tui-width-patch.mjs --check` exit 0, clean `pi -p` boot with no fatal conflict (resource-loader patch handles the capital-`Read` vs default-`read` case).
+
+### Two Scoped Behaviors To Know
+
+1. **web_search swap:** when grok-cli is active, our custom Codex `web_search` is removed and `WebSearch` (delegating to pi-web-access, which is installed) is used instead. Restored when switching providers. Only affects grok-cli sessions.
+2. **Vision routing:** text-only Composer 2.5 auto-routes any read image to `grok-build` for description over the same account (on by default). `/grok-cli-vision:off` to disable. Image-capable models (grok-4.5/4.3/build/4.20) read images natively — never routed.
+
+### Usage
+
+```
+/login                              # pick "Grok CLI" → browser OAuth (uses SuperGrok/X Premium sub)
+/model grok-cli/grok-composer-2.5-fast
+/model grok-cli/grok-4.5:high       # thinking level via :low|:medium|:high (grok-4.5 uses reasoning.effort)
+/grok-cli-usage                     # credits used / limit / reset
+```
+
+Env: `PI_GROK_CLI_MODELS` (filter/reorder catalog), `GROK_CLI_OAUTH_TOKEN` (bypass OAuth, no auto-refresh). Full list in the upstream README.
+
+### After pi/package update
+
+No patches to re-apply (unpatched package). Any `pi install` / package update can bring a fresh unpatched pi-tui copy — re-run `apply-pi-tui-width-patch.mjs`. Backed up as the `npm:pi-grok-cli` entry in `pi-setup/settings.json`; `install.sh` re-adds it on deploy.
+
+---
+
 ## Packages (npm)
 
 | Package | Version | Purpose | Patched? |
@@ -559,19 +602,20 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
-| `pi-autoresearch` | 1.5.0 | Autonomous experiment loop for optimization targets (GitHub install) | No |
-| `pi-tool-display` | 0.4.2 | Compact tool rendering, thinking labels, user message box | **Config** |
+| `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
+| `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-gpt-config` | 1.1.1 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
 | `pi-ask` | 1.1.0 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
-| `pi-codex-goal` | 0.1.32 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
-| `pi-mcp-adapter` | 2.10.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
+| `pi-codex-goal` | 0.1.34 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-mcp-adapter` | 2.11.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
+| `pi-grok-cli` | 0.3.2 | Grok CLI subscription provider — Composer 2.5 + Grok 4.5 + Grok Build via `cli-chat-proxy.grok.com` (OAuth) | No |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`, `pi-mcp-adapter`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-gpt-config`, `pi-ask`, `pi-codex-goal`, `pi-mcp-adapter`, `pi-grok-cli`
 
 **Kimi Code usage:** `/model kimi-code/kimi-for-coding:high`. Uses `~/.kimi-code/credentials/kimi-code.json` and `pi-setup/extensions/kimi-code-token.mjs` to refresh Kimi Code subscription OAuth tokens.
 
-**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-6`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
+**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-8`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
 **Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
@@ -723,7 +767,7 @@ Shared code used by multiple tools:
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `anthropic` | `claude-opus-4-6`, `claude-opus-4-7` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
+| `anthropic` | `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | 1M context, thinking mode, OpenAI-compatible API |
 | `local-llama` | Qwen3.6 35B-A3B MoE, Gemma 4 E2B | llama-server on localhost:8080 |
 | `nvidia` | GLM-5.1, DeepSeek V4 Pro | NVIDIA NIM API (requires NVIDIA_API_KEY) |
@@ -741,7 +785,7 @@ Shared code used by multiple tools:
 ```json
 {
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
+  "defaultModel": "claude-opus-4-8",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }
@@ -858,6 +902,20 @@ pi-setup/
 ---
 
 ## Update Workflow
+
+### Post-update verification — ALWAYS RUN THIS FIRST
+
+```bash
+bash pi-setup/verify-patches.sh
+```
+
+Read-only audit of every patch and config this setup depends on: resource-loader
+conflict suppression, session pinning, **pi-tui width patch in ALL installed
+copies** (TUI smears without it), condensed-milk `$`-prefix strip, pi-gpt-config,
+pi-tool-display config, editor label guards, box-format normalization. Each
+FAIL prints the exact fix command. Exit 0 = everything in place. Run it after
+`pi update`, any `pi install`, any npm package update — or whenever something
+feels off. `pi-setup/install.sh` also runs it as its final step.
 
 When pi or any package gets updated:
 
