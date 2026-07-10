@@ -19,7 +19,7 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.80.3) — @earendil-works/pi-coding-agent
+pi CLI (v0.80.6) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
@@ -514,7 +514,7 @@ Built on Mario Zechner's "you don't need MCP" philosophy — MCP tool definition
 - Registers exactly **one tool named `mcp`** + commands `/mcp`, `/mcp-auth` + flag `--mcp-config`. No name collision with any of our 25 custom tools or commands.
 - **Does NOT override pi built-ins** (`read`/`bash`/`edit`/etc.) — unlike pi-tool-display. Purely additive, so it cannot clobber our custom tools' mutex locking / secret scrubbing / git trailers.
 - Uses only the public `ExtensionAPI` (`registerTool`/`registerCommand`/`registerFlag`/`on`). **No core patching.**
-- Compatible with our pi 0.80.3 (devDep `pi-coding-agent ^0.79.1`, runtime `pi-ai`/`pi-tui ^0.74.0`).
+- Compatible with our pi 0.80.6 (devDep `pi-coding-agent ^0.79.1`, runtime `pi-ai`/`pi-tui ^0.74.0`).
 
 ### Behavior: "invoke MCP only when wanted"
 
@@ -596,7 +596,7 @@ No patches to re-apply (unpatched package). Any `pi install` / package update ca
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.80.3 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.80.6 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.4 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-web-access` | 0.13.0 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 1.1.4 | Context management: context_log, context_tag, context_checkout | No |
@@ -605,7 +605,7 @@ No patches to re-apply (unpatched package). Any `pi install` / package update ca
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
-| `pi-gpt-config` | 1.1.1 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
+| `pi-gpt-config` | 1.1.2 | GPT Codex-parity: personality, verbosity, fast mode (GitHub install) | **Yes** |
 | `pi-ask` | 1.1.0 | Structured ask_user tool with TUI — single/multi select, notes, review (GitHub install) | No |
 | `pi-codex-goal` | 0.1.34 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 | `pi-mcp-adapter` | 2.11.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
@@ -618,6 +618,27 @@ No patches to re-apply (unpatched package). Any `pi install` / package update ca
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-8`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
 **Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `pi-computer-use` (0.2.1, macOS GUI), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
+
+### pi 0.80.6 migration (2026-07-10) — live update off 0.80.5
+
+Updated `pi update` → **0.80.6** (same day as 0.80.5). Purely additive upstream — no `Removed` section, no API/patch-affecting changes.
+
+- **0.80.6 changes:** opt-in `max` thinking level above xhigh (GPT-5.6 + adaptive Claude; themes without `thinkingMax` fall back to `thinkingXhigh`, so gruvbox is unaffected), request-wide input-token pricing tiers, `~` expansion for `shellPath`. Our `defaultThinkingLevel: high` unaffected.
+- **pi-core patches — NO upstream drift 0.80.5→0.80.6:** `resource-loader.js`, `keybindings.js`, `session-selector.js` stock all byte-identical to 0.80.5 base (every diff vs stock was inside our own suppression/pin edits). Deployed repo patches as-is (repo == live, no repo-file changes needed).
+- pi-tui width patch — `pi update` refreshed the pi-core copy to **v0.80.6** (stock); re-ran `apply-pi-tui-width-patch.mjs` → freshly patched, `--check` exit 0, all copies clean.
+- **Smoke-tested:** `pi --version` = 0.80.6; `verify-patches.sh` all PASS; clean `pi -p` boot, no fatal conflict. Rollback backup: `~/pi-update-backup-20260710_131826` (auth.json + patched 0.80.5 dist files).
+
+### pi 0.80.5 migration (2026-07-10) — live update off 0.80.3 + pi-gpt-config 1.1.2
+
+Updated `pi update` → **0.80.5** (0.80.4+0.80.5 in one hop) and pi-gpt-config → **1.1.2**. All patches re-applied and verified.
+
+- **0.80.4/0.80.5 upstream changes are additive** — new extension hooks (`agent_settled`, `before_provider_headers`, `InlineExtension`, `project_trust`, `ctx.mode`, `ctx.getSystemPromptOptions`, autocomplete trigger chars, `--exclude-tools`), OSC 8 file links, edit-diff helper exports. **`pi update` now updates pi only** (extensions need `--all`). pi-ai global API moved to `/compat` but the **loader alias keeps extensions working at runtime unchanged** (removal deferred to a future release). Removed `/base` entrypoints — our extensions don't import them (verified). No breaking changes for this setup.
+- **pi-core patches — precise per-file handling (NOT blind copy):**
+  - `resource-loader.js` — **re-derived**, NOT blind-copied. 0.80.5 changed the file in two places our 0.80.3-based patch lacked: new `dirname`-based directory walking (import + `parentDir = dirname(currentDir)`) and **`InlineExtension` support** (`isNamed ? input.factory : input`). Rebuilt from stock 0.80.5 + only the conflict-suppression edit (`detectExtensionConflicts` without the `errors.push` loop). Blind-copying would have reverted both upstream improvements.
+  - `keybindings.js` + `session-selector.js` — **no upstream drift** 0.80.3→0.80.5 (every diff line vs stock was inside our own pin blocks: import, `app.session.pin` binding, `isRecord` helper, `📌` render prefix). Deployed our repo patches as-is. Verified `const prefix = node.pinned ? "📌 " : this.buildTreePrefix(node)` intact.
+  - pi-tui width patch — `pi update` refreshed the pi-core copy to **v0.80.5** (stock); re-ran `apply-pi-tui-width-patch.mjs` → all **15 copies** patched, `--check` exit 0. Other packages' copies were untouched (already-patched).
+- **pi-gpt-config 1.1.1 → 1.1.2** — upstream added GPT-5.6 Codex models (`gpt-5.6-sol/terra/luna`) to `CODEX_PARITY_MODEL_IDS` + `PRIORITY_SERVICE_TIER_MODEL_IDS`, and a hook context-read fix. **Re-derived** our 2-change patch onto 1.1.2: `personality: "none"` → `"claude"` (default) + neutered `getNativeToolDisciplineOverlay` (returns `undefined`; our system prompt already enforces native tools). Verified repo patch vs upstream 1.1.2 = exactly those 2 diffs; GPT-5.6 support preserved. Updated via targeted `pi update <url>` (NOT `--extensions`, which would clobber condensed-milk).
+- **Smoke-tested:** `pi --version` = 0.80.5; `verify-patches.sh` all PASS; `apply-pi-tui-width-patch.mjs --check` exit 0; `pi -p` full boot, no fatal conflict (resource-loader suppression works on 0.80.5), prompt round-trip returns. Rollback backup: `~/pi-update-backup-20260710_*` (auth.json + patched 0.80.3 dist files + VERSION).
 
 ### pi 0.80.3 migration (2026-07-01) — actual live migration off 0.79.10
 

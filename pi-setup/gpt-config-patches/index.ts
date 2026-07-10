@@ -35,8 +35,23 @@ const SETTINGS_NAMESPACE = "gptConfig";
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const SETTINGS_FILE = join(AGENT_DIR, "settings.json");
 const LEGACY_STATE_FILE = join(AGENT_DIR, "cache", "pi-gpt-config", "state.json");
-const CODEX_PARITY_MODEL_IDS = new Set(["gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5"]);
-const PRIORITY_SERVICE_TIER_MODEL_IDS = new Set(["gpt-5.3-codex", "gpt-5.4", "gpt-5.5"]);
+const CODEX_PARITY_MODEL_IDS = new Set([
+	"gpt-5.3-codex",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.5",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+]);
+const PRIORITY_SERVICE_TIER_MODEL_IDS = new Set([
+	"gpt-5.3-codex",
+	"gpt-5.4",
+	"gpt-5.5",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+]);
 const ANSI_YELLOW = "\u001b[33m";
 const ANSI_RESET = "\u001b[0m";
 const PERSONALITY_PROMPT_TOKENS: Record<Exclude<Personality, "none">, number> = {
