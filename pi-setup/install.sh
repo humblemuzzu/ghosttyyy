@@ -191,6 +191,7 @@ packages=(
     "npm:@tomooshi/condensed-milk-pi"
     "npm:pi-codex-goal"
     "npm:pi-mcp-adapter"
+    "npm:pi-tasks"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."

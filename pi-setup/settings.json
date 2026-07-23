@@ -49,7 +49,8 @@
     "npm:pi-tool-display",
     "npm:@tomooshi/condensed-milk-pi",
     "npm:pi-codex-goal",
-    "npm:pi-mcp-adapter"
+    "npm:pi-mcp-adapter",
+    "npm:pi-tasks"
   ],
   "terminal": {
     "clearOnShrink": true

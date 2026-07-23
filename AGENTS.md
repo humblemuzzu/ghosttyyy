@@ -541,8 +541,9 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-codex-goal` | 0.1.38 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 | `pi-mcp-adapter` | 2.11.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
+| `pi-tasks` | 0.2.0 | Execution-contract task engine — 12 `task_*` tools + `/tasks` + status widget; evidence-gated completion, atomic step decomposition, compaction-safe resume (edxeth, npm) | No |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-codex-goal`, `pi-mcp-adapter`
+**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-codex-goal`, `pi-mcp-adapter`, `pi-tasks`
 
 **Removed 2026-07-23 cleanup:** `pi-gpt-config` (+ its patch), `pi-ask`, `pi-grok-cli` — uninstalled and dropped from packages. Custom Codex `web_search` tool removed (pi-web-access's native `web_search` restored). See the cleanup migration entry below.
 
