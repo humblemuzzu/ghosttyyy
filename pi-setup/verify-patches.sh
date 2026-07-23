@@ -92,6 +92,31 @@ else
          "cp -R pi-setup/extensions/tools ~/.pi/agent/extensions/"
 fi
 
+# ── shiki-diff: pi-diff render pipeline (edit/write syntax-highlighted diffs) ──
+# The edit/write tools call @heyhuynhgiabuu/pi-diff's __testing render functions.
+# They fall back to the plain box renderer if this breaks, so it's non-fatal —
+# but a FAIL here means the pretty diffs are silently off (adapter degraded).
+# NOTE: this probes with plain `node`; pi loads extensions under jiti, so this is
+# a strong signal but not a 100%-fidelity check of the runtime import path.
+TOOLS_DIR="$PI_AGENT/extensions/tools"
+if [ ! -d "$TOOLS_DIR/node_modules/@heyhuynhgiabuu/pi-diff" ]; then
+    fail "shiki-diff: @heyhuynhgiabuu/pi-diff not installed (edit/write diffs fall back to plain)" \
+         "(cd \"$TOOLS_DIR\" && npm install)"
+else
+    # exit 0 = full pipeline incl renderSplit; 2 = mandatory ok but renderSplit
+    # missing (edit degrades to unified — non-fatal); 3 = mandatory API missing.
+    ( cd "$TOOLS_DIR" && node --input-type=module -e "const m=await import('@heyhuynhgiabuu/pi-diff');const t=m?.__testing;if(!t||typeof t.parsePatchFiles!=='function'||typeof t.renderUnified!=='function')process.exit(3);process.exit(typeof t.renderSplit==='function'?0:2)" ) >/dev/null 2>&1
+    cm_rc=$?
+    if [ "$cm_rc" -eq 0 ]; then
+        pass "shiki-diff: pi-diff __testing pipeline (parsePatchFiles + renderUnified + renderSplit)"
+    elif [ "$cm_rc" -eq 2 ]; then
+        pass "shiki-diff: pi-diff __testing pipeline present; renderSplit missing — edit uses unified"
+    else
+        fail "shiki-diff: pi-diff __testing API changed — edit/write diffs degraded to plain fallback" \
+             "update extensions/tools/lib/shiki-diff.ts to the new pi-diff export shape (see AGENTS.md)"
+    fi
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
     echo "ALL PATCHES IN PLACE ✓"

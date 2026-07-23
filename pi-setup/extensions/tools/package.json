@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@heyhuynhgiabuu/pi-diff": "~0.7.6",
     "cheerio": "^1.0.0",
     "diff": "^8.0.0",
     "psst-cli": "^0.6.6"

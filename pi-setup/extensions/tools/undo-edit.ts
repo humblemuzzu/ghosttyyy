@@ -30,8 +30,9 @@ const COLLAPSED_EXCERPTS: Excerpt[] = [
 
 /**
  * extract tool call IDs from the current session branch.
- * session entries with type "message" and role "assistant" contain
- * tool_calls arrays. we collect all tool call IDs so findLatestChange
+ * session entries with type "message" and role "assistant" carry the
+ * assistant's tool calls as content blocks of type "toolCall" (pi's
+ * normalized format). we collect all tool call IDs so findLatestChange
  * can filter to only branch-visible changes.
  *
  * falls back to empty array if getBranch() isn't available (e.g.,
@@ -48,17 +49,15 @@ function getActiveToolCallIds(sessionManager: any): string[] {
 			const msg = entry.message;
 			if (msg?.role !== "assistant") continue;
 
-			// assistant messages store tool calls in content array
-			// or in a tool_calls field depending on provider format
-			if (Array.isArray(msg.tool_calls)) {
-				for (const tc of msg.tool_calls) {
-					if (tc.id) ids.push(tc.id);
-				}
-			}
-			// also check content array for tool_use blocks (anthropic format)
+			// pi normalizes every provider's assistant tool calls into CONTENT
+			// BLOCKS of type "toolCall" — { type: "toolCall", id, name, arguments }.
+			// This is pi's own stable internal format (not a provider wire format
+			// like anthropic "tool_use" or openai "tool_calls"), so matching it is
+			// exact and complete. The previous code matched only "tool_use" /
+			// "tool_calls" and therefore NEVER matched — that was the root bug.
 			if (Array.isArray(msg.content)) {
 				for (const block of msg.content) {
-					if (block.type === "tool_use" && block.id) {
+					if (block && typeof block === "object" && block.type === "toolCall" && block.id) {
 						ids.push(block.id);
 					}
 				}

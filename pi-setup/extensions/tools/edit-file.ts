@@ -26,6 +26,7 @@ import { Type } from "@sinclair/typebox";
 import { saveChange, simpleDiff } from "./lib/file-tracker";
 import { withFileLock } from "./lib/mutex";
 import { resolveWithVariants } from "./read";
+import { createShikiDiffComponent } from "./lib/shiki-diff";
 
 // --- BOM / CRLF ---
 
@@ -578,42 +579,46 @@ export function createEditFileTool(): ToolDefinition {
 				{ focus: "tail", context: 13 },
 			];
 
-			container.addChild({
-				render(width: number): string[] {
-					const lines: string[] = [];
-					lines.push(statsText + replaceNote);
+			// fallback renderer: our existing box-format diff. used until Shiki is
+			// ready, and permanently if pi-diff's render pipeline is unavailable.
+			const fallback = (width: number): string[] => {
+				// collapsed: last hunk only; expanded: all hunks
+				const displaySections = sections.map((s) => {
+					const blocks = !expanded && s.blocks.length > 1
+						? s.blocks.slice(-1)
+						: s.blocks;
 
-					// collapsed: last hunk only; expanded: all hunks
-					const displaySections = sections.map((s) => {
-						const blocks = !expanded && s.blocks.length > 1
-							? s.blocks.slice(-1)
-							: s.blocks;
+					const header = filePath
+						? osc8Link(`file://${filePath}`, s.header)
+						: s.header;
 
-						const header = filePath
-							? osc8Link(`file://${filePath}`, s.header)
-							: s.header;
+					return { ...s, header, blocks };
+				});
 
-						return { ...s, header, blocks };
-					});
+				const notices: string[] = [];
+				if (replaceCount && replaceCount > 1) notices.push(`replaced ${replaceCount} occurrences`);
 
-					const notices: string[] = [];
-					if (replaceCount && replaceCount > 1) notices.push(`replaced ${replaceCount} occurrences`);
+				const boxOutput = formatBoxesWindowed(
+					displaySections,
+					{
+						maxSections: expanded ? undefined : 1,
+						excerpts: HUNK_EXCERPTS,
+					},
+					notices.length > 0 ? notices : undefined,
+					width,
+				);
+				return boxOutput.split("\n");
+			};
 
-					const boxOutput = formatBoxesWindowed(
-						displaySections,
-						{
-							maxSections: expanded ? undefined : 1,
-							excerpts: HUNK_EXCERPTS,
-						},
-						notices.length > 0 ? notices : undefined,
-						width,
-					);
-					lines.push(...boxOutput.split("\n"));
-
-					return lines;
-				},
-				invalidate() {},
-			});
+			container.addChild(createShikiDiffComponent({
+				diffText,
+				filePath,
+				header: [statsText + replaceNote],
+				expanded,
+				split: true, // side-by-side when the terminal is wide enough (auto-falls-back to unified)
+				fallback,
+				invalidate: context?.invalidate,
+			}));
 
 			return container;
 		},

@@ -20,6 +20,7 @@ import { withFileLock } from "./lib/mutex";
 import { resolveWithVariants, resolveToAbsolute } from "./read";
 import { boxRendererWindowed, textSection, osc8Link, type Excerpt } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
+import { createShikiDiffComponent } from "./lib/shiki-diff";
 
 const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "head" as const, context: 3 },
@@ -58,7 +59,7 @@ export function createCreateFileTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
+		renderResult(result: any, { expanded }: { expanded: boolean }, _theme: any, context: any) {
 			const Container = getContainer();
 			const container = context?.lastComponent ?? new Container();
 			container.clear();
@@ -67,11 +68,34 @@ export function createCreateFileTool(): ToolDefinition {
 				container.addChild(new Text("(no output)", 0, 0));
 				return container;
 			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
+
+			const summary = content.text;
+			const diffText: string | undefined = result.details?.diffText;
+			const filePath: string | undefined = result.details?.filePath;
+			// a unified diff has real changes iff it carries at least one @@ hunk header
+			// (empty / identical writes produce none). exact, unlike a +/- line scan.
+			const hasDiff = !!diffText && /^@@/m.test(diffText);
+
+			if (!hasDiff) {
+				// no content diff (empty / identical) — keep the simple summary box
+				const renderer = boxRendererWindowed(
+					() => [textSection(undefined, summary)],
+					{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
+				);
+				container.addChild(renderer);
+				return container;
+			}
+
+			// summary line on top, Shiki-highlighted content diff below (falls back
+			// to just the summary while Shiki loads / if pi-diff is unavailable).
+			container.addChild(createShikiDiffComponent({
+				diffText: diffText!,
+				filePath,
+				header: [summary],
+				expanded,
+				fallback: () => [],
+				invalidate: context?.invalidate,
+			}));
 			return container;
 		},
 
@@ -108,7 +132,11 @@ export function createCreateFileTool(): ToolDefinition {
 					? `created ${path.basename(resolved)} (${lines} lines)`
 					: `overwrote ${path.basename(resolved)} (${lines} lines)`;
 
-				return { content: [{ type: "text" as const, text: result }], details: { header: resolved } } as any;
+				return {
+					content: [{ type: "text" as const, text: result }],
+					// reuse the diff already computed above for undo tracking
+					details: { header: resolved, filePath: resolved, diffText: diff },
+				} as any;
 			});
 		},
 	};
