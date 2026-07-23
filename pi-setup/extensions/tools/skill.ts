@@ -108,9 +108,86 @@ function getSkillPathsFromSettings(): string[] {
 }
 
 /**
+ * true for real directories AND symlinks that point at directories.
+ * `Dirent.isDirectory()` is FALSE for symlinks — without this, symlinked skill
+ * dirs (e.g. find-skills / userinterface-wiki in agentDir/skills, or pnpm-style
+ * linked packages) get silently skipped. `fs.existsSync(.../SKILL.md)` later
+ * follows the link and validates, so accepting symlinks here is safe.
+ */
+function isDirLike(entry: fs.Dirent): boolean {
+	return entry.isDirectory() || entry.isSymbolicLink();
+}
+
+/**
+ * discover skill directories bundled INSIDE installed pi packages.
+ * pi's native skill listing surfaces these (so they show in the `/` menu and
+ * the session-start skills block), but they live outside the settings/agent/
+ * project skill roots — so without this the `skill` tool can't resolve them
+ * by name and `skill({ name: "librarian" })` fails with "skill not found".
+ *
+ *   npm packages: agentDir/npm/node_modules/<pkg>/skills/       (pkg may be @scope/name)
+ *   git packages: agentDir/git/<host>/<org>/<repo>/skills/
+ *
+ * returns the existing `skills` CONTAINER dirs (each holds <name>/SKILL.md).
+ */
+function getPackageSkillDirs(): string[] {
+	const roots: string[] = [];
+	const agentDir = getAgentDir();
+
+	// npm packages — node_modules/<pkg>/skills (handle @scope/name one level deeper)
+	const nmDir = path.join(agentDir, "npm", "node_modules");
+	if (fs.existsSync(nmDir)) {
+		try {
+			for (const entry of fs.readdirSync(nmDir, { withFileTypes: true })) {
+				if (!isDirLike(entry)) continue;
+				if (entry.name.startsWith("@")) {
+					const scopeDir = path.join(nmDir, entry.name);
+					try {
+						for (const sub of fs.readdirSync(scopeDir, { withFileTypes: true })) {
+							if (isDirLike(sub)) roots.push(path.join(scopeDir, sub.name, "skills"));
+						}
+					} catch { /* unreadable scope */ }
+				} else {
+					roots.push(path.join(nmDir, entry.name, "skills"));
+				}
+			}
+		} catch { /* unreadable node_modules */ }
+	}
+
+	// git packages — git/<host>/<org>/<repo>/skills (walk a bounded depth)
+	const gitDir = path.join(agentDir, "git");
+	if (fs.existsSync(gitDir)) walkForSkillDirs(gitDir, roots, 3);
+
+	return roots.filter((d) => fs.existsSync(d));
+}
+
+/**
+ * bounded recursive walk collecting directories literally named `skills`.
+ * depth counts how many more levels below `dir` to descend.
+ */
+function walkForSkillDirs(dir: string, out: string[], depth: number): void {
+	if (depth < 0) return;
+	let entries: fs.Dirent[];
+	try {
+		entries = fs.readdirSync(dir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		if (!isDirLike(entry)) continue;
+		if (entry.name === "skills") {
+			out.push(path.join(dir, entry.name));
+			continue;
+		}
+		if (depth > 0) walkForSkillDirs(path.join(dir, entry.name), out, depth - 1);
+	}
+}
+
+/**
  * search for a skill by name across all known directories.
- * checks: agentDir/skills/{name}/SKILL.md, settings skill paths,
- * and project-local .pi/skills/{name}/SKILL.md.
+ * checks (in precedence order): agentDir/skills/{name}/SKILL.md, settings skill
+ * paths, project-local .pi/skills/{name}/SKILL.md, then package-bundled skills
+ * (npm/git). user/config skills win over package skills of the same name.
  */
 function findSkill(name: string, cwd: string): SkillEntry | null {
 	const candidates: string[] = [];
@@ -125,6 +202,11 @@ function findSkill(name: string, cwd: string): SkillEntry | null {
 
 	// 3. project-local
 	candidates.push(path.join(cwd, ".pi", "skills", name, "SKILL.md"));
+
+	// 4. package-bundled skills (npm/git) — checked LAST so user skills win
+	for (const skillDir of getPackageSkillDirs()) {
+		candidates.push(path.join(skillDir, name, "SKILL.md"));
+	}
 
 	for (const candidate of candidates) {
 		if (fs.existsSync(candidate)) {
@@ -148,13 +230,14 @@ function listAvailableSkills(cwd: string): string[] {
 		path.join(getAgentDir(), "skills"),
 		...getSkillPathsFromSettings(),
 		path.join(cwd, ".pi", "skills"),
+		...getPackageSkillDirs(),
 	];
 
 	for (const dir of dirs) {
 		if (!fs.existsSync(dir)) continue;
 		try {
 			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-				if (!entry.isDirectory()) continue;
+				if (!isDirLike(entry)) continue;
 				const skillMd = path.join(dir, entry.name, "SKILL.md");
 				if (fs.existsSync(skillMd)) names.add(entry.name);
 			}

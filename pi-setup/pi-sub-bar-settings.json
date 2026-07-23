@@ -108,13 +108,6 @@
         "showMonthly": true
       }
     },
-    "crof": {
-      "showStatus": true,
-      "windows": {
-        "showDay": true,
-        "showCredits": true
-      }
-    },
     "kimi": {
       "showStatus": false,
       "windows": {

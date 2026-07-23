@@ -9,20 +9,20 @@
 #   ./install.sh
 #
 # What it installs:
-#   ~/.pi/agent/extensions/     — 15 extensions (editor, tools, handoff, brain-loader, mentions, etc.)
+#   ~/.pi/agent/extensions/     — custom extensions (editor, tools, mentions, todos, md-export, etc.)
 #   ~/.pi/agent/themes/         — gruvbox + nightowl themes
 #   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, sub-agents, etc.)
-#   ~/.pi/agent/skills/         — handoff skill
+#   ~/.pi/agent/skills/         — pi-level skills
 #   ~/.pi/agent/settings.json   — settings (zai default, gruvbox theme, compaction off, etc.)
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
-#   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro)
+#   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
 #   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
-#   6 pi packages (npm/git)     — web-access, context, token-burden, claude-bridge, claude-code-use, sub-bar, autoresearch
-#   1 global npm package        — pi-claude-bridge (active Claude bridge)
+#   pi packages (npm/git)       — web-access, context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, condensed-milk, codex-goal, mcp-adapter
+#   1 global npm package        — pi-claude-bridge (legacy Claude bridge, inactive)
 #
 # After install, re-apply pi-claude-bridge patches if needed:
 #   See README.md → "pi-claude-bridge Local Modifications"
@@ -93,7 +93,7 @@ if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/nul
     info "Installing tool extension dependencies (npm install)..."
     (cd "$PI_AGENT/extensions/tools" && npm install --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
 fi
-ok "Extensions installed (16 extensions)"
+ok "Extensions installed"
 
 # ── Themes ──
 info "Installing themes..."
@@ -114,7 +114,7 @@ info "Installing pi skills..."
 backup_if_exists "$PI_AGENT/skills"
 rm -rf "$PI_AGENT/skills"
 cp -R "$SCRIPT_DIR/pi-skills" "$PI_AGENT/skills"
-ok "Pi skills installed (handoff)"
+ok "Pi skills installed"
 
 # ── Config-level skills ──
 info "Installing config skills..."
@@ -162,7 +162,7 @@ if [ -f "$SCRIPT_DIR/mcp.json" ]; then
     info "Installing global MCP config..."
     backup_if_exists "$PI_AGENT/mcp.json"
     cp "$SCRIPT_DIR/mcp.json" "$PI_AGENT/mcp.json"
-    ok "Global MCP config installed (astro @ 127.0.0.1:8089)"
+    ok "Global MCP config installed (astro @ 127.0.0.1:8089, paper @ 127.0.0.1:29979)"
 fi
 
 # ── Pi package configs (sub-bar, sub-core) ──
@@ -189,11 +189,8 @@ packages=(
     "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"
     "npm:@tomooshi/condensed-milk-pi"
-    "https://github.com/edxeth/pi-gpt-config"
-    "https://github.com/eko24ive/pi-ask"
     "npm:pi-codex-goal"
     "npm:pi-mcp-adapter"
-    "npm:pi-grok-cli"
 )
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
@@ -218,33 +215,30 @@ else
 fi
 
 # ── condensed-milk patches ──
-CONDENSED_MILK_DIR="/opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi"
-if [ -d "$CONDENSED_MILK_DIR" ] && [ -f "$SCRIPT_DIR/condensed-milk-patches/index.ts" ]; then
-    info "Applying condensed-milk patches (bash prefix strip + cmd param support)..."
-    cp "$SCRIPT_DIR/condensed-milk-patches/index.ts" "$CONDENSED_MILK_DIR/index.ts"
-    if [ -f "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" ]; then
-        cp "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" "$CONDENSED_MILK_DIR/filters/context-compress.ts"
+# IMPORTANT: patch EVERY installed condensed-milk copy. `pi install` puts the
+# package under ~/.pi/agent/npm (the copy pi actually LOADS), while older global
+# installs live under /opt/homebrew. Patching only one leaves the loaded copy
+# stock → the $-prefix strip is silently ineffective (git status reports "clean"
+# on dirty repos). Find-and-patch all copies.
+if [ -f "$SCRIPT_DIR/condensed-milk-patches/index.ts" ]; then
+    info "Applying condensed-milk patches (bash prefix strip + cmd param support) to ALL copies..."
+    cm_found=0
+    while IFS= read -r cm_index; do
+        cm_dir="$(dirname "$cm_index")"
+        cp "$SCRIPT_DIR/condensed-milk-patches/index.ts" "$cm_dir/index.ts"
+        if [ -f "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" ] && [ -d "$cm_dir/filters" ]; then
+            cp "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" "$cm_dir/filters/context-compress.ts"
+        fi
+        cm_found=$((cm_found + 1))
+        info "  patched $cm_dir"
+    done < <(find "$HOME/.pi/agent/npm" /opt/homebrew/lib/node_modules -path '*/@tomooshi/condensed-milk-pi/index.ts' 2>/dev/null)
+    if [ "$cm_found" -gt 0 ]; then
+        ok "condensed-milk patches applied to $cm_found copy(ies)"
+    else
+        warn "condensed-milk not found — apply patches manually"
     fi
-    ok "condensed-milk patches applied"
 else
-    warn "condensed-milk not found or patch file missing — apply patches manually"
-fi
-
-# ── pi-sub-bar patches (CrofAI provider) ──
-SUB_BAR_DIR="/opt/homebrew/lib/node_modules/@marckrenn/pi-sub-bar"
-if [ -d "$SUB_BAR_DIR" ] && [ -d "$SCRIPT_DIR/sub-bar-patches" ]; then
-    info "Applying pi-sub-bar patches (CrofAI provider)..."
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-shared/index.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-shared/index.ts"
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-core/registry.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/registry.ts"
-    mkdir -p "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/impl"
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-core/src/providers/impl/crof.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/impl/crof.ts"
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-core/src/providers/impl/kimi.ts" "$SUB_BAR_DIR/node_modules/@marckrenn/pi-sub-core/src/providers/impl/kimi.ts"
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-bar/src/providers/metadata.ts" "$SUB_BAR_DIR/src/providers/metadata.ts"
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-bar/settings-types.ts" "$SUB_BAR_DIR/src/settings-types.ts"
-    cp "$SCRIPT_DIR/sub-bar-patches/pi-sub-bar/src/providers/settings.ts" "$SUB_BAR_DIR/src/providers/settings.ts"
-    ok "pi-sub-bar CrofAI + Kimi patches applied"
-else
-    warn "pi-sub-bar not found or patch files missing — apply patches manually"
+    warn "condensed-milk patch file missing — apply patches manually"
 fi
 
 # ── pi core patches (dist/) ──
@@ -291,14 +285,14 @@ echo "╭───────────────────────�
 echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
-echo "│   • 16 extensions (incl. crof)          │"
-echo "│   • 25 custom tools (10 replaced + 15)  │"
+echo "│   • custom extensions                   │"
+echo "│   • 24 custom tools (10 replaced + 14)  │"
 echo "│   • 2 themes (gruvbox active)           │"
-echo "│   • 18 config skills + 3 pi skills      │"
+echo "│   • 16 config skills                    │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
-echo "│   • Sub-bar, sub-core, vcc configs      │"
-echo "│   • 13 pi packages                      │"
+echo "│   • Sub-bar, sub-core configs           │"
+echo "│   • 10 pi packages                      │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
 echo "│   • condensed-milk patched              │"

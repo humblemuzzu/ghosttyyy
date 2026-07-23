@@ -29,9 +29,7 @@ import { createOracleTool } from "./oracle";
 import { createTaskTool } from "./task";
 import { createLibrarianTool } from "./librarian";
 import { createCodeReviewTool } from "./code-review";
-// import { createLookAtTool } from "./look-at"; // disabled — cheap model produces low-quality image analysis
 import { createReadWebPageTool } from "./read-web-page";
-import { createWebSearchTool } from "./web-search";
 import { createSearchSessionsTool } from "./search-sessions";
 import { createReadSessionTool } from "./read-session";
 import { readAgentPrompt } from "./lib/pi-spawn";
@@ -85,14 +83,9 @@ export default function (pi: ExtensionAPI) {
 		systemPrompt: readAgentPrompt("prompt.amp.code-review-system.md"),
 		reportFormat: readAgentPrompt("prompt.amp.code-review-report.md"),
 	}));
-	// look_at tool disabled — cheap model produces low-quality image analysis
-	// pi.registerTool(createLookAtTool({
-	// 	systemPrompt: readAgentPrompt("prompt.amp.look-at.md"),
-	// }));
 	pi.registerTool(createReadWebPageTool({
 		systemPrompt: readAgentPrompt("prompt.amp.read-web-page.md"),
 	}));
-	pi.registerTool(createWebSearchTool()); // overrides pi-web-access — routes through OpenAI Codex backend
 	pi.registerTool(createSearchSessionsTool());
 	pi.registerTool(createReadSessionTool());
 

@@ -33,10 +33,6 @@
       "enabled": "auto",
       "fetchStatus": false
     },
-    "crof": {
-      "enabled": true,
-      "fetchStatus": false
-    },
     "kimi": {
       "enabled": true,
       "fetchStatus": false
@@ -62,7 +58,6 @@
     "codex",
     "kiro",
     "anthropic",
-    "crof",
     "kimi"
   ],
   "defaultProvider": null

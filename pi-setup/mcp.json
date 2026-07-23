@@ -3,6 +3,10 @@
     "astro": {
       "url": "http://127.0.0.1:8089/mcp",
       "auth": false
+    },
+    "paper": {
+      "url": "http://127.0.0.1:29979/mcp",
+      "auth": false
     }
   }
 }

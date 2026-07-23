@@ -401,7 +401,7 @@ export class DefaultResourceLoader {
     addExtensionConflictDiagnostics(extensionsResult) {
         // Detect extension conflicts (tools, commands, flags with same names from different extensions)
         // Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
-        // Tool conflicts are intentional when user extensions override package tools — suppress the diagnostic.
+        // LOCAL PATCH: Tool conflicts are intentional when user extensions override package tools — suppress the diagnostic (else pi refuses to start). Kept as a safety net.
         this.detectExtensionConflicts(extensionsResult.extensions);
     }
     mapSkillPath(resource, metadataByPath) {
@@ -687,6 +687,7 @@ export class DefaultResourceLoader {
             const extensionPath = `<inline:${isNamed ? input.name : index + 1}>`;
             try {
                 const extension = await loadExtensionFromFactory(factory, this.cwd, this.eventBus, runtime, extensionPath);
+                extension.hidden = isNamed && input.hidden;
                 extensions.push(extension);
             }
             catch (error) {

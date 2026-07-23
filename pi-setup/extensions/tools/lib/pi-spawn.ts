@@ -109,8 +109,8 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 
 	// resolve model: use the tool's designated model when the parent provider
 	// is Anthropic (can serve Claude models directly). when the parent is on a
-	// non-Anthropic provider (zai, local-llama, etc), inherit the parent model
-	// since Claude subagent models would require separate API access.
+	// non-Anthropic provider (deepseek, kimi-code, sakana, etc), inherit the
+	// parent model since Claude subagent models would require separate API access.
 	if (config.model) {
 		let resolvedModel = config.model;
 
@@ -127,7 +127,7 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 				|| (!parentProvider.includes("/") && isClaudeModel(parentModelId))
 				|| (parentProvider === "" && isClaudeModel(parentModelId));
 
-			// when parent is non-Anthropic (zai, local-llama, etc), inherit
+			// when parent is non-Anthropic (deepseek, kimi-code, sakana, etc), inherit
 			// parent model so subagents don't need separate Claude API access
 			if (!isAnthropicParent) {
 				resolvedModel = config.parentModel;

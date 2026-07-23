@@ -42,24 +42,27 @@ else
 fi
 
 # ── condensed-milk: \$-prefix strip (WRONG git data without it) ──
-CM="/opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi"
-if grep -q 'startsWith("\$ ")' "$CM/index.ts" 2>/dev/null && \
-   grep -q "args.cmd" "$CM/filters/context-compress.ts" 2>/dev/null; then
-    pass "condensed-milk: \$-prefix strip + cmd param support"
+# Check EVERY installed copy — pi LOADS the one under ~/.pi/agent/npm, but older
+# setups also have a /opt/homebrew copy. Any unpatched copy is a latent failure.
+cm_copies=$(find "$HOME/.pi/agent/npm" /opt/homebrew/lib/node_modules -path '*/@tomooshi/condensed-milk-pi/index.ts' 2>/dev/null)
+if [ -z "$cm_copies" ]; then
+    fail "condensed-milk: not installed" "pi install npm:@tomooshi/condensed-milk-pi"
 else
-    fail "condensed-milk: patches missing (git status compression returns WRONG data)" \
-         "cp pi-setup/condensed-milk-patches/... (see AGENTS.md quick re-patch)"
-fi
-
-# ── pi-gpt-config: tool-discipline overlay removed ──
-GPTCFG="$PI_AGENT/git/github.com/edxeth/pi-gpt-config/index.ts"
-if [ ! -f "$GPTCFG" ]; then
-    pass "pi-gpt-config: not installed (nothing to patch)"
-elif diff -q "$SCRIPT_DIR/gpt-config-patches/index.ts" "$GPTCFG" >/dev/null 2>&1; then
-    pass "pi-gpt-config: patched build in place"
-else
-    fail "pi-gpt-config: live file differs from our patch" \
-         "cp pi-setup/gpt-config-patches/index.ts $GPTCFG"
+    cm_bad=0
+    while IFS= read -r cm_index; do
+        cm_dir="$(dirname "$cm_index")"
+        if ! grep -q 'startsWith("\$ ")' "$cm_index" 2>/dev/null || \
+           ! grep -q "args.cmd" "$cm_dir/filters/context-compress.ts" 2>/dev/null; then
+            cm_bad=$((cm_bad + 1))
+            cm_bad_dir="$cm_dir"
+        fi
+    done <<< "$cm_copies"
+    if [ "$cm_bad" -eq 0 ]; then
+        pass "condensed-milk: \$-prefix strip + cmd param support (all copies)"
+    else
+        fail "condensed-milk: $cm_bad copy(ies) unpatched incl $cm_bad_dir (git status compression returns WRONG data)" \
+             "bash pi-setup/install.sh  # re-patches all copies (or see AGENTS.md quick re-patch)"
+    fi
 fi
 
 # ── pi-tool-display: config with ALL tool overrides disabled ──

@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.80.3",
+  "lastChangelogVersion": "0.81.1",
   "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
@@ -16,12 +16,9 @@
     "~/.pi/agent/extensions/tools",
     "~/.pi/agent/extensions/command-palette",
     "~/.pi/agent/extensions/session-breakdown.ts",
-    "~/.pi/agent/extensions/btw.ts",
     "~/.pi/agent/extensions/notify.ts",
     "~/.pi/agent/extensions/todos.ts",
-    "~/.pi/agent/extensions/local-model.ts",
-    "~/.pi/agent/extensions/mentions.ts",
-    "~/.pi/agent/extensions/crof.ts"
+    "~/.pi/agent/extensions/mentions.ts"
   ],
   "compaction": {
     "enabled": true
@@ -30,10 +27,8 @@
     "anthropic/claude-opus-4-8",
     "anthropic/claude-opus-4-6",
     "anthropic/claude-opus-4-7",
-    "crof/kimi-k2.6",
     "kimi-coding/kimi-for-coding",
     "kimi-code/kimi-for-coding:high",
-    "crof/glm-5.1",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
     "openai-codex/gpt-5.5",
@@ -53,21 +48,10 @@
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",
     "npm:@tomooshi/condensed-milk-pi",
-    "https://github.com/edxeth/pi-gpt-config",
-    "https://github.com/eko24ive/pi-ask",
     "npm:pi-codex-goal",
-    "npm:pi-mcp-adapter",
-    "npm:pi-grok-cli"
+    "npm:pi-mcp-adapter"
   ],
   "terminal": {
     "clearOnShrink": true
-  },
-  "gptConfig": {
-    "fastMode": false,
-    "personality": "claude",
-    "verbosity": "low",
-    "summary": "auto",
-    "toolDiscipline": "off",
-    "showFooter": true
   }
 }
