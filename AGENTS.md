@@ -766,9 +766,21 @@ Shared code used by multiple tools:
 
 ## Skills
 
-### Config-level (`~/.config/agents/skills/`) — 16 skills
+### Config-level (`~/.config/agents/skills/`) — 21 skills
 
 `amp-voice`, `chrome-cdp`, `coordinate`, `dig`, `document`, `git`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write`
+
+**Added 2026-07-23 (5 external skills, adapted for pi — author-prefixed names):**
+
+| Skill | Author (prefix) | What it is | Subagents it spawns |
+|-------|-----------------|------------|---------------------|
+| `s-improve` | shadcn (`s-`) | read-only codebase auditor → writes self-contained handoff plans in `plans/`; never edits source | ≤4 read-only `Task` (standard) / ≤8 (deep), only during an audit |
+| `c-sqr` | cursor (`c-`) | strict quality review — harsh structural critique of a branch diff (was "thermo-nuclear") | none |
+| `mat-cr2axis` | matt pocock (`mat-`) | two-axis diff review: standards (fowler smells) + spec, side by side | 2 read-only `Task` (parallel) |
+| `mat-design` | matt pocock (`mat-`) | deep-modules vocabulary (module/interface/seam/adapter/depth) | 3–4 `Task` only in the DESIGN-IT-TWICE path |
+| `mat-tdd` | matt pocock (`mat-`) | test-driven development discipline (red→green, seams, anti-patterns) | none |
+
+Mnemonic: **`s-` shadcn, `c-` cursor, `mat-` matt**. Sources: shadcn/improve, cursor/plugins (cursor-team-kit), mattpocock/skills. **Adapted for pi:** all Claude-Code/Cursor machinery mapped to pi tools (Explore/`Agent`→`Task`, issue-tracker→`github` tool) or cut (shadcn's `execute`/`reconcile` worktree flow + `closing-the-loop.md` removed — pi `Task` has no worktree isolation or bidirectional messaging). `code-review` renamed `mat-cr2axis` to avoid clashing with the `code_review` tool; `disable-model-invocation` frontmatter dropped (unused by `skill.ts`). Descriptions cross-reference each other to prevent the model confusing them. As adapted, **none of the five ever edits code via a subagent — every subagent they spawn is read-only.**
 
 ### Pi-level (`~/.pi/agent/skills/`)
 
@@ -776,7 +788,7 @@ No repo-stored pi-level skills (`pi-skills/` is empty). `find-skills` and `useri
 
 ### Package-provided skills (discovered by the `skill` tool as of 2026-07-23)
 
-Installed packages ship their own skills inside their package dir: `librarian` (pi-web-access), `context-management` (pi-context), `autoresearch-create/finalize/hooks` (pi-autoresearch). pi's native listing shows these in the `/` menu, but our custom `skill` tool (`tools/skill.ts`) originally only scanned the settings/agent/project skill roots — so `skill({ name: "librarian" })` failed with "skill not found" even though the skill was visible. **Fix:** `skill.ts` now also discovers `~/.pi/agent/npm/node_modules/<pkg>/skills/` (incl `@scope/name`) and `~/.pi/agent/git/<host>/<org>/<repo>/skills/`, and an `isDirLike()` helper makes symlinked skill dirs (find-skills, userinterface-wiki) list correctly (`Dirent.isDirectory()` is false for symlinks). User/config skills still win over package skills of the same name. **23 skills** loadable by name (16 config + find-skills + userinterface-wiki + librarian + context-management + 3 autoresearch). *(The `computer-use` skill from pi-computer-use was here until that package was removed 2026-07-23 — its tools were never active.)*
+Installed packages ship their own skills inside their package dir: `librarian` (pi-web-access), `context-management` (pi-context), `autoresearch-create/finalize/hooks` (pi-autoresearch). pi's native listing shows these in the `/` menu, but our custom `skill` tool (`tools/skill.ts`) originally only scanned the settings/agent/project skill roots — so `skill({ name: "librarian" })` failed with "skill not found" even though the skill was visible. **Fix:** `skill.ts` now also discovers `~/.pi/agent/npm/node_modules/<pkg>/skills/` (incl `@scope/name`) and `~/.pi/agent/git/<host>/<org>/<repo>/skills/`, and an `isDirLike()` helper makes symlinked skill dirs (find-skills, userinterface-wiki) list correctly (`Dirent.isDirectory()` is false for symlinks). User/config skills still win over package skills of the same name. **28 skills** loadable by name (21 config + find-skills + userinterface-wiki + librarian + context-management + 3 autoresearch). *(The `computer-use` skill from pi-computer-use was here until that package was removed 2026-07-23 — its tools were never active.)*
 
 ---
 
@@ -887,7 +899,7 @@ pi-setup/
 │   ├── gruvbox.json
 │   └── nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 16 config-level skills
+├── config-skills/              # 21 config-level skills
 └── extensions/
     ├── tools/                  # 24 custom tools + lib/ (config, prompt-patch, fs, mentions)
     ├── pi-tool-display/

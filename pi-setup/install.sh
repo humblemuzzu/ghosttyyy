@@ -20,7 +20,7 @@
 #   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
-#   ~/.config/agents/skills/    — 16 skills (git, review, spawn, tmux, dig, etc.)
+#   ~/.config/agents/skills/    — 21 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
 #   pi packages (npm/git)       — web-access, context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, condensed-milk, codex-goal, mcp-adapter
 #   1 global npm package        — pi-claude-bridge (legacy Claude bridge, inactive)
 #
@@ -129,7 +129,7 @@ fi
 if [ -f "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs" ]; then
     chmod +x "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs"
 fi
-ok "Config skills installed (16 skills)"
+ok "Config skills installed (21 skills)"
 
 # ── Settings ──
 info "Installing settings..."
@@ -289,7 +289,7 @@ echo "│   Installed:                            │"
 echo "│   • custom extensions                   │"
 echo "│   • 24 custom tools (10 replaced + 14)  │"
 echo "│   • 2 themes (gruvbox active)           │"
-echo "│   • 16 config skills                    │"
+echo "│   • 21 config skills                    │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core configs           │"

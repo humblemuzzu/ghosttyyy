@@ -115,9 +115,12 @@ fallback only** — not in the active `packages`. See `AGENTS.md` → "pi-claude
 - **gruvbox** (active) — warm retro colors
 - **nightowl** — dark blue Night Owl
 
-### Skills (16 config-level)
+### Skills (21 config-level)
 `amp-voice`, `chrome-cdp`, `coordinate`, `dig`, `document`, `git`, `nexus-fix`, `remember`,
 `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write`
+5 external skills adapted for pi (author-prefixed): `s-improve` (shadcn — audit→plans),
+`c-sqr` (cursor — strict quality review), `mat-cr2axis` / `mat-design` / `mat-tdd` (matt pocock).
+Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
 (`find-skills` + `userinterface-wiki` are pi-package-managed symlinks, auto-created on install.)
 
 ### Settings
@@ -160,7 +163,7 @@ pi-setup/
 ├── agents/                     # 9 agent prompt markdown files
 ├── themes/                     # gruvbox.json, nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 16 skills (→ ~/.config/agents/skills/)
+├── config-skills/              # 21 skills (→ ~/.config/agents/skills/)
 ├── claude-bridge-patches/      # Patched pi-claude-bridge (legacy fallback, inactive)
 ├── condensed-milk-patches/     # Patched condensed-milk ($-strip + cmd param)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
