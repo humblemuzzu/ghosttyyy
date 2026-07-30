@@ -16,6 +16,30 @@ import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
 
+// --- tool name aliases ---
+
+/**
+ * alias map: requested name -> actually-registered name.
+ *
+ * pi has no `glob` tool (the built-in is `find`), and our edit/create tools
+ * register as `edit`/`write`. callers that ask for the old/other names would
+ * otherwise be silently dropped from the --tools allowlist, leaving sub-agents
+ * without those capabilities.
+ *
+ * ported from bdsqqq's tool-harness TOOL_ALIASES, retargeted to our registered
+ * names (his map points edit_file/create_file at `apply_patch`; ours will too
+ * once apply_patch replaces edit/write).
+ */
+const TOOL_ALIASES: Record<string, string> = {
+	glob: "find",
+	edit_file: "edit",
+	create_file: "write",
+};
+
+export function resolveAliases(names: string[]): string[] {
+	return [...new Set(names.map((name) => TOOL_ALIASES[name] ?? name))];
+}
+
 // --- types ---
 
 export interface UsageStats {
@@ -48,6 +72,15 @@ export interface PiSpawnConfig {
 	 * provider+auth route as the parent session.
 	 */
 	parentModel?: string;
+	/**
+	 * tools the sub-agent may use. `builtinTools` and `extensionTools` are
+	 * MERGED into a single native `--tools` allowlist (pi 0.82+ gates built-in,
+	 * extension and custom tools with the same flag), then de-duplicated and
+	 * alias-resolved. the split is kept only so call sites stay readable.
+	 *
+	 * names must match REGISTERED tool names, or go through TOOL_ALIASES.
+	 * unknown names are dropped silently by pi.
+	 */
 	builtinTools?: string[];
 	extensionTools?: string[];
 	systemPromptBody?: string;
@@ -136,8 +169,27 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 
 		args.push("--model", resolvedModel);
 	}
-	if (config.builtinTools && config.builtinTools.length > 0) {
-		args.push("--tools", config.builtinTools.join(","));
+	// merge builtin + extension tool lists into ONE native --tools allowlist.
+	//
+	// pi 0.82+ applies --tools to built-in, extension AND custom tools, and it
+	// filters the tool REGISTRY itself (agent-session.ts _refreshToolRegistry),
+	// so tools that register later cannot leak in. this replaces the previous
+	// PI_INCLUDE_TOOLS + tool-harness mechanism, which left the registry
+	// unfiltered and let late-registering package tools (notably `mcp`)
+	// auto-activate inside sub-agents — that stray `mcp` tool is what made the
+	// librarian sub-agent emit fabricated <use_mcp> markup.
+	//
+	// never emit --no-tools: it empties the registry, so nothing can be
+	// re-activated afterwards (verified: yields zero tools).
+	//
+	// when neither list is provided the child stays unrestricted, which matches
+	// the previous behaviour. no caller requests an explicitly empty tool set.
+	const requestedTools = resolveAliases([
+		...(config.builtinTools ?? []),
+		...(config.extensionTools ?? []),
+	]);
+	if (requestedTools.length > 0) {
+		args.push("--tools", requestedTools.join(","));
 	}
 
 	let tmpPromptDir: string | null = null;
@@ -167,11 +219,29 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		}
 
 		const spawnEnv: Record<string, string | undefined> = {
-			...process.env, PI_READ_COMPACT: "1",
+			...process.env,
+			PI_READ_COMPACT: "1",
+			// pi-claude-code-use strips every tool whose name is not a Claude Code
+			// "core" name (read/write/edit/bash/grep/glob/skill/task/...) from the
+			// Anthropic payload whenever the model is anthropic + OAuth — see its
+			// filterAndRemapTools() rule 6, "unknown flat-named tool". that deletes
+			// ALL our custom tools from a sub-agent's request: read_github, finder,
+			// oracle, librarian, find, ls, format_file, undo_edit, search_sessions...
+			//
+			// with no tool definitions in the request, Claude falls back to emitting
+			// <function_calls> XML as plain TEXT and then fabricates the result. that
+			// is precisely why the librarian "answered" with invented build.zig.zon
+			// values instead of reading the file.
+			//
+			// proven with the package's own debug log (PI_CLAUDE_CODE_USE_DEBUG_LOG):
+			//   stage=before: ['read_github', 'Read', 'Bash']
+			//   stage=after:  ['Read', 'Bash']
+			//
+			// sub-agents exist to call our custom tools, so we opt out via the
+			// package's documented escape hatch. verified: read_github then makes a
+			// real tool call and returns the correct minimum_zig_version.
+			PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1",
 		};
-		if (config.extensionTools) {
-			spawnEnv.PI_INCLUDE_TOOLS = config.extensionTools.join(",");
-		}
 
 		let wasAborted = false;
 		const debugEnabled = !!process.env.PI_SPAWN_DEBUG;
@@ -181,8 +251,12 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			process.stderr.write(`[pi-spawn] ${label}${suffix}\n`);
 		};
 
+		// allow overriding the pi binary (testing / non-PATH installs). bdsqqq's
+		// pi-spawn does the same.
+		const piBin = process.env.PI_BIN || "pi";
+
 		const exitCode = await new Promise<number>((resolve) => {
-			const proc = spawn("pi", args, {
+			const proc = spawn(piBin, args, {
 				cwd: config.cwd, shell: false,
 				stdio: [useRpc ? "pipe" : "ignore", "pipe", "pipe"],
 				env: spawnEnv,

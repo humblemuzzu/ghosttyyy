@@ -25,7 +25,7 @@ const MODEL = "claude-sonnet-4-6";
 
 /** sub-agent needs bash (git diff), read/grep/glob (context), web tools (docs lookup) */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const EXTENSION_TOOLS = ["read", "grep", "glob", "ls", "bash", "web_search", "read_web_page"];
+const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "web_search", "read_web_page"];
 
 const DEFAULT_SYSTEM_PROMPT = `You are an expert code reviewer. Review the provided diff for bugs, security issues, and code quality. Report findings with file locations and severity.
 

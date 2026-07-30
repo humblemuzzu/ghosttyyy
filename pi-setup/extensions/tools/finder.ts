@@ -21,7 +21,7 @@ import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } fr
 
 const MODEL = "claude-haiku-4-5";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
-const EXTENSION_TOOLS = ["read", "grep", "glob", "ls"];
+const EXTENSION_TOOLS = ["read", "grep", "find", "ls"];
 
 export interface FinderConfig {
 	systemPrompt?: string;

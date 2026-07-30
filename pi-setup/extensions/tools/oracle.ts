@@ -22,7 +22,7 @@ import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } fr
 
 const MODEL = "claude-sonnet-4-6";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const EXTENSION_TOOLS = ["read", "grep", "glob", "ls", "bash"];
+const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash"];
 
 export interface OracleConfig {
 	systemPrompt?: string;
