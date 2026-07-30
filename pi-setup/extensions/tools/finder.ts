@@ -18,6 +18,10 @@ import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { requireParam } from "./lib/params";
+
+/** canonical name first; the rest are what models actually guess (see lib/params.ts). */
+const FINDER_PARAM_NAMES = ["query", "task", "prompt", "description", "search"] as const;
 
 const MODEL = "claude-haiku-4-5";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
@@ -52,21 +56,27 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 			"4. State explicit success criteria so the agent knows when to stop.\n" +
 			"5. Never issue vague or exploratory commands.",
 
+		// declared Optional so an aliased call survives validation; normalised in
+		// execute() via lib/params.ts.
 		parameters: Type.Object({
-			query: Type.String({
+			query: Type.Optional(Type.String({
 				description:
-					"The search query describing what to find. Be specific and include " +
+					"REQUIRED. The search query describing what to find. Be specific and include " +
 					"technical terms, file types, or expected code patterns.",
-			}),
+			})),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const resolved = requireParam(params as Record<string, unknown>, FINDER_PARAM_NAMES, "finder");
+			if ("error" in resolved) return resolved.error;
+			const queryText = resolved.value;
+
 			let sessionId = "";
 			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { /* graceful */ }
 
 			const singleResult: SingleResult = {
 				agent: "finder",
-				task: params.query,
+				task: queryText,
 				exitCode: -1,
 				messages: [],
 				usage: zeroUsage(),
@@ -74,7 +84,7 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 
 			const result = await piSpawn({
 				cwd: ctx.cwd,
-				task: params.query,
+				task: queryText,
 				model: MODEL,
 				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
 				builtinTools: BUILTIN_TOOLS,

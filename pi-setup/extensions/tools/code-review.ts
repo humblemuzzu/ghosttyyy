@@ -20,12 +20,18 @@ import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
 import { normalizeForDisplay } from "./lib/box-format";
+import { requireParam } from "./lib/params";
+
+/** canonical name first; the rest are what models actually guess (see lib/params.ts). */
+const CODE_REVIEW_PARAM_NAMES = ["diff_description", "task", "query", "prompt", "description"] as const;
 
 const MODEL = "claude-sonnet-4-6";
 
-/** sub-agent needs bash (git diff), read/grep/glob (context), web tools (docs lookup) */
+/** sub-agent needs bash (git diff), read/grep/find (context), read_web_page (docs lookup) */
+// NOTE: web_search intentionally absent until the Phase 3 Parallel AI port —
+// pi-web-access was uninstalled 2026-07-30. re-add here once registered.
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "web_search", "read_web_page"];
+const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "read_web_page"];
 
 const DEFAULT_SYSTEM_PROMPT = `You are an expert code reviewer. Review the provided diff for bugs, security issues, and code quality. Report findings with file locations and severity.
 
@@ -108,13 +114,15 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 			"or any other tool to generate the diff but just pass a natural language description " +
 			"of how to compute the diff in the diff_description argument.",
 
+		// declared Optional so an aliased call (task/query/prompt) survives schema
+		// validation and is normalised in execute(). see lib/params.ts.
 		parameters: Type.Object({
-			diff_description: Type.String({
+			diff_description: Type.Optional(Type.String({
 				description:
-					"A description of the diff or code change that can be used to generate the full diff. " +
+					"REQUIRED. A description of the diff or code change that can be used to generate the full diff. " +
 					"This can include a git or bash command to generate the diff or a description of the diff " +
 					"which can then be used to generate the git or bash command to generate the full diff.",
-			}),
+			})),
 			files: Type.Optional(
 				Type.Array(Type.String(), {
 					description:
@@ -130,12 +138,20 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const resolved = requireParam(
+				params as Record<string, unknown>,
+				CODE_REVIEW_PARAM_NAMES,
+				"code_review",
+			);
+			if ("error" in resolved) return resolved.error;
+			const diffDescription = resolved.value;
+
 			let sessionId = "";
 			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch {}
 
 			// compose task prompt
 			const parts: string[] = [];
-			parts.push(`Review the following diff:\n${params.diff_description}`);
+			parts.push(`Review the following diff:\n${diffDescription}`);
 
 			if (params.files && params.files.length > 0) {
 				parts.push(`\nFocus the review on these files:\n${params.files.join("\n")}`);
@@ -148,7 +164,7 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 
 			const singleResult: SingleResult = {
 				agent: "code_review",
-				task: params.diff_description,
+				task: diffDescription,
 				exitCode: -1,
 				messages: [],
 				usage: zeroUsage(),

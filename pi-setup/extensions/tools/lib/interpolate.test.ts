@@ -3,6 +3,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { findGitRoot, interpolatePromptVars } from "./interpolate";
 
 const cwd = "/home/user/project";
@@ -84,13 +87,50 @@ describe("interpolatePromptVars", () => {
 });
 
 describe("findGitRoot", () => {
-	test("finds git root from cwd", () => {
-		// this test file lives inside a git repo
-		const root = findGitRoot(process.cwd());
-		const { existsSync } = require("node:fs");
-		const { join } = require("node:path");
+	// these build a throwaway tree instead of relying on process.cwd() being
+	// inside a git repo. the old version asserted "this test file lives inside a
+	// git repo", which is false when the tools run from the deployed
+	// ~/.pi/agent/extensions/tools copy — so the suite failed there for
+	// environmental reasons rather than real ones.
+	let tmp: string;
 
-		expect(existsSync(join(root, ".git"))).toBe(true);
+	const makeTree = (gitAs: "dir" | "file") => {
+		const root = join(tmp, `repo-${gitAs}`);
+		const nested = join(root, "src", "deep", "nested");
+		mkdirSync(nested, { recursive: true });
+		if (gitAs === "dir") mkdirSync(join(root, ".git"), { recursive: true });
+		else writeFileSync(join(root, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");
+		return { root, nested };
+	};
+
+	test("walks up from a nested dir to the repo root", () => {
+		tmp = mkdtempSync(join(tmpdir(), "interpolate-gitroot-"));
+		try {
+			const { root, nested } = makeTree("dir");
+			expect(findGitRoot(nested)).toBe(root);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	test("treats a .git FILE as a root (git worktrees / submodules)", () => {
+		tmp = mkdtempSync(join(tmpdir(), "interpolate-gitroot-"));
+		try {
+			const { root, nested } = makeTree("file");
+			expect(findGitRoot(nested)).toBe(root);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	test("returns the repo root itself when already at the root", () => {
+		tmp = mkdtempSync(join(tmpdir(), "interpolate-gitroot-"));
+		try {
+			const { root } = makeTree("dir");
+			expect(findGitRoot(root)).toBe(root);
+		} finally {
+			rmSync(tmp, { recursive: true, force: true });
+		}
 	});
 
 	test("falls back to dir when no git root exists", () => {

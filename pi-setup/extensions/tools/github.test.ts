@@ -32,10 +32,60 @@ import {
 	addLineNumbers,
 	truncate,
 } from "./lib/github";
+import { matchGlob } from "./github";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CWD = process.env.PI_E2E_CWD ?? resolve(__dirname, "../../../..");
 const ENABLED = process.env.PI_E2E === "1";
+
+// --- matchGlob ---
+// regression coverage for the glob_github matcher. it previously built its regex
+// with chained .replace() calls that corrupted each other: "**/" became "(.+/)?"
+// and the later "?" -> "[^/]" rule mangled that into "(.+/)[^/]", so "**/*.nix"
+// demanded a directory plus an extra char and silently skipped every root-level
+// file (93 of 95 matches on bdsqqq/dots). the function had no tests at all.
+describe("matchGlob", () => {
+	it("'**/' matches zero directories (root-level files)", () => {
+		expect(matchGlob("flake.nix", "**/*.nix")).toBe(true);
+		expect(matchGlob("zmx.nix", "**/*.nix")).toBe(true);
+	});
+
+	it("'**/' matches nested directories at any depth", () => {
+		expect(matchGlob("system/nix.nix", "**/*.nix")).toBe(true);
+		expect(matchGlob("user/pi/default.nix", "**/*.nix")).toBe(true);
+		expect(matchGlob("a/b/c/d.nix", "**/*.nix")).toBe(true);
+	});
+
+	it("respects the file extension", () => {
+		expect(matchGlob("flake.txt", "**/*.nix")).toBe(false);
+	});
+
+	it("'*' does not cross a path separator", () => {
+		expect(matchGlob("flake.nix", "*.nix")).toBe(true);
+		expect(matchGlob("system/nix.nix", "*.nix")).toBe(false);
+	});
+
+	it("honours a directory prefix", () => {
+		expect(matchGlob("src/a.ts", "src/**/*.ts")).toBe(true);
+		expect(matchGlob("src/a/b.ts", "src/**/*.ts")).toBe(true);
+		expect(matchGlob("other/a.ts", "src/**/*.ts")).toBe(false);
+	});
+
+	it("'?' matches exactly one non-separator char", () => {
+		expect(matchGlob("ab.ts", "?b.ts")).toBe(true);
+		expect(matchGlob("a/b.ts", "?b.ts")).toBe(false);
+	});
+
+	it("escapes regex metacharacters in literals", () => {
+		expect(matchGlob("a+b.ts", "a+b.ts")).toBe(true);
+		expect(matchGlob("axb.ts", "a+b.ts")).toBe(false);
+	});
+
+	it("trailing '**' matches everything below a prefix", () => {
+		expect(matchGlob("src/index.ts", "src/**")).toBe(true);
+		expect(matchGlob("src/a/b/c.ts", "src/**")).toBe(true);
+	});
+});
 
 // --- shared pi runner (same as e2e.test.ts) ---
 
@@ -50,6 +100,13 @@ function runPi(prompt: string, opts?: { timeout?: number }): Promise<PiResult> {
 		let buffer = "";
 		const proc = nodeSpawn("pi", ["--mode", "json", "-p", "--no-session", prompt], {
 			cwd: CWD, shell: false, stdio: ["ignore", "pipe", "pipe"],
+			// mirrors lib/pi-spawn.ts: on anthropic+OAuth, pi-claude-code-use strips
+			// every tool whose name is not a Claude Code "core" name from the request
+			// payload. that removes read_github/search_github/librarian/... entirely,
+			// the model is handed zero tools, and it emits <function_calls> XML as
+			// plain text instead of calling anything — so these e2e assertions see 0
+			// tool calls. opt out via the package's documented escape hatch.
+			env: { ...process.env, PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1" },
 		});
 		const timer = setTimeout(() => {
 			proc.kill("SIGTERM");

@@ -19,6 +19,10 @@ import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { requireParam } from "./lib/params";
+
+/** canonical name first; the rest are what models actually guess (see lib/params.ts). */
+const ORACLE_PARAM_NAMES = ["task", "query", "prompt", "question", "description"] as const;
 
 const MODEL = "claude-sonnet-4-6";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
@@ -50,10 +54,12 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 			"- Be specific about what you want reviewed, planned, or debugged\n" +
 			"- Provide relevant context. If you know which files are involved, list them.",
 
+		// declared Optional so an aliased call survives validation; normalised in
+		// execute() via lib/params.ts.
 		parameters: Type.Object({
-			task: Type.String({
-				description: "The task or question for the oracle. Be specific about what guidance you need.",
-			}),
+			task: Type.Optional(Type.String({
+				description: "REQUIRED. The task or question for the oracle. Be specific about what guidance you need.",
+			})),
 			context: Type.Optional(
 				Type.String({
 					description: "Optional context about the current situation or background information.",
@@ -67,11 +73,15 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const resolved = requireParam(params as Record<string, unknown>, ORACLE_PARAM_NAMES, "oracle");
+			if ("error" in resolved) return resolved.error;
+			const taskText = resolved.value;
+
 			let sessionId = "";
 			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { /* graceful */ }
 
 			// compose task with context and inline file contents
-			const parts: string[] = [params.task];
+			const parts: string[] = [taskText];
 			if (params.context) parts.push(`\nContext: ${params.context}`);
 			if (params.files && params.files.length > 0) {
 				for (const filePath of params.files) {
@@ -90,7 +100,7 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 
 			const singleResult: SingleResult = {
 				agent: "oracle",
-				task: params.task,
+				task: taskText,
 				exitCode: -1,
 				messages: [],
 				usage: zeroUsage(),

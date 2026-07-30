@@ -240,7 +240,12 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			// sub-agents exist to call our custom tools, so we opt out via the
 			// package's documented escape hatch. verified: read_github then makes a
 			// real tool call and returns the correct minimum_zig_version.
-			PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1",
+			//
+			// only opt out when WE are supplying an explicit --tools allowlist. with
+			// no allowlist the child is unrestricted, and disabling the filter too
+			// would leave it ungated at both layers (every registered tool, incl.
+			// `mcp`, exposed to the model).
+			...(requestedTools.length > 0 ? { PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1" } : {}),
 		};
 
 		let wasAborted = false;

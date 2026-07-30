@@ -21,10 +21,12 @@ import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
 
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+// NOTE: web_search is intentionally absent — pi-web-access was uninstalled
+// 2026-07-30 and the Parallel AI replacement lands in Phase 3. re-add it here
+// AND in the description below once that tool is registered.
 const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash",
 	"edit", "write", "format_file", "skill", "finder",
-	"web_search",
 ];
 
 export function createTaskTool(): ToolDefinition {
@@ -33,7 +35,7 @@ export function createTaskTool(): ToolDefinition {
 		label: "Task",
 		description:
 			"Perform a task (a sub-task of the user's overall task) using a sub-agent that has access to " +
-			"the following tools: read, grep, find, ls, bash, edit, write, format_file, skill, finder, web_search.\n\n" +
+			"the following tools: read, grep, find, ls, bash, edit, write, format_file, skill, finder.\n\n" +
 			"When to use the Task tool:\n" +
 			"- When you need to perform complex multi-step tasks\n" +
 			"- When you need to run an operation that will produce a lot of output (tokens) " +

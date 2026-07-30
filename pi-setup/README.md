@@ -43,7 +43,6 @@ disable one, delete it or move it out of `extensions/`.
 | `notify.ts` | Desktop notification when the agent finishes (OSC 777) |
 | `todos.ts` | `todo` tool + `/todos` — file-based todo manager with TUI |
 | `command-palette/` | `Ctrl+Shift+P` command-palette overlay |
-| `tool-harness.ts` | Env-gated tool filtering for sub-agents (`PI_INCLUDE_TOOLS`) |
 
 `kimi-code-token.mjs` also lives here but is a helper script (OAuth token refresher called by the
 `kimi-code` provider), not a loaded extension.

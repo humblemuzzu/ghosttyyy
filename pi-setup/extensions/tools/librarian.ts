@@ -18,6 +18,10 @@ import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { requireParam } from "./lib/params";
+
+/** canonical name first; the rest are what models actually guess (see lib/params.ts). */
+const LIBRARIAN_PARAM_NAMES = ["query", "task", "prompt", "question", "description"] as const;
 
 const MODEL = "claude-haiku-4-5";
 
@@ -63,10 +67,12 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 			"- The Librarian explores thoroughly before providing comprehensive answers\n" +
 			"- When getting an answer from the Librarian, show it to the user in full, do not summarize it.",
 
+		// declared Optional so an aliased call survives validation; normalised in
+		// execute() via lib/params.ts.
 		parameters: Type.Object({
-			query: Type.String({
-				description: "Your question about the codebase. Be specific about what you want to understand.",
-			}),
+			query: Type.Optional(Type.String({
+				description: "REQUIRED. Your question about the codebase. Be specific about what you want to understand.",
+			})),
 			context: Type.Optional(
 				Type.String({
 					description: "Optional context about what you're trying to achieve or background information.",
@@ -75,16 +81,20 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const resolved = requireParam(params as Record<string, unknown>, LIBRARIAN_PARAM_NAMES, "librarian");
+			if ("error" in resolved) return resolved.error;
+			const queryText = resolved.value;
+
 			let sessionId = "";
 			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { /* graceful */ }
 
-			const parts: string[] = [params.query];
+			const parts: string[] = [queryText];
 			if (params.context) parts.push(`\nContext: ${params.context}`);
 			const fullTask = parts.join("\n");
 
 			const singleResult: SingleResult = {
 				agent: "librarian",
-				task: params.query,
+				task: queryText,
 				exitCode: -1,
 				messages: [],
 				usage: zeroUsage(),

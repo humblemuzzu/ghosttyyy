@@ -2,8 +2,8 @@
  * github tools — 7 tools for reading, searching, and exploring github repos.
  *
  * designed for the librarian sub-agent but registered as top-level extension
- * tools. the librarian spawns a pi process with PI_INCLUDE_TOOLS set to
- * include these tool names.
+ * tools. the librarian spawns a pi process with `--tools <these names>` (see
+ * lib/pi-spawn.ts), which gates built-in, extension and custom tools alike.
  *
  * all tools use `gh api` CLI under the hood. requires authenticated gh CLI.
  *
@@ -408,8 +408,16 @@ export function createGlobGithubTool(): ToolDefinition {
 			"- When exploring codebase structure quickly\n\n" +
 			"Uses the git tree API to list all files, then filters by pattern.",
 
+		// `filePattern` is the canonical name, but models overwhelmingly guess
+		// `pattern` (matching grep/glob conventions) and then fail schema validation.
+		// both are accepted; at least one is required, enforced in execute().
 		parameters: Type.Object({
-			filePattern: Type.String({ description: 'Glob pattern (e.g., "**/*.ts", "src/**/*.test.js")' }),
+			filePattern: Type.Optional(
+				Type.String({ description: 'Glob pattern (e.g., "**/*.ts", "src/**/*.test.js")' }),
+			),
+			pattern: Type.Optional(
+				Type.String({ description: "Alias for filePattern." }),
+			),
 			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
 			limit: Type.Optional(Type.Number({ description: "Max results (default: 100)" })),
 			offset: Type.Optional(Type.Number({ description: "Results to skip (default: 0)" })),
@@ -417,6 +425,13 @@ export function createGlobGithubTool(): ToolDefinition {
 
 		async execute(_id, params) {
 			try {
+				const filePattern = params.filePattern ?? params.pattern;
+				if (!filePattern) {
+					return {
+						content: [{ type: "text" as const, text: 'Missing glob pattern: pass "filePattern" (or "pattern").' }],
+						isError: true,
+					};
+				}
 				const ref = parseRepoUrl(params.repository);
 				const limit = params.limit ?? 100;
 				const offset = params.offset ?? 0;
@@ -433,7 +448,7 @@ export function createGlobGithubTool(): ToolDefinition {
 				}
 
 				// filter by glob pattern using simple matching
-				const pattern = params.filePattern;
+				const pattern = filePattern;
 				const files = tree.tree
 					.filter((item: any) => item.type === "blob")
 					.map((item: any) => item.path as string)
@@ -673,16 +688,44 @@ export function createDiffTool(): ToolDefinition {
 // --- glob matching (simple, no external deps) ---
 
 /**
- * simple glob matcher. supports:
- *   ** (any path segments), * (any within segment), ? (single char)
+ * translate a glob pattern to a regex, in ONE pass.
+ *
+ * the previous implementation chained .replace() calls, which corrupted its own
+ * output: "**\/" was rewritten to "(.+/)?", and the later `?` -> "[^/]" rule then
+ * mangled that quantifier into "(.+/)[^/]". the effect was that "**\/*.nix"
+ * required at least one directory PLUS one extra character, so root-level files
+ * (flake.nix, zmx.nix) never matched — 93 of 95 files were returned.
+ *
+ * semantics match minimatch/bash globstar:
+ *   "**\/"  -> zero or more leading path segments
+ *   "**"    -> anything, including "/"
+ *   "*"     -> anything except "/"
+ *   "?"     -> a single character except "/"
  */
-function matchGlob(path: string, pattern: string): boolean {
-	const regexStr = pattern
-		.replace(/\./g, "\\.")
-		.replace(/\*\*\//g, "(.+/)?")
-		.replace(/\*\*/g, ".*")
-		.replace(/\*/g, "[^/]*")
-		.replace(/\?/g, "[^/]");
+export function matchGlob(path: string, pattern: string): boolean {
+	let regexStr = "";
+	for (let i = 0; i < pattern.length; i++) {
+		const char = pattern[i];
+		if (char === "*") {
+			if (pattern[i + 1] === "*") {
+				if (pattern[i + 2] === "/") {
+					// "**/" matches zero or more directories
+					regexStr += "(?:[^/]*/)*";
+					i += 2;
+				} else {
+					regexStr += ".*";
+					i += 1;
+				}
+			} else {
+				regexStr += "[^/]*";
+			}
+		} else if (char === "?") {
+			regexStr += "[^/]";
+		} else {
+			// escape every regex metacharacter literally
+			regexStr += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+		}
+	}
 	try {
 		return new RegExp(`^${regexStr}$`).test(path);
 	} catch {

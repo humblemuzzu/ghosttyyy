@@ -88,6 +88,11 @@ function runPi(prompt: string, opts?: { timeout?: number }): Promise<PiResult> {
 			cwd: CWD,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
+			// mirrors lib/pi-spawn.ts: on anthropic+OAuth, pi-claude-code-use strips
+			// every tool whose name is not a Claude Code "core" name from the request
+			// payload, leaving the model with no custom tools to call. opt out via the
+			// package's documented escape hatch so e2e assertions see real tool calls.
+			env: { ...process.env, PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1" },
 		});
 
 		const timer = setTimeout(() => {
