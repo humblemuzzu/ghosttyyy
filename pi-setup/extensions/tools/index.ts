@@ -31,6 +31,7 @@ import { createLibrarianTool } from "./librarian";
 import { createCodeReviewTool } from "./code-review";
 import { createReadWebPageTool } from "./read-web-page";
 import { createConfiguredWebSearchTool } from "./web-search";
+import { setupAgentMessage } from "./agent-message";
 import { createSearchSessionsTool } from "./search-sessions";
 import { createReadSessionTool } from "./read-session";
 import { readAgentPrompt } from "./lib/pi-spawn";
@@ -94,6 +95,11 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool(createSearchSessionsTool());
 	pi.registerTool(createReadSessionTool());
+
+	// agent_message owns more than a tool registration: it starts the mailbox
+	// watcher and the session_start / agent_settled / session_shutdown drain
+	// hooks, so it takes `pi` directly. no-ops if disabled via config.
+	setupAgentMessage(pi);
 
 	// github tools — used by librarian sub-agent, also available to main agent
 	pi.registerTool(createReadGithubTool());

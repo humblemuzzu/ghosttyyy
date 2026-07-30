@@ -16,6 +16,19 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 
 **See `pi-setup/2026-05-17-migration-log.md`** for the full record of the v0.74.0 migration, architecture decisions, CrofAI fixes, context management switch, and package cleanup. If anything breaks, check there first.
 
+### bdsqqq Port — IN PROGRESS (read before changing tools/subagents)
+
+**See `pi-setup/2026-07-30-bdsqqq-port.md`.** Ongoing port of selected pieces from
+[bdsqqq/dots](https://github.com/bdsqqq/dots). Phases 0-3 are done (subagent tool
+injection fixed, `web_search` replaced with Parallel AI, `agent_message` added,
+`search_sessions` rebuilt on a branch model, condensed-milk removed). Phase 4
+(`apply_patch` replacing `edit`/`write`, `delegate` replacing `Task`) is next.
+
+That file records **why** several things are the way they are — in particular the
+`pi-claude-code-use` OAuth tool filter that silently strips every custom tool from
+sub-agent requests, and why `--no-tools` must never be used. Do not re-derive it.
+Verification harnesses live in `pi-setup/port-harness/`.
+
 ### Provider Chain
 
 ```
@@ -63,56 +76,28 @@ cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-cla
 
 ---
 
-## condensed-milk-pi: Patched Build
+## condensed-milk-pi: REMOVED (2026-07-30)
 
-**Upstream:** https://github.com/tomooshi/condensed-milk-pi (v1.9.0)
-**Our patched version:** `pi-setup/condensed-milk-patches/` (index.ts + filters/context-compress.ts)
+**Status:** uninstalled entirely. Do not reinstall. `pi-setup/condensed-milk-patches/` deleted.
 
-### What We Changed From Upstream
+It compressed bash output and masked stale tool results, but it cost more than it saved:
 
-Two patches to fix compatibility with our custom bash tool:
+1. **It silently reported failures as successes.** Its `git-mutations.ts` filter summarises by
+   *shape*, not content — `filterGitAdd()` returns `ok (N files staged)` for ANY input. Compression
+   ran before `isError` was consulted, so a `git add -A` **rejected by our permission rules** was
+   handed to the model as `ok (1 files staged)`. Same data-loss class as the `$`-prefix bug it
+   already needed a patch for.
+2. **Its context masking hampered debugging.** Defaults masked 60% of prior tool results at only
+   **30% context use**, so earlier command output became `[cm-masked bash] …` placeholders and had
+   to be re-run.
+3. **Maintenance cost.** It required three separate local patches (`$`-prefix strip, `cmd` param
+   support, and the `isError` guard), all of which had to be re-applied to *every* installed copy
+   after each npm update.
 
-**1. Bash output prefix strip (`index.ts`, tool_result handler):**
+pi's native compaction (`compaction.enabled: true` in settings.json) covers context management.
 
-Our custom `bash.ts` prepends `$ <command>\n\n` to every output (e.g., `$ git status\n\nOn branch main...`). Upstream condensed-milk's `detectFormat()` reads the first line to detect git status format — it sees `$ git status` instead of `On branch main`, misclassifies it as v2 format, and reports "on unknown: clean" for dirty repos. **This is data loss — the agent gets wrong git state.**
-
-```typescript
-// Added after ANSI strip, before dispatch:
-if (stdout.startsWith("$ ")) {
-  const sep = stdout.indexOf("\n\n");
-  if (sep !== -1) stdout = stdout.slice(sep + 2);
-}
-```
-
-This also fixes JSON output compression (blocked by `$` prefix) and ls phantom entries.
-
-**2. `cmd` parameter support (`index.ts` + `filters/context-compress.ts`):**
-
-Our bash tool accepts both `cmd` (primary in schema) and `command` (alias). Upstream only reads `event.input.command`. When models use `cmd`, condensed-milk skips compression entirely.
-
-```typescript
-// index.ts — tool_result handler:
-const command = (event.input as { command?: string; cmd?: string })?.command
-  ?? (event.input as { cmd?: string })?.cmd;
-
-// context-compress.ts — toolCallIndex builder:
-const rawCmd = typeof args.command === "string" ? args.command
-  : typeof args.cmd === "string" ? args.cmd : undefined;
-
-// context-compress.ts — extractCommand:
-const fromDetails = msg?.details?.command ?? msg?.input?.command ?? msg?.input?.cmd;
-```
-
-### Re-apply after npm update
-
-```bash
-cp pi-setup/condensed-milk-patches/index.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/index.ts
-cp pi-setup/condensed-milk-patches/filters/context-compress.ts /opt/homebrew/lib/node_modules/@tomooshi/condensed-milk-pi/filters/context-compress.ts
-```
-
-**Never skip the prefix strip.** Without it, `git status` compression returns wrong data to the agent.
-
----
+**If a copy ever reappears** (stale global install, or someone re-adds it to `packages`),
+`verify-patches.sh` fails loudly — it now asserts the package is *absent*.
 
 ## pi-tool-display: Configuration Required
 
@@ -537,11 +522,10 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
-| `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-codex-goal` | 0.1.38 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 | `pi-mcp-adapter` | 2.15.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
 
-**Active in settings.json (9):** `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-codex-goal`, `pi-mcp-adapter`
+**Active in settings.json (8):** `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `pi-codex-goal`, `pi-mcp-adapter`
 
 **Removed 2026-07-30 (bdsqqq port, Phase 1):** `pi-web-access` and `pi-tasks` — uninstalled (`pi remove`) and dropped from packages, no backward compatibility kept.
 - `pi-web-access` provided `web_search`, `source_check`, `fetch_content`, `get_search_content`. All four were **removed deliberately**: `web_search` was 100% dead (OpenAI rejected the model for ChatGPT-account Codex auth, Exa hit its free rate limit, Perplexity key invalid) and `source_check` silently degraded to `missing-evidence` because it consumes `web_search`. Replaced in Phase 3 by a self-contained Parallel AI `web_search` tool (ported from bdsqqq). Page reading is covered by our own `read_web_page` tool.
@@ -786,8 +770,6 @@ pi-setup/
 ├── claude-bridge-patches/
 │   ├── index.ts                # Patched pi-claude-bridge (our custom build)
 │   └── package.json            # Version tracking
-├── condensed-milk-patches/
-│   ├── index.ts                # Patched condensed-milk ($ prefix strip + cmd support)
 │   ├── package.json            # Version tracking
 │   └── filters/
 │       └── context-compress.ts # Patched context masking (cmd param support)
@@ -836,7 +818,7 @@ bash pi-setup/verify-patches.sh
 
 Read-only audit of every patch and config this setup depends on: resource-loader
 conflict suppression, session pinning, **pi-tui width patch in ALL installed
-copies** (TUI smears without it), condensed-milk `$`-prefix strip,
+copies** (TUI smears without it), condensed-milk absence,
 pi-tool-display config, editor label guards, box-format normalization. Each
 FAIL prints the exact fix command. Exit 0 = everything in place. Run it after
 `pi update`, any `pi install`, any npm package update — or whenever something
@@ -846,7 +828,7 @@ When pi or any package gets updated:
 
 1. **pi itself updated** (`@earendil-works/pi-coding-agent`): Check if any internal APIs changed that our extensions depend on. Look at the [changelog](https://github.com/earendil-works/pi). Our extensions override built-in tools — if the tool API changed, update our tool files accordingly. The `@mariozechner/*` backward-compat aliases are currently preserved but will eventually be removed — when that happens, rename imports in all 46 `.ts` files (see log.md for the sed command). **Must re-apply `resource-loader.js` patch** — it suppresses extension tool-conflict boot errors; kept as a safety net (with the custom `web_search` removed there is currently no active conflict, but any future package/extension name collision would block startup without it). **Must re-run `apply-pi-tui-width-patch.mjs`** — without it, heavy output with Indic matras/exotic unicode desyncs and smears the whole TUI; note EVERY package update/install brings a fresh unpatched pi-tui copy (see "TUI Width Desync Fix").
 
-2. **condensed-milk-pi updated**: npm update overwrites our patched `index.ts` and `filters/context-compress.ts`. **Must re-apply patches** — without the `$ ` prefix strip, git status compression returns wrong data. See "condensed-milk-pi: Patched Build" above.
+2. **condensed-milk-pi**: REMOVED 2026-07-30 — do not reinstall. See "condensed-milk-pi: REMOVED" above for why (it reported failed git commands as successes).
 
 3. **pi-sub-bar updated**: CrofAI + Kimi providers are now built-in as of v1.5.0. No patches needed.
 
@@ -868,12 +850,7 @@ cp pi-setup/pi-core-patches/keybindings.js /opt/homebrew/lib/node_modules/@earen
 # (CRITICAL — TUI smears on exotic unicode without it; every package bundles its own pi-tui)
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs
 
-# condensed-milk (CRITICAL — data loss without it). Patch ALL copies — pi LOADS
-# the ~/.pi/agent/npm copy, NOT the /opt/homebrew one. install.sh find-patches both.
-for d in $(find "$HOME/.pi/agent/npm" /opt/homebrew/lib/node_modules -path '*/@tomooshi/condensed-milk-pi/index.ts' 2>/dev/null | xargs -n1 dirname); do
-  cp pi-setup/condensed-milk-patches/index.ts "$d/index.ts"
-  cp pi-setup/condensed-milk-patches/filters/context-compress.ts "$d/filters/context-compress.ts"
-done
+# condensed-milk — REMOVED 2026-07-30, nothing to re-apply. Do not reinstall.
 
 # pi-sub-bar — no patches needed (CrofAI + Kimi now built-in as of v1.5.0)
 
@@ -888,7 +865,8 @@ cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-too
 
 - **Don't edit files directly in `/opt/homebrew/lib/node_modules/`** — they'll be wiped on the next npm update. Always edit in the repo (`pi-setup/`) and deploy via `install.sh` or manual `cp`.
 - **Don't run `install.sh` without checking what changed** — it backs up existing files but overwrites them. If you've made live tweaks you want to keep, back them up first.
-- **Don't remove the condensed-milk `$ ` prefix strip** — without it, git status reports "clean" on dirty repos. The agent makes wrong git decisions.
+- **Don't reinstall condensed-milk-pi** — it silently rewrote failed git commands into success messages (`git add -A` rejected by permissions → reported as `ok (1 files staged)`), and needed three local patches to stay usable.
 - **Don't set pi-tool-display overrides to `true`** — it replaces our custom tools with pi defaults, losing mutex locking, secret scrubbing, git trailers, image support.
 - **Don't add `claude-agent-sdk-pi` back to packages** — it's the legacy bridge and conflicts with `pi-claude-bridge`.
 - **Check `pi-setup/2026-05-17-migration-log.md`** if anything breaks — it has the full record of every change made, every decision, and rollback instructions.
+- **Check `pi-setup/2026-07-30-bdsqqq-port.md`** before changing sub-agent tool wiring, `pi-spawn`, or the edit tools — it documents the OAuth tool-filter trap, the native `--tools` requirement, and the model-preservation rules.

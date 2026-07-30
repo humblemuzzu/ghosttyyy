@@ -80,6 +80,26 @@ export interface PermissionVerdict {
  * covers all patterns amp documents: `*git push*`, `rm *`, `*`.
  */
 function globToRegex(pattern: string): RegExp {
+	// escape hatch: `regex:<expr>` is used verbatim (unanchored, case-insensitive).
+	//
+	// plain `*` globs are anchored, so guarding a command word means enumerating
+	// every separator form — `rm *`, `* && rm *`, `* ; rm *` ... and anything not
+	// listed silently passes. measured bypasses before this existed:
+	//   "echo hi; rm f"            (no space before ';')
+	//   "echo hi;rm f"
+	//   "for f in *; do rm $f; done"
+	//   "find . -exec rm {} +"
+	//   "xargs rm < list"
+	// a regex can express "rm as a command word after any separator" once.
+	if (pattern.startsWith("regex:")) {
+		try {
+			return new RegExp(pattern.slice("regex:".length), "i");
+		} catch {
+			// a malformed rule must not silently match everything — fail closed by
+			// returning a pattern that matches nothing.
+			return /(?!)/;
+		}
+	}
 	const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
 	const withWildcards = escaped.replace(/\*/g, ".*");
 	return new RegExp(`^${withWildcards}$`, "i");

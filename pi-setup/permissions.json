@@ -1,21 +1,39 @@
 [
   {
     "tool": "Bash",
-    "matches": { "cmd": ["*git add -A*", "*git add .*"] },
+    "matches": {
+      "cmd": [
+        "*git add -A*",
+        "*git add .*"
+      ]
+    },
     "action": "reject",
-    "message": "stage files explicitly with 'git add <file>' — unstaged changes may not be yours"
+    "message": "stage files explicitly with 'git add <file>' \u2014 unstaged changes may not be yours"
   },
   {
     "tool": "Bash",
-    "matches": { "cmd": ["*git push --force*", "*git push -f*", "*--force-with-lease*"] },
+    "matches": {
+      "cmd": [
+        "*git push --force*",
+        "*git push -f*",
+        "*--force-with-lease*"
+      ]
+    },
     "action": "reject",
     "message": "never force push. if diverged: 'git fetch origin && git rebase origin/main && git push'"
   },
   {
     "tool": "Bash",
-    "matches": { "cmd": ["rm *", "* && rm *", "* || rm *", "* ; rm *"] },
+    "matches": {
+      "cmd": [
+        "regex:(^|[;&|(]|\\bdo\\b|\\bthen\\b|\\belse\\b|\\bxargs\\b|-exec)\\s*\\brm\\b"
+      ]
+    },
     "action": "reject",
-    "message": "use 'trash <file>' instead of rm — recoverable deletion"
+    "message": "use 'trash <file>' instead of rm \u2014 recoverable deletion"
   },
-  { "tool": "*", "action": "allow" }
+  {
+    "tool": "*",
+    "action": "allow"
+  }
 ]

@@ -1,6 +1,6 @@
 {
   "lastChangelogVersion": "0.82.1",
-  "hideThinkingBlock": false,
+  "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "defaultProvider": "anthropic",
@@ -45,7 +45,6 @@
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",
-    "npm:@tomooshi/condensed-milk-pi",
     "npm:pi-codex-goal",
     "npm:pi-mcp-adapter"
   ],

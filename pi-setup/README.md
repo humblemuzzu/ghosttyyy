@@ -134,7 +134,7 @@ Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
 
 ### Pi Packages (10, active)
 `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`,
-`@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display` (config'd), `@tomooshi/condensed-milk-pi`
+`@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display` (config'd)
 (patched), `pi-codex-goal`, `pi-mcp-adapter`. See `AGENTS.md` → "Packages (npm)" for versions,
 purposes, and which are patched.
 
@@ -164,7 +164,6 @@ pi-setup/
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
 ├── config-skills/              # 21 skills (→ ~/.config/agents/skills/)
 ├── claude-bridge-patches/      # Patched pi-claude-bridge (legacy fallback, inactive)
-├── condensed-milk-patches/     # Patched condensed-milk ($-strip + cmd param)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
 └── README.md                   # This file
 ```

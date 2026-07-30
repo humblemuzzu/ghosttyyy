@@ -357,7 +357,6 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | `pi-autoresearch` | Autonomous experiment loop for optimization | No |
 | `@sting8k/pi-vcc` | Algorithmic compaction + `vcc_recall` history search | No |
 | `pi-tool-display` | Thinking labels, native user message box | **Config** |
-| `@tomooshi/condensed-milk-pi` | Bash output compression + stale result masking | **Yes** |
 | `pi-gpt-config` | GPT Codex-parity: personality, verbosity, fast mode | **Yes** |
 | `pi-computer-use` | macOS GUI automation: screenshots, AX clicks, typing, browser nav | No |
 | `pi-ask` | Structured `ask_user` tool with TUI — single/multi select, notes, review | No |
@@ -506,7 +505,6 @@ pi-setup/
 ├── install.sh                  # Backs up + deploys everything
 ├── settings.json, models.json, keybindings.json, permissions.json
 ├── claude-bridge-patches/      # Patched pi-claude-bridge (inactive)
-├── condensed-milk-patches/     # Patched condensed-milk
 ├── sub-bar-patches/            # Patched pi-sub-bar (CrofAI + Kimi)
 ├── gpt-config-patches/         # Patched pi-gpt-config (tool discipline removed)
 ├── agents/                     # 10 prompt templates

@@ -189,3 +189,49 @@ describe("evaluatePermission: within containment guard", () => {
 		expect(evaluatePermission("edit", { cwd: "/etc" }, rules).action).toBe("reject");
 	});
 });
+
+// --- regex: escape hatch ---
+// plain `*` globs are anchored, so a command-word guard had to enumerate every
+// separator and silently missed "echo hi;rm f", "do rm", "xargs rm", "-exec rm".
+// these pin both halves: the bypasses are caught AND ordinary commands that
+// merely contain the letters "rm" are not.
+describe("evaluatePermission: regex: patterns", () => {
+	const RM_GUARD = String.raw`regex:(^|[;&|(]|\bdo\b|\bthen\b|\belse\b|\bxargs\b|-exec)\s*\brm\b`;
+	const rules: PermissionRule[] = [
+		{ tool: "Bash", matches: { cmd: [RM_GUARD] }, action: "reject", message: "use trash" },
+		{ tool: "*", action: "allow" },
+	];
+	const verdict = (cmd: string) => evaluatePermission("Bash", { cmd }, rules).action;
+
+	it("blocks rm at the start of a command", () => {
+		expect(verdict("rm f")).toBe("reject");
+		expect(verdict("rm -rf /tmp/x")).toBe("reject");
+	});
+
+	it("blocks rm after any separator, with or without spaces", () => {
+		for (const cmd of ["echo hi && rm f", "echo hi ; rm f", "echo hi; rm f", "echo hi;rm f", "true || rm f", "(rm f)"]) {
+			expect(verdict(cmd)).toBe("reject");
+		}
+	});
+
+	it("blocks rm inside loops/conditionals and via xargs / find -exec", () => {
+		expect(verdict("for f in *; do rm $f; done")).toBe("reject");
+		expect(verdict("if x; then rm f; fi")).toBe("reject");
+		expect(verdict("find . -exec rm {} +")).toBe("reject");
+		expect(verdict("xargs rm < list")).toBe("reject");
+	});
+
+	it("does NOT fire on commands that merely contain 'rm'", () => {
+		for (const cmd of ["npm run rm-cache", "grep rm file.txt", "rmdir empty", "warm up", "echo confirm", "trash foo"]) {
+			expect(verdict(cmd)).toBe("allow");
+		}
+	});
+
+	it("fails closed on a malformed regex instead of matching everything", () => {
+		const broken: PermissionRule[] = [
+			{ tool: "*", matches: { cmd: ["regex:([unclosed"] }, action: "reject" },
+			{ tool: "*", action: "allow" },
+		];
+		expect(evaluatePermission("Bash", { cmd: "anything at all" }, broken).action).toBe("allow");
+	});
+});

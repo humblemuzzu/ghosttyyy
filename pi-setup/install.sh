@@ -21,7 +21,7 @@
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
 #   ~/.config/agents/skills/    — 21 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
-#   pi packages (npm/git)       — web-access, context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, condensed-milk, codex-goal, mcp-adapter
+#   pi packages (npm/git)       — context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
 #   1 global npm package        — pi-claude-bridge (legacy Claude bridge, inactive)
 #
 # After install, re-apply pi-claude-bridge patches if needed:
@@ -188,11 +188,11 @@ packages=(
     "npm:@marckrenn/pi-sub-bar"
     "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"
-    "npm:@tomooshi/condensed-milk-pi"
     "npm:pi-codex-goal"
     "npm:pi-mcp-adapter"
-    "npm:pi-tasks"
 )
+# NOTE: pi-web-access, pi-tasks and @tomooshi/condensed-milk-pi were removed
+# deliberately on 2026-07-30 — do NOT re-add them here. See AGENTS.md.
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
     pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"
@@ -215,32 +215,11 @@ else
     warn "pi-claude-bridge not found or patch file missing — apply patches manually"
 fi
 
-# ── condensed-milk patches ──
-# IMPORTANT: patch EVERY installed condensed-milk copy. `pi install` puts the
-# package under ~/.pi/agent/npm (the copy pi actually LOADS), while older global
-# installs live under /opt/homebrew. Patching only one leaves the loaded copy
-# stock → the $-prefix strip is silently ineffective (git status reports "clean"
-# on dirty repos). Find-and-patch all copies.
-if [ -f "$SCRIPT_DIR/condensed-milk-patches/index.ts" ]; then
-    info "Applying condensed-milk patches (bash prefix strip + cmd param support) to ALL copies..."
-    cm_found=0
-    while IFS= read -r cm_index; do
-        cm_dir="$(dirname "$cm_index")"
-        cp "$SCRIPT_DIR/condensed-milk-patches/index.ts" "$cm_dir/index.ts"
-        if [ -f "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" ] && [ -d "$cm_dir/filters" ]; then
-            cp "$SCRIPT_DIR/condensed-milk-patches/filters/context-compress.ts" "$cm_dir/filters/context-compress.ts"
-        fi
-        cm_found=$((cm_found + 1))
-        info "  patched $cm_dir"
-    done < <(find "$HOME/.pi/agent/npm" /opt/homebrew/lib/node_modules -path '*/@tomooshi/condensed-milk-pi/index.ts' 2>/dev/null)
-    if [ "$cm_found" -gt 0 ]; then
-        ok "condensed-milk patches applied to $cm_found copy(ies)"
-    else
-        warn "condensed-milk not found — apply patches manually"
-    fi
-else
-    warn "condensed-milk patch file missing — apply patches manually"
-fi
+# ── condensed-milk: REMOVED 2026-07-30, nothing to patch ──
+# It needed three local patches and still silently corrupted data: its
+# git-mutations filter rewrote a REJECTED `git add -A` into "ok (1 files
+# staged)", and its context masking blanked older tool results at 30% context
+# use. Removed rather than carrying a fourth patch. Do not reinstall.
 
 # ── pi core patches (dist/) ──
 # These patch the pi CLI itself. resource-loader.js is CRITICAL — without it pi
@@ -293,10 +272,9 @@ echo "│   • 21 config skills                    │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core configs           │"
-echo "│   • 10 pi packages                      │"
+echo "│   • 8 pi packages                       │"
 echo "│   • pi-claude-bridge (global npm)       │"
 echo "│   • Bridge patches applied              │"
-echo "│   • condensed-milk patched              │"
 echo "│   • pi core patched (conflict + pins)   │"
 echo "│   • pi-tool-display configured          │"
 echo "│                                         │"

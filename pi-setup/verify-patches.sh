@@ -41,28 +41,20 @@ else
          "node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs"
 fi
 
-# ── condensed-milk: \$-prefix strip (WRONG git data without it) ──
-# Check EVERY installed copy — pi LOADS the one under ~/.pi/agent/npm, but older
-# setups also have a /opt/homebrew copy. Any unpatched copy is a latent failure.
+# ── condensed-milk: REMOVED 2026-07-30 ──
+# Uninstalled deliberately. It required three local patches (\$-prefix strip, cmd
+# param support, and a guard against compressing failed calls) and still produced
+# silent data-integrity bugs: its git-mutations filter rewrote a REJECTED
+# `git add -A` into "ok (1 files staged)". Its context masking also blanked older
+# tool results at 30% context use, which actively hampered debugging.
+# If any copy reappears (e.g. a stale global install), flag it — nothing should
+# be patching or loading it any more.
 cm_copies=$(find "$HOME/.pi/agent/npm" /opt/homebrew/lib/node_modules -path '*/@tomooshi/condensed-milk-pi/index.ts' 2>/dev/null)
 if [ -z "$cm_copies" ]; then
-    fail "condensed-milk: not installed" "pi install npm:@tomooshi/condensed-milk-pi"
+    pass "condensed-milk: fully removed (no copies installed)"
 else
-    cm_bad=0
-    while IFS= read -r cm_index; do
-        cm_dir="$(dirname "$cm_index")"
-        if ! grep -q 'startsWith("\$ ")' "$cm_index" 2>/dev/null || \
-           ! grep -q "args.cmd" "$cm_dir/filters/context-compress.ts" 2>/dev/null; then
-            cm_bad=$((cm_bad + 1))
-            cm_bad_dir="$cm_dir"
-        fi
-    done <<< "$cm_copies"
-    if [ "$cm_bad" -eq 0 ]; then
-        pass "condensed-milk: \$-prefix strip + cmd param support (all copies)"
-    else
-        fail "condensed-milk: $cm_bad copy(ies) unpatched incl $cm_bad_dir (git status compression returns WRONG data)" \
-             "bash pi-setup/install.sh  # re-patches all copies (or see AGENTS.md quick re-patch)"
-    fi
+    fail "condensed-milk: a copy is still installed at $(dirname "$cm_copies")" \
+         "pi remove npm:@tomooshi/condensed-milk-pi  # it was removed deliberately, see AGENTS.md"
 fi
 
 # ── pi-tool-display: config with ALL tool overrides disabled ──
