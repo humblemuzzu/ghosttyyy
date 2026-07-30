@@ -37,8 +37,8 @@ const agents: Record<AgentMentionKind, AgentDef> = {
     description: "code review with diff analysis",
   },
   task: {
-    tool: "Task",
-    description: "full subagent for independent parallel work",
+    tool: "delegate",
+    description: "full subagent for independent parallel work (resumable)",
   },
 };
 

@@ -25,7 +25,7 @@ import { createFormatFileTool } from "./format-file";
 import { createSkillTool } from "./skill";
 import { createFinderTool } from "./finder";
 import { createOracleTool } from "./oracle";
-import { createTaskTool } from "./task";
+import { createDelegateTool } from "./delegate";
 import { createLibrarianTool } from "./librarian";
 import { createCodeReviewTool } from "./code-review";
 import { createReadWebPageTool } from "./read-web-page";
@@ -78,7 +78,9 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createOracleTool({
 		systemPrompt: readAgentPrompt("agent.amp.oracle.md"),
 	}));
-	pi.registerTool(createTaskTool());
+	// delegate replaced task.ts: same spawn, plus resumable children via
+	// continueId. Task always ran --no-session, so every child was a dead end.
+	pi.registerTool(createDelegateTool());
 	pi.registerTool(createLibrarianTool({
 		systemPrompt: readAgentPrompt("agent.amp.librarian.md"),
 	}));

@@ -10,6 +10,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -48,6 +49,29 @@ export function resolveAliases(names: string[]): string[] {
 
 // --- types ---
 
+/**
+ * where persisted SUB-AGENT conversations live.
+ *
+ * deliberately NOT pi's own `sessions/` directory. pi's `/resume` picker lists
+ * everything it finds there, so persisting delegate children alongside your
+ * real sessions buries them: ~7 delegate calls in one test run produced 7
+ * entries that pushed actual work off the first screen.
+ *
+ * keeping them in a sibling directory means:
+ *   - `/resume` shows only YOUR sessions, in every scope (folder AND all)
+ *   - children stay fully resumable, because `--session-dir` is passed on
+ *     resume as well as creation
+ *   - they remain browsable on demand:
+ *       pi --session-dir ~/.pi/agent/sessions-sub --resume
+ *   - `search_sessions` can still index them (see its sessionsDirs default)
+ */
+export const SUB_AGENT_SESSION_DIR: string = path.join(
+	os.homedir(),
+	".pi",
+	"agent",
+	"sessions-sub",
+);
+
 export interface UsageStats {
 	input: number;
 	output: number;
@@ -58,6 +82,50 @@ export interface UsageStats {
 	turns: number;
 }
 
+/**
+ * where a sub-agent's conversation was stored, when it was persisted.
+ *
+ * `continueId` is the handle a caller passes back to resume the same child:
+ * it is the pi session id, which `--session-id` resolves (creating the
+ * session on first use, reopening it afterwards).
+ */
+export interface SpawnSessionMeta {
+	continueId?: string;
+	sessionId?: string;
+	sessionFile?: string;
+	sessionDir?: string;
+}
+
+/**
+ * how the child's conversation should be stored.
+ *
+ * omitted entirely (the default) means `--no-session`: sub-agents are
+ * throwaway and must not litter the session list. only `delegate` opts in,
+ * because resuming a child is its whole point.
+ */
+export interface SpawnSessionConfig {
+	/** resume this session id; created if it does not exist yet. */
+	id?: string;
+	/** persist the conversation. false / omitted keeps the child ephemeral. */
+	persist?: boolean;
+	/**
+	 * where to store the conversation. defaults to pi's own session directory.
+	 *
+	 * sub-agents set this to SUB_AGENT_SESSION_DIR so their sessions stay OUT
+	 * of the `/resume` picker — a handful of delegate calls otherwise buries
+	 * your real sessions under machine-generated ones.
+	 */
+	dir?: string;
+	/** parent session file, recorded for provenance only. */
+	parentSession?: string;
+	/**
+	 * branch leaf to continue. pi's CLI has no flag for targeting a specific
+	 * leaf, so this is REJECTED rather than silently ignored — quietly
+	 * continuing from the wrong branch point would corrupt the child's history.
+	 */
+	leafId?: string;
+}
+
 export interface PiSpawnResult {
 	exitCode: number;
 	messages: Message[];
@@ -66,6 +134,7 @@ export interface PiSpawnResult {
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
+	session?: SpawnSessionMeta;
 }
 
 export interface PiSpawnConfig {
@@ -94,6 +163,8 @@ export interface PiSpawnConfig {
 	onUpdate?: (result: PiSpawnResult) => void;
 	sessionId?: string;
 	repo?: string;
+	/** conversation persistence / continuation. see SpawnSessionConfig. */
+	session?: SpawnSessionConfig;
 	/**
 	 * inject a follow-up user message after the agent's first turn.
 	 *
@@ -109,6 +180,53 @@ export interface PiSpawnConfig {
 }
 
 // --- helpers ---
+
+/**
+ * pi session ids are used verbatim in the session FILENAME, so anything that
+ * is not filename-safe would be mangled or could escape the session directory.
+ */
+function assertSafeSessionId(id: string): void {
+	if (!/^[\w.-]{1,128}$/.test(id)) {
+		throw new Error(
+			`invalid session id ${JSON.stringify(id)}: use only letters, digits, '.', '-' or '_' (max 128 chars)`,
+		);
+	}
+}
+
+/**
+ * translate a SpawnSessionConfig into pi CLI flags.
+ *
+ * `--session-id` both creates and reopens a session, which is exactly the
+ * continuation semantics we need. upstream instead hand-writes a linked
+ * session header file and passes `--session <file>`; using the native flag
+ * means no session-file format for us to keep in sync with pi.
+ */
+function resolveSessionArgs(session: SpawnSessionConfig | undefined): {
+	args: string[];
+	meta?: SpawnSessionMeta;
+} {
+	if (session?.leafId) {
+		throw new Error(
+			"session.leafId is not supported: pi's CLI cannot target a specific branch leaf, " +
+				"and continuing from the wrong leaf would corrupt the child's history",
+		);
+	}
+
+	// default stays ephemeral: only an explicit opt-in persists a sub-agent.
+	if (!session?.persist && !session?.id) return { args: ["--no-session"] };
+
+	const id = session.id ?? `delegate-${randomUUID()}`;
+	assertSafeSessionId(id);
+
+	const args = ["--session-id", id];
+	if (session.dir) {
+		fs.mkdirSync(session.dir, { recursive: true });
+		// must come BEFORE resolution of the id, and must be passed on every
+		// resume too, or pi looks for the session in the default directory.
+		args.unshift("--session-dir", session.dir);
+	}
+	return { args, meta: { continueId: id, sessionId: id, sessionDir: session.dir } };
+}
 
 function writePromptToTempFile(label: string, prompt: string): { dir: string; filePath: string } {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
@@ -142,9 +260,10 @@ export function readAgentPrompt(filename: string): string {
 
 export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 	const useRpc = !!config.followUp;
+	const routing = resolveSessionArgs(config.session);
 	const args: string[] = useRpc
-		? ["--mode", "rpc", "--no-session"]
-		: ["--mode", "json", "-p", "--no-session"];
+		? ["--mode", "rpc", ...routing.args]
+		: ["--mode", "json", "-p", ...routing.args];
 
 	// resolve model: use the tool's designated model when the parent provider
 	// is Anthropic (can serve Claude models directly). when the parent is on a
@@ -206,6 +325,9 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		messages: [],
 		stderr: "",
 		usage: zeroUsage(),
+		// present only when the child was persisted; callers use
+		// session.continueId to resume this exact child later.
+		...(routing.meta ? { session: routing.meta } : {}),
 	};
 
 	try {

@@ -23,7 +23,7 @@ His pi lives at `/tmp/dots/user/pi/packages/{core,extensions}/`.
 | 3 | codex-patch, tool-policy, web_search, agent-message, search_sessions | done |
 | 4a | `apply_patch` ported | done |
 | **4b** | **cutover: `edit`/`write` deleted and natives hidden** | **done** |
-| 4c | `delegate` replaces `Task` | pending |
+| **4c** | **`delegate` replaces `Task` (resumable sub-agents)** | **done** |
 | 5 | `workflow` + `workflow-api` (strip `lookAt`) | pending |
 | 6 | optional: `emil-design-eng` skill | pending |
 
@@ -364,17 +364,44 @@ zero natives, repo<->live synced.
 
 ### 4.2 `delegate` replaces `Task`
 
-Source: `/tmp/dots/user/pi/packages/extensions/delegate/index.ts` (557 lines).
-**He deleted `task` entirely — `delegate` is the only spawner in his manifest.**
+Source: `/tmp/dots/user/pi/packages/extensions/delegate/index.ts`. DONE:
+`task.ts` deleted, `delegate.ts` registered, all references updated
+(system prompt, `@task` mention source, e2e test).
 
-His `CONFIG_DEFAULTS` already uses correct names (`find`, `apply_patch`).
-Adds over our `task.ts`: `continueId` session continuation (resumable
-subagents), routing metadata in the result, `leafId` (stubbed upstream),
-DI/testability, streaming `onUpdate`.
+**Session routing** (`lib/pi-spawn.ts`) — the one real prerequisite:
+`SpawnSessionConfig` / `SpawnSessionMeta` added, and `piSpawn` now maps
+`session` to CLI flags. Default is unchanged (`--no-session`), so finder /
+oracle / librarian / code_review stay ephemeral — verified: a finder run adds
+**0** session files.
 
-**Requires:** session routing in `pi-spawn` — ours currently hardcodes
-`--no-session`. His `resolveSessionRouting()` is the reference. Port that, but
-**keep our model block**.
+We use pi's native **`--session-id <id>`** (creates on first use, reopens
+afterwards) rather than upstream's hand-written linked-session header file
+plus `--session <path>`. Fewer moving parts and no session-file format to keep
+in sync with pi. Verified directly before building on it: two `-p` calls with
+the same id, the second recalled a number from the first.
+
+`leafId` is **rejected**, not ignored: pi's CLI cannot target a branch leaf,
+and silently continuing from the wrong one would corrupt the child's history.
+Session ids are validated against `^[\w.-]{1,128}$` because pi puts the id
+verbatim into the session FILENAME.
+
+**Kept ours, fixed his omission:** upstream passes no model at all, which here
+would fall back to settings' `defaultProvider` instead of the model the parent
+is actually using. `delegate` passes `parentModel`, so the child inherits the
+parent's provider + auth route.
+
+**`prompt` is Optional in the schema** with `requireParam` aliases
+(`prompt`/`task`/`instructions`), because pi validates before `execute()`.
+Measured: haiku called `delegate({task})` and got a bare "must have required
+properties prompt", burning a turn. Safe here ONLY because delegate declares no
+`constrainedSampling` — see §3.9 for why apply_patch cannot do this.
+`description` is optional too, defaulting to the prompt's first line.
+
+**Verified end-to-end:** delegate ran a sub-agent that edited a file with
+`apply_patch` and returned a `continueId`; resuming with that id, the child
+recalled the file, the constant and both values **from memory without
+re-reading**. Ephemeral sub-agents unaffected. 38 tools, clean boot,
+160 tests, patches 8/8, repo<->live synced.
 
 ---
 

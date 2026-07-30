@@ -133,7 +133,16 @@ async function loadProjectedSessionMentions(): Promise<MentionableSession[]> {
 
 const CONFIG_DEFAULTS: SearchSessionsExtConfig = {
   maxResults: 50,
-  sessionsDirs: [path.join(os.homedir(), ".pi", "agent", "sessions")],
+  /*
+   * both roots: your own sessions, and the sub-agent sessions that delegate
+   * keeps out of `/resume`. searching is a targeted act (you asked for a
+   * keyword), unlike browsing, so covering delegate work here is useful
+   * rather than noisy — and it is the only way to find what a sub-agent did.
+   */
+  sessionsDirs: [
+    path.join(os.homedir(), ".pi", "agent", "sessions"),
+    path.join(os.homedir(), ".pi", "agent", "sessions-sub"),
+  ],
   rgTimeoutMs: 10000,
 };
 

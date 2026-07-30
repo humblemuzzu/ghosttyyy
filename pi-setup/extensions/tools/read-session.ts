@@ -23,6 +23,15 @@ import { headTailChars } from "./lib/output-buffer";
 
 const MODEL = "claude-haiku-4-5";
 const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
+/**
+ * sub-agent (delegate) conversations live outside pi's session directory so
+ * they stay out of `/resume`. read_session still has to reach them, otherwise
+ * a continueId from a delegate result would be unreadable.
+ */
+const SUB_SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions-sub");
+
+/** every root read_session searches, in priority order. */
+const ALL_SESSION_DIRS = [SESSIONS_DIR, SUB_SESSIONS_DIR];
 const MAX_CHARS = 120_000;
 
 const DEFAULT_SYSTEM_PROMPT = `You are analyzing a pi coding agent session transcript. Extract information relevant to the user's goal. Be specific — cite file paths, decisions made, code patterns discussed. If a specific branch is marked as the target, focus on that branch but use other branches for context about what was tried and abandoned.`;
@@ -60,7 +69,8 @@ interface MessageContent {
 // --- session rendering ---
 
 function findSessionFile(sessionId: string): string | null {
-	if (!fs.existsSync(SESSIONS_DIR)) return null;
+	const roots = ALL_SESSION_DIRS.filter((dir) => fs.existsSync(dir));
+	if (roots.length === 0) return null;
 
 	const walkDir = (dir: string): string | null => {
 		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -76,8 +86,10 @@ function findSessionFile(sessionId: string): string | null {
 	};
 
 	// fast path: check filename contains session id
-	let found = walkDir(SESSIONS_DIR);
-	if (found) return found;
+	for (const root of roots) {
+		const found = walkDir(root);
+		if (found) return found;
+	}
 
 	// slow path: parse headers
 	const walkAndParse = (dir: string): string | null => {
@@ -97,7 +109,11 @@ function findSessionFile(sessionId: string): string | null {
 		return null;
 	};
 
-	return walkAndParse(SESSIONS_DIR);
+	for (const root of roots) {
+		const found = walkAndParse(root);
+		if (found) return found;
+	}
+	return null;
 }
 
 function renderSessionTree(

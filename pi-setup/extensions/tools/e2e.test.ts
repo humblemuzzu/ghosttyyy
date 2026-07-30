@@ -300,8 +300,8 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		const text = getFinalText(events);
 		expect(text).toContain("finder");
 		expect(text).toContain("oracle");
-		expect(text).toContain("Task");
-		expect(text).toContain("look_at");
+		expect(text).toContain("delegate");
+		expect(text).toContain("apply_patch");
 		expect(text).toContain("read_web_page");
 		expect(text).toContain("web_search");
 		expect(text).toContain("code_review");
@@ -346,16 +346,16 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		try { unlinkSync(testFile); } catch {}
 
 		const { events, exitCode } = await runPi(
-			`Use the Task tool to create a file at ${testFile} with the content "${testContent}". Use description "e2e write test".`,
+			`Use the delegate tool to create a file at ${testFile} with the content "${testContent}". Use description "e2e write test".`,
 		);
 		expect(exitCode).toBe(0);
 
 		const calls = getToolCalls(events);
-		const taskCalls = calls.filter(c => c.name === "Task");
+		const taskCalls = calls.filter(c => c.name === "delegate");
 		expect(taskCalls.length).toBeGreaterThanOrEqual(1);
 
 		const results = getToolResults(events);
-		const taskResults = results.filter(r => r.toolName === "Task");
+		const taskResults = results.filter(r => r.toolName === "delegate");
 		expect(taskResults.length).toBeGreaterThanOrEqual(1);
 		expect(taskResults[0].exitCode).toBe(0);
 		expect(taskResults[0].isError).toBe(false);
@@ -369,7 +369,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		try { unlinkSync(testFile); } catch {}
 
 		const c = getCosts(events);
-		costs.push({ test: "Task", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
+		costs.push({ test: "delegate", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
 	}, 180_000);
 
 	it("oracle: sub-agent provides advice via gpt-5.2", async () => {

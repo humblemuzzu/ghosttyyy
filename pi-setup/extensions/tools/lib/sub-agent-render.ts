@@ -15,7 +15,7 @@ import type { Message } from "@mariozechner/pi-ai";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Text, TruncatedText } from "@mariozechner/pi-tui";
 import { normalizeForDisplay } from "./box-format";
-import type { UsageStats } from "./pi-spawn";
+import type { SpawnSessionMeta, UsageStats } from "./pi-spawn";
 import type { ToolCostDetails } from "./tool-cost";
 
 // --- types ---
@@ -33,6 +33,30 @@ export interface SingleResult {
 	model?: string;
 	stopReason?: string;
 	errorMessage?: string;
+	/*
+	 * populated only for sub-agents whose conversation was persisted
+	 * (currently just `delegate`). `continueId` is what a caller passes back
+	 * to resume the same child.
+	 */
+	continueId?: string;
+	sessionId?: string;
+	sessionFile?: string;
+}
+
+/**
+ * copy spawn session metadata onto a result, ignoring absent fields.
+ *
+ * streaming updates arrive repeatedly and may not carry session data every
+ * time, so this must never overwrite a known id with undefined.
+ */
+export function applySessionMeta(
+	target: SingleResult,
+	meta: SpawnSessionMeta | undefined,
+): void {
+	if (!meta) return;
+	if (meta.continueId) target.continueId = meta.continueId;
+	if (meta.sessionId) target.sessionId = meta.sessionId;
+	if (meta.sessionFile) target.sessionFile = meta.sessionFile;
 }
 
 // --- message parsing ---
