@@ -30,6 +30,7 @@ import { createTaskTool } from "./task";
 import { createLibrarianTool } from "./librarian";
 import { createCodeReviewTool } from "./code-review";
 import { createReadWebPageTool } from "./read-web-page";
+import { createConfiguredWebSearchTool } from "./web-search";
 import { createSearchSessionsTool } from "./search-sessions";
 import { createReadSessionTool } from "./read-session";
 import { readAgentPrompt } from "./lib/pi-spawn";
@@ -86,6 +87,11 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createReadWebPageTool({
 		systemPrompt: readAgentPrompt("prompt.amp.read-web-page.md"),
 	}));
+	// web_search resolves its own config and may be disabled there, in which case
+	// we register nothing rather than advertising a tool that cannot run.
+	const webSearchTool = createConfiguredWebSearchTool();
+	if (webSearchTool) pi.registerTool(webSearchTool);
+
 	pi.registerTool(createSearchSessionsTool());
 	pi.registerTool(createReadSessionTool());
 

@@ -82,3 +82,110 @@ describe("evaluatePermission", () => {
 		expect(evaluatePermission("Bash", { cmd: "ls" }, rules).action).toBe("allow");
 	});
 });
+
+// --- new matchers: cwd / path / within ---
+// ported alongside the tool-policy matchers. `within` is the one worth pinning:
+// it is a containment guard, so it must resolve paths to absolute BEFORE
+// comparing (otherwise "../" escapes match as text) and must fail closed.
+describe("evaluatePermission: cwd matcher", () => {
+	const rules: PermissionRule[] = [
+		{ tool: "*", matches: { cwd: "/tmp/*" }, action: "reject", message: "no work in /tmp" },
+		{ tool: "*", action: "allow" },
+	];
+
+	it("rejects when cwd matches", () => {
+		expect(evaluatePermission("Bash", { cwd: "/tmp/scratch" }, rules).action).toBe("reject");
+	});
+
+	it("allows when cwd differs", () => {
+		expect(evaluatePermission("Bash", { cwd: "/home/user/project" }, rules).action).toBe("allow");
+	});
+
+	it("allows when cwd is absent (rule cannot apply)", () => {
+		expect(evaluatePermission("Bash", {}, rules).action).toBe("allow");
+	});
+});
+
+describe("evaluatePermission: path matcher", () => {
+	const rules: PermissionRule[] = [
+		{ tool: "edit", matches: { path: "*.env" }, action: "reject", message: "no secrets" },
+		{ tool: "*", action: "allow" },
+	];
+
+	it("rejects a matching single path", () => {
+		expect(evaluatePermission("edit", { path: "/app/.env" }, rules).action).toBe("reject");
+	});
+
+	it("rejects when ANY path in paths[] matches", () => {
+		expect(
+			evaluatePermission("edit", { paths: ["/app/a.ts", "/app/prod.env"] }, rules).action,
+		).toBe("reject");
+	});
+
+	it("allows when no path matches", () => {
+		expect(evaluatePermission("edit", { path: "/app/index.ts" }, rules).action).toBe("allow");
+	});
+
+	it("allows when no paths were observed", () => {
+		expect(evaluatePermission("edit", {}, rules).action).toBe("allow");
+	});
+});
+
+describe("evaluatePermission: within containment guard", () => {
+	// allow edits only inside the project; reject anything else
+	const rules: PermissionRule[] = [
+		{ tool: "edit", matches: { within: "/home/user/project" }, action: "allow" },
+		{ tool: "edit", action: "reject", message: "edits must stay inside the project" },
+		{ tool: "*", action: "allow" },
+	];
+
+	it("allows a path inside the root", () => {
+		expect(evaluatePermission("edit", { path: "/home/user/project/src/a.ts" }, rules).action)
+			.toBe("allow");
+	});
+
+	it("rejects a path outside the root", () => {
+		expect(evaluatePermission("edit", { path: "/etc/passwd" }, rules).action).toBe("reject");
+	});
+
+	it("rejects a '../' escape instead of matching it as text", () => {
+		expect(
+			evaluatePermission("edit", { path: "/home/user/project/../../../etc/passwd" }, rules).action,
+		).toBe("reject");
+	});
+
+	it("requires EVERY path to be inside, not just one", () => {
+		expect(
+			evaluatePermission(
+				"edit",
+				{ paths: ["/home/user/project/a.ts", "/etc/passwd"] },
+				rules,
+			).action,
+		).toBe("reject");
+	});
+
+	it("fails closed when no paths were observed", () => {
+		expect(evaluatePermission("edit", {}, rules).action).toBe("reject");
+	});
+
+	it("resolves relative paths against sessionCwd", () => {
+		expect(
+			evaluatePermission(
+				"edit",
+				{ path: "src/a.ts", sessionCwd: "/home/user/project" },
+				rules,
+			).action,
+		).toBe("allow");
+		expect(
+			evaluatePermission(
+				"edit",
+				{ path: "../../../etc/passwd", sessionCwd: "/home/user/project" },
+				rules,
+			).action,
+		).toBe("reject");
+	});
+
+	it("treats cwd as a touched path for containment", () => {
+		expect(evaluatePermission("edit", { cwd: "/etc" }, rules).action).toBe("reject");
+	});
+});

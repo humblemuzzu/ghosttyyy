@@ -27,11 +27,9 @@ const CODE_REVIEW_PARAM_NAMES = ["diff_description", "task", "query", "prompt", 
 
 const MODEL = "claude-sonnet-4-6";
 
-/** sub-agent needs bash (git diff), read/grep/find (context), read_web_page (docs lookup) */
-// NOTE: web_search intentionally absent until the Phase 3 Parallel AI port —
-// pi-web-access was uninstalled 2026-07-30. re-add here once registered.
+/** sub-agent needs bash (git diff), read/grep/find (context), web tools (docs lookup) */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "read_web_page"];
+const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "web_search", "read_web_page"];
 
 const DEFAULT_SYSTEM_PROMPT = `You are an expert code reviewer. Review the provided diff for bugs, security issues, and code quality. Report findings with file locations and severity.
 
