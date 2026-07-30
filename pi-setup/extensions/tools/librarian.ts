@@ -2,8 +2,15 @@
  * librarian tool — cross-repo codebase understanding via haiku sub-agent.
  *
  * replaces the generic subagent pattern with a dedicated tool. the model
- * calls librarian(query: "...", context?: "...")
- * directly.
+ * calls librarian(query: "...", repository?: [...], context?: "...") directly.
+ *
+ * SCHEMA IS THE CONTRACT. `query` is genuinely required and `repository` is a
+ * real field, because the previous shape lied: the schema marked everything
+ * optional while the prose said "REQUIRED", and the description talked about
+ * "what repositories you want to understand" when no repository parameter
+ * existed. a model asked to explore two specific repos could not trust the
+ * spec, so it read this file to find the argument shape. see the tool-contract
+ * invariants in tool-contract.test.ts, which now fail if that regresses.
  *
  * spawns `pi --mode json` with claude haiku, constrained to the 7
  * github tools (read_github, search_github, list_directory_github,
@@ -22,6 +29,37 @@ import { requireParam } from "./lib/params";
 
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const LIBRARIAN_PARAM_NAMES = ["query", "task", "prompt", "question", "description"] as const;
+
+/**
+ * accept what models actually send for `repository`.
+ *
+ * the schema asks for an array, but a model given a single repo frequently
+ * sends a bare string, and some providers deliver arrays JSON-stringified
+ * (the exact failure that made pi-tasks' array params unusable). tolerating
+ * both here is cheaper than a validation error the model has to guess its way
+ * out of.
+ */
+export function normalizeRepositories(input: unknown): string[] {
+	if (input == null) return [];
+	let value = input;
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (trimmed.startsWith("[")) {
+			try {
+				value = JSON.parse(trimmed);
+			} catch {
+				return trimmed ? [trimmed] : [];
+			}
+		} else {
+			return trimmed ? [trimmed] : [];
+		}
+	}
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((r): r is string => typeof r === "string")
+		.map((r) => r.trim())
+		.filter((r) => r.length > 0);
+}
 
 const MODEL = "claude-haiku-4-5";
 
@@ -62,17 +100,28 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 			"- Local codebase searches (use finder)\n" +
 			"- Code modifications (use other tools)\n\n" +
 			"USAGE GUIDELINES:\n" +
-			"- Be specific about what repositories or projects you want to understand\n" +
+			"- Name the repositories in `repository` (as owner/repo or a full URL)\n" +
 			"- Provide context about what you're trying to achieve\n" +
 			"- The Librarian explores thoroughly before providing comprehensive answers\n" +
-			"- When getting an answer from the Librarian, show it to the user in full, do not summarize it.",
+			"- When getting an answer from the Librarian, show it to the user in full, do not summarize it.\n\n" +
+			'Example: librarian({ repository: ["xai-org/grok-build"], query: "how are sub-agent results rendered in the TUI?" })',
 
-		// declared Optional so an aliased call survives validation; normalised in
-		// execute() via lib/params.ts.
 		parameters: Type.Object({
-			query: Type.Optional(Type.String({
-				description: "REQUIRED. Your question about the codebase. Be specific about what you want to understand.",
-			})),
+			// required in the schema, which is what models actually trust.
+			// requireParam() below stays as a safety net for providers that do not
+			// enforce the schema and for models that guess an alias name.
+			query: Type.String({
+				description:
+					"Your question about the codebase. Be specific about what you want to understand. " +
+					"(Also accepted: task, prompt, question, description.)",
+			}),
+			repository: Type.Optional(
+				Type.Array(Type.String(), {
+					description:
+						"Repositories to explore, each as 'owner/repo' or a full GitHub URL. " +
+						"Pass several to compare across repos. Omit only if the query itself names them.",
+				}),
+			),
 			context: Type.Optional(
 				Type.String({
 					description: "Optional context about what you're trying to achieve or background information.",
@@ -89,6 +138,12 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { /* graceful */ }
 
 			const parts: string[] = [queryText];
+			// repository is structured input; the sub-agent only reads prose, so
+			// surface it explicitly rather than hoping the query mentions it.
+			const repos = normalizeRepositories(params.repository);
+			if (repos.length > 0) {
+				parts.push(`\nRepositories to explore:\n${repos.map((r) => `- ${r}`).join("\n")}`);
+			}
 			if (params.context) parts.push(`\nContext: ${params.context}`);
 			const fullTask = parts.join("\n");
 

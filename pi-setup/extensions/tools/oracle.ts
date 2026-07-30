@@ -52,14 +52,18 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 			"- Basic code modifications (do it yourself or use Task)\n\n" +
 			"Usage guidelines:\n" +
 			"- Be specific about what you want reviewed, planned, or debugged\n" +
-			"- Provide relevant context. If you know which files are involved, list them.",
+			"- Provide relevant context. If you know which files are involved, list them.\n\n" +
+			'Example: oracle({ task: "is this retry loop correct under concurrent writes?", files: ["src/queue.ts"] })',
 
-		// declared Optional so an aliased call survives validation; normalised in
-		// execute() via lib/params.ts.
 		parameters: Type.Object({
-			task: Type.Optional(Type.String({
-				description: "REQUIRED. The task or question for the oracle. Be specific about what guidance you need.",
-			})),
+			// required in the schema, which is what models actually trust.
+			// requireParam() below stays as a safety net for providers that do not
+			// enforce the schema and for models that guess an alias name.
+			task: Type.String({
+				description:
+					"The task or question for the oracle. Be specific about what guidance you need. " +
+					"(Also accepted: query, prompt, question, description.)",
+			}),
 			context: Type.Optional(
 				Type.String({
 					description: "Optional context about the current situation or background information.",

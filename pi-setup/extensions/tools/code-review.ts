@@ -110,17 +110,20 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 			"It takes in a description of the diff or code change that can be used to generate " +
 			"the full diff, which is then reviewed. When using this tool, do not invoke `git diff` " +
 			"or any other tool to generate the diff but just pass a natural language description " +
-			"of how to compute the diff in the diff_description argument.",
+			"of how to compute the diff in the diff_description argument.\n\n" +
+			'Example: code_review({ diff_description: "uncommitted changes on the current branch vs HEAD" })',
 
-		// declared Optional so an aliased call (task/query/prompt) survives schema
-		// validation and is normalised in execute(). see lib/params.ts.
 		parameters: Type.Object({
-			diff_description: Type.Optional(Type.String({
+			// required in the schema, which is what models actually trust.
+			// requireParam() below stays as a safety net for providers that do not
+			// enforce the schema and for models that guess an alias name.
+			diff_description: Type.String({
 				description:
-					"REQUIRED. A description of the diff or code change that can be used to generate the full diff. " +
+					"A description of the diff or code change that can be used to generate the full diff. " +
 					"This can include a git or bash command to generate the diff or a description of the diff " +
-					"which can then be used to generate the git or bash command to generate the full diff.",
-			})),
+					"which can then be used to generate the git or bash command to generate the full diff. " +
+					"(Also accepted: task, query, prompt, description.)",
+			}),
 			files: Type.Optional(
 				Type.Array(Type.String(), {
 					description:

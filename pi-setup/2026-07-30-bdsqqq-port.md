@@ -493,6 +493,47 @@ Always confirm **repo↔live sync** after deploying:
   sessions code live **inside those test blocks** — production paths are
   read-only.
 - **Tool param names:** models guess. We added `lib/params.ts` (`requireParam`)
-  so subagent tools accept aliases; canonical param must be `Type.Optional` or
-  pi rejects the call before `execute()` can normalise it.
+  so subagent tools accept aliases. **SUPERSEDED 2026-07-31 — see "Tool contract"
+  below: the canonical param is now `Type.String` (required), and `requireParam`
+  is a safety net rather than the primary mechanism.**
 - **`rm` is blocked** by our own permission rules — use `trash`.
+
+## Tool contract — schema is the contract (2026-07-31)
+
+**Symptom.** In a cold session, asked for two librarians and one oracle, the
+model first ran `ls` on `extensions/tools/`, then grepped
+`"parameters|Type.Object|Type.String"`, then read `librarian.ts` and `oracle.ts`
+— ~8 discovery calls before any work, repeatable in every new session.
+
+**Cause — our spec contradicted itself.** Making the canonical param
+`Type.Optional` (so `requireParam` could rescue an aliased call) meant the wire
+schema said `required: []` while the param description said `"REQUIRED."`.
+Models treat JSON Schema `required` as machine-truth and prose as advisory, so
+the contradiction made the entire spec untrustworthy and the model went to the
+source. Separately, `librarian`'s description discussed "what repositories you
+want to understand" while exposing **no** repository parameter — even though the
+seven github tools beside it all take one.
+
+**Fix (5 parts).** (1) The primary param of `librarian`/`oracle`/`delegate`/
+`finder`/`code_review` is now genuinely required and `"REQUIRED."` is gone from
+every param description, replaced by a positive `(Also accepted: …)` alias list.
+(2) `librarian` gained a real `repository: string[]`, folded into the sub-agent
+prompt via `normalizeRepositories()` (tolerates a bare string and a
+JSON-stringified array — the shape that made pi-tasks unusable). (3) Every
+sub-agent description ends with a literal `Example: tool({ … })`. (4) The system
+prompt gained a **Trust the tool schemas** block forbidding source-reading to
+discover parameters — added last, since it is only true once 1–3 landed.
+(5) `tool-contract.test.ts` (34 tests) encodes all of it as invariants.
+
+**Grammar sampling is NOT a blocker here.** pi-ai's "exactly one required string
+property" rule (`constrained-sampling.js:38`) only binds tools that **opt in**
+via a `constrainedSampling` field — `resolveGrammarConstrainedSampling` returns
+early when absent. `apply_patch` opts in; the five sub-agent tools do not, and a
+test now asserts they never start. The earlier apply_patch breakage was
+opt-in-specific, not a general rule about required params.
+
+**Verified.** 209 tests pass; both an Anthropic (`claude-opus-5`) and an OpenAI
+(`gpt-5.6-sol`) model call the tools cleanly; and the original repro now yields
+**3 parent tool executions — `librarian`, `librarian`, `oracle`, started on
+consecutive lines before any finished (parallel), with 0 discovery calls** and
+`repository: ["xai-org/grok-build"]` populated correctly on the first attempt.

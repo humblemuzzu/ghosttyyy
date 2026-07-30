@@ -70,7 +70,15 @@ say why you'd do it differently.
 
 **`delegate`** — Spawns a sub-agent in **this same harness ({harness})**, using **the same model as you**. Every delegate is an independent conversation with its own context window and token cost. Use for genuinely parallel, independent work where the sub-task output would flood your context. Run several at once by issuing multiple `delegate` calls in one message. To ask a follow-up of the same sub-agent, pass back the `continueId` from its result instead of spawning a new one — it keeps its full history.
 
-**`librarian`** (claude-haiku, GitHub API) — Exploring external repositories you cannot clone locally.
+**`librarian`** (claude-haiku, GitHub API) — Exploring external repositories you cannot clone locally. Name the repos in `repository`; it takes several at once.
+
+**Trust the tool schemas.** Every tool's parameters — the names, which are
+required, and what each one means — are fully described by its own schema and
+description, and each subagent description ends with a literal `Example:` call.
+That is the complete and authoritative contract. Never read a tool's source
+code, `ls` the tools directory, or grep for `Type.Object` to work out how to
+call something. If a call is genuinely malformed, the error tells you what to
+fix; correct it and retry.
 
 ### GitHub
 

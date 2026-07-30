@@ -96,28 +96,40 @@ export function createDelegateTool(): ToolDefinition {
 			"- The sub-agent shares no context with you: put everything it needs in `prompt`.\n" +
 			"- Tell it how to verify its own work.\n" +
 			"- To ask a follow-up of the SAME sub-agent, pass `continueId` from its previous result " +
-			"instead of starting a new delegate — it keeps its full history.",
+			"instead of starting a new delegate — it keeps its full history.\n\n" +
+			'Example: delegate({ prompt: "In /repo, convert src/auth/*.ts to strict mode. Run `bun test` and report failures.", description: "auth strict mode" })',
 
 		parameters: Type.Object({
 			/*
-			 * `prompt` is Optional in the SCHEMA but required in practice.
+			 * `prompt` is required in the SCHEMA, and required in practice.
 			 *
-			 * pi validates arguments before execute() runs, so declaring it
-			 * required makes a near-miss unrecoverable: measured, haiku called
-			 * this with {task: "..."} and got a bare "must have required
-			 * properties prompt", burning a turn. Optional + requireParam lets
-			 * the aliases in PROMPT_PARAMS actually work.
+			 * it was Optional, to let requireParam() rescue an aliased call like
+			 * {task: "..."} — pi validates before execute(), so a required
+			 * property turns that near-miss into a bare "must have required
+			 * properties prompt" and burns a turn (measured with haiku).
 			 *
-			 * safe here only because delegate declares no `constrainedSampling`
-			 * — grammar sampling demands exactly one required string property
-			 * (see apply-patch.ts).
+			 * that trade was wrong. Optional means the wire schema says
+			 * `required: []` while this description said "REQUIRED", and a model
+			 * cannot resolve that contradiction from the spec — so it reads this
+			 * file to find the argument shape, in EVERY fresh session. The alias
+			 * miss is rare and self-correcting (the schema error names the exact
+			 * property); the contradiction tax was constant. So: required.
+			 *
+			 * requireParam() below is kept as a safety net — not every provider
+			 * enforces the schema, and it still resolves PROMPT_PARAMS aliases
+			 * wherever validation is lenient.
+			 *
+			 * grammar sampling is NOT a concern: it is opt-in via a tool's
+			 * `constrainedSampling` field (pi-ai resolveGrammarConstrainedSampling
+			 * returns early when absent), and delegate does not declare one. The
+			 * "exactly one required string property" rule binds apply_patch only.
 			 */
-			prompt: Type.Optional(
-				Type.String({
-					description:
-						"REQUIRED. The task for the sub-agent. It shares none of your context, so include the working directory, the goal, the files involved, and how to verify success.",
-				}),
-			),
+			prompt: Type.String({
+				description:
+					"The task for the sub-agent. It shares none of your context, so include the working " +
+					"directory, the goal, the files involved, and how to verify success. " +
+					"(Also accepted: task, query, question, description.)",
+			}),
 			description: Type.Optional(
 				Type.String({
 					description:

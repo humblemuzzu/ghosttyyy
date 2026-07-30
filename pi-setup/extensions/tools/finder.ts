@@ -54,16 +54,19 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 			"2. Formulate your query as a precise engineering request.\n" +
 			"3. Name concrete artifacts, patterns, or APIs to narrow scope.\n" +
 			"4. State explicit success criteria so the agent knows when to stop.\n" +
-			"5. Never issue vague or exploratory commands.",
+			"5. Never issue vague or exploratory commands.\n\n" +
+			'Example: finder({ query: "where is the session JSONL written to disk, and what names the file?" })',
 
-		// declared Optional so an aliased call survives validation; normalised in
-		// execute() via lib/params.ts.
 		parameters: Type.Object({
-			query: Type.Optional(Type.String({
+			// required in the schema, which is what models actually trust.
+			// requireParam() below stays as a safety net for providers that do not
+			// enforce the schema and for models that guess an alias name.
+			query: Type.String({
 				description:
-					"REQUIRED. The search query describing what to find. Be specific and include " +
-					"technical terms, file types, or expected code patterns.",
-			})),
+					"The search query describing what to find. Be specific and include " +
+					"technical terms, file types, or expected code patterns. " +
+					"(Also accepted: task, prompt, question, description.)",
+			}),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
