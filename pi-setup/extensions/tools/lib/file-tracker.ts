@@ -36,6 +36,27 @@ export interface FileChange {
 	reverted: boolean;
 	/** epoch ms when the edit occurred */
 	timestamp: number;
+
+	/*
+	 * existence/mode tracking (added for apply_patch, which can delete and
+	 * move files — operations edit/write never performed).
+	 *
+	 * these are OPTIONAL for backward compatibility: change records written
+	 * before apply_patch existed do not have them, and revertChange falls
+	 * back to `isNewFile` when they are absent.
+	 *
+	 * without beforeExists, reverting a file CREATION wrote an empty file
+	 * instead of removing it, and reverting a MOVE would leave the
+	 * destination orphaned.
+	 */
+	/** did the file exist before the change? */
+	beforeExists?: boolean;
+	/** did the file exist after the change? (false = the change deleted it) */
+	afterExists?: boolean;
+	/** file mode before the change, restored on revert */
+	beforeMode?: number;
+	/** file mode after the change */
+	afterMode?: number;
 }
 
 function sessionDir(sessionId: string): string {
@@ -80,6 +101,23 @@ export function saveChange(
 }
 
 /**
+ * record several file changes produced by a single tool call.
+ *
+ * apply_patch mutates any number of files per call, so it needs this;
+ * the storage layout already supported it (each change gets its own UUID
+ * under the same {toolCallId} prefix, and loadChanges reads them all back).
+ *
+ * returns the change IDs in the same order as the input.
+ */
+export function saveChanges(
+	sessionId: string,
+	toolCallId: string,
+	changes: Array<Omit<FileChange, "id" | "reverted">>,
+): string[] {
+	return changes.map((change) => saveChange(sessionId, toolCallId, change));
+}
+
+/**
  * load all change records for a tool call. one tool call can produce
  * multiple changes (different files), each with its own UUID.
  */
@@ -120,9 +158,29 @@ export function revertChange(sessionId: string, toolCallId: string, changeId: st
 	}
 	if (change.reverted) return null;
 
-	// restore the file to its pre-edit state
+	// restore the file to its pre-edit state.
+	//
+	// `beforeExists` is authoritative when present; older records predate it,
+	// so fall back to `isNewFile` (a newly created file did not exist before).
 	const filePath = change.uri.replace(/^file:\/\//, "");
-	fs.writeFileSync(filePath, change.before, "utf-8");
+	const existedBefore = change.beforeExists ?? !change.isNewFile;
+	if (existedBefore) {
+		// the parent may have been removed since; recreate it before writing.
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, change.before, "utf-8");
+		if (change.beforeMode !== undefined) {
+			try {
+				fs.chmodSync(filePath, change.beforeMode);
+			} catch {
+				/* mode restore is best-effort; content is what matters */
+			}
+		}
+	} else {
+		// the change CREATED this file, so undoing it means removing the file
+		// rather than truncating it to empty. content stays in this record, so
+		// the removal is recoverable.
+		fs.rmSync(filePath, { force: true });
+	}
 
 	// mark as reverted on disk
 	change.reverted = true;
@@ -136,7 +194,7 @@ export function revertChange(sessionId: string, toolCallId: string, changeId: st
  * filtered to only the given tool call IDs (branch awareness).
  *
  * the caller gets activeToolCallIds by scanning the current
- * session branch for edit_file/create_file tool calls.
+ * session branch for apply_patch tool calls.
  */
 export function findLatestChange(
 	sessionId: string,

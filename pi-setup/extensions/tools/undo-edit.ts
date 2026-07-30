@@ -167,8 +167,13 @@ export function createUndoEditTool(): ToolDefinition {
 				);
 
 				let result = diff;
-				if (reverted.isNewFile) {
-					result += `\n\n(file was created by the reverted edit — file restored to empty)`;
+				// beforeExists is authoritative when present (apply_patch records it);
+				// older records only have isNewFile.
+				const existedBefore = reverted.beforeExists ?? !reverted.isNewFile;
+				if (!existedBefore) {
+					result += `\n\n(file was created by the reverted edit — file removed)`;
+				} else if (reverted.afterExists === false) {
+					result += `\n\n(file was deleted by the reverted edit — file restored)`;
 				}
 
 				return { content: [{ type: "text" as const, text: result }], details: { header: resolved } } as any;

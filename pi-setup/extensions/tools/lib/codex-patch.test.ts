@@ -121,6 +121,18 @@ describe("parseCodexPatch", () => {
 
 describe("applyPatchChunks", () => {
   it("applies ordered chunks with context and fuzzy whitespace", () => {
+    // DELIBERATE DIVERGENCE FROM UPSTREAM.
+    //
+    // upstream asserts "function x() {\nnew\n}\ndone\n" — note `new` at column
+    // 0, even though the line it replaced (`  old  `) was indented inside the
+    // function body. that is the fuzzy-match indentation bug: the hunk matched
+    // only because leading whitespace was ignored, then its own (absent)
+    // indentation was written to the file verbatim.
+    //
+    // seen in the wild on claude-opus, which grepped instead of reading and
+    // produced a hunk one space off; the file silently gained a leading space.
+    // applyPatchChunks now re-indents replacements to the FILE's indentation
+    // whenever the match ignored leading whitespace.
     const result = applyPatchChunks(
       "function x() {\n  old  \n}\ntail\n",
       [
@@ -138,7 +150,34 @@ describe("applyPatchChunks", () => {
       ],
       "x.ts",
     );
-    expect(result).toBe("function x() {\nnew\n}\ndone\n");
+    expect(result).toBe("function x() {\n  new\n}\ndone\n");
+  });
+
+  it("preserves relative indentation when re-indenting a fuzzy match", () => {
+    // the shift is computed from the first line and applied uniformly, so a
+    // nested block keeps its shape rather than being flattened.
+    const result = applyPatchChunks(
+      "class A {\n    doThing() {\n      return 1;\n    }\n}\n",
+      [
+        {
+          oldLines: ["doThing() {", "  return 1;", "}"],
+          newLines: ["doThing() {", "  return 2;", "}"],
+          endOfFile: false,
+        },
+      ],
+      "a.ts",
+    );
+    expect(result).toBe("class A {\n    doThing() {\n      return 2;\n    }\n}\n");
+  });
+
+  it("leaves indentation alone when the match was exact", () => {
+    const result = applyPatchChunks(
+      "function x() {\n  old\n}\n",
+      [{ oldLines: ["  old"], newLines: ["      deeper"], endOfFile: false }],
+      "x.ts",
+    );
+    // the patch matched exactly, so its indentation is authoritative
+    expect(result).toBe("function x() {\n      deeper\n}\n");
   });
 
   it("preserves BOM and CRLF", () => {

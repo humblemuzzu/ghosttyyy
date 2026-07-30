@@ -10,6 +10,7 @@
  */
 
 import * as os from "node:os";
+import { basename } from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Text, TruncatedText } from "@mariozechner/pi-tui";
@@ -160,6 +161,21 @@ function toolArgSummary(toolName: string, args: Record<string, unknown>): string
 		}
 		case "edit":
 			return shortenPath((args.file_path || args.path || "...") as string);
+		case "apply_patch": {
+			// sub-agents mutate files through apply_patch now. its only argument is
+			// the envelope, so the file names have to come out of the patch body —
+			// without this the tree line fell through to `default` and printed the
+			// entire multi-line patch as raw JSON.
+			const envelope = (args.input || args.patch || "") as string;
+			const names = envelope.split("\n").flatMap((line) => {
+				const match = line.match(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/);
+				return match?.[1] ? [basename(match[1].trim())] : [];
+			});
+			if (names.length === 0) return "...";
+			return names.length <= 3
+				? names.join(", ")
+				: `${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+		}
 		case "ls":
 			return shortenPath((args.path || ".") as string);
 		case "find": {

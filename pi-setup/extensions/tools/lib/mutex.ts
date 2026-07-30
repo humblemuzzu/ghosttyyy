@@ -35,3 +35,25 @@ export async function withFileLock<T>(filePath: string, fn: () => Promise<T>): P
 		resolve();
 	}
 }
+
+/**
+ * execute `fn` while holding exclusive locks on EVERY given path.
+ *
+ * apply_patch mutates several files as one atomic batch, so it must hold
+ * all locks for the whole operation rather than locking each file in turn.
+ *
+ * locks are acquired in sorted order and duplicates are collapsed. the sort
+ * is what prevents deadlock: two concurrent batches sharing files always
+ * request them in the same global order, so neither can hold one while
+ * waiting on the other.
+ */
+export async function withFileLocks<T>(filePaths: string[], fn: () => Promise<T>): Promise<T> {
+	const ordered = [...new Set(filePaths.map((p) => path.resolve(p)))].sort();
+
+	const acquire = (index: number): Promise<T> => {
+		const next = ordered[index];
+		return next === undefined ? fn() : withFileLock(next, () => acquire(index + 1));
+	};
+
+	return acquire(0);
+}

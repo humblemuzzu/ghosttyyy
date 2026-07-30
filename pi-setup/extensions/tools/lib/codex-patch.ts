@@ -243,8 +243,59 @@ function seekSequence(
   start: number,
   endOfFile: boolean,
 ): number | undefined {
-  if (pattern.length === 0) return start;
-  if (pattern.length > lines.length) return undefined;
+  return seekSequenceAll(lines, pattern, start, endOfFile).hits[0];
+}
+
+/** leading whitespace of a line. */
+function indentOf(line: string): string {
+  return line.slice(0, line.length - line.trimStart().length);
+}
+
+/**
+ * re-indent a hunk's replacement lines to the file's real indentation.
+ *
+ * only used when the old lines matched via a whitespace-insensitive
+ * normalizer, which means the patch's own indentation was WRONG. inserting the
+ * replacement verbatim then rewrites the file's indentation to the model's
+ * mistake — observed live: claude-opus grepped instead of reading, wrote the
+ * hunk one space too deep, and the file silently gained a leading space.
+ *
+ * the shift is computed from the first line and applied uniformly, so relative
+ * indentation inside the hunk is preserved.
+ */
+function reindentToFile(
+  newLines: string[],
+  patchIndent: string,
+  fileIndent: string,
+): string[] {
+  if (patchIndent === fileIndent) return newLines;
+  return newLines.map((line) => {
+    if (line.trim().length === 0) return line;
+    return line.startsWith(patchIndent)
+      ? fileIndent + line.slice(patchIndent.length)
+      : fileIndent + line.trimStart();
+  });
+}
+
+/**
+ * every index where `pattern` matches, at the FIRST normalizer strength that
+ * matches at all.
+ *
+ * matching escalates exact -> trimEnd -> trim -> fuzzy, and stops at the first
+ * level that produces any hit: a pattern that matches exactly in one place must
+ * not be called ambiguous just because a sloppier comparison also matches
+ * somewhere else.
+ *
+ * callers use the count to detect an ambiguous hunk (see applyPatchChunks).
+ */
+function seekSequenceAll(
+  lines: string[],
+  pattern: string[],
+  start: number,
+  endOfFile: boolean,
+): { hits: number[]; exact: boolean } {
+  if (pattern.length === 0) return { hits: [start], exact: true };
+  if (pattern.length > lines.length) return { hits: [], exact: true };
   const first = endOfFile ? lines.length - pattern.length : start;
   const last = lines.length - pattern.length;
   const normalizers = [
@@ -253,12 +304,16 @@ function seekSequence(
     (value: string) => value.trim(),
     normalizeFuzzy,
   ];
-  for (const normalize of normalizers) {
+  for (const [level, normalize] of normalizers.entries()) {
+    const hits: number[] = [];
     for (let index = first; index <= last; index++) {
-      if (equalAt(lines, pattern, index, normalize)) return index;
+      if (equalAt(lines, pattern, index, normalize)) hits.push(index);
     }
+    // levels 0 and 1 only differ in TRAILING whitespace, so leading
+    // indentation is still trustworthy; 2 and 3 strip leading whitespace too.
+    if (hits.length > 0) return { hits, exact: level <= 1 };
   }
-  return undefined;
+  return { hits: [], exact: true };
 }
 
 export function applyPatchChunks(
@@ -302,17 +357,55 @@ export function applyPatchChunks(
 
     let oldLines = chunk.oldLines;
     let newLines = chunk.newLines;
-    let match = seekSequence(lines, oldLines, cursor, chunk.endOfFile);
-    if (match === undefined && oldLines.at(-1) === "") {
+    let found = seekSequenceAll(lines, oldLines, cursor, chunk.endOfFile);
+    if (found.hits.length === 0 && oldLines.at(-1) === "") {
       oldLines = oldLines.slice(0, -1);
       if (newLines.at(-1) === "") newLines = newLines.slice(0, -1);
-      match = seekSequence(lines, oldLines, cursor, chunk.endOfFile);
+      found = seekSequenceAll(lines, oldLines, cursor, chunk.endOfFile);
     }
-    if (match === undefined) {
+    const matches = found.hits;
+    if (matches.length === 0) {
       throw new Error(
         `failed to find expected lines in ${filePath}:\n${chunk.oldLines.join("\n")}`,
       );
     }
+
+    /*
+     * AMBIGUITY GUARD (not in upstream, and not in OpenAI's reference either).
+     *
+     * upstream takes the first match. when a hunk's context appears more than
+     * once — a repeated log line, an identical field in two structs — that
+     * silently edits the WRONG occurrence and reports success. verified: a
+     * bare `@@` hunk for a line appearing in two functions patched the first
+     * one, with no warning.
+     *
+     * `edit`'s old_str path has always refused this ("found N occurrences").
+     * this brings apply_patch to the same standard.
+     *
+     * an explicit `@@ <anchor>` is treated as the author having expressed
+     * WHERE they mean: the cursor already sits after that anchor, so a first
+     * match beyond it is intentional and allowed. only an unanchored,
+     * genuinely ambiguous hunk is rejected.
+     */
+    if (matches.length > 1 && chunk.context === undefined && !chunk.endOfFile) {
+      throw new Error(
+        `ambiguous hunk in ${filePath}: these lines match ${matches.length} places.\n` +
+          `add surrounding context lines, or anchor the hunk with '@@ <enclosing line>', ` +
+          `so the intended location is unambiguous:\n${oldLines.join("\n")}`,
+      );
+    }
+    const match = matches[0];
+
+    // the match ignored leading whitespace, so trust the FILE's indentation
+    // rather than the patch's (see reindentToFile).
+    if (!found.exact && oldLines.length > 0) {
+      newLines = reindentToFile(
+        newLines,
+        indentOf(oldLines[0]),
+        indentOf(lines[match] ?? ""),
+      );
+    }
+
     replacements.push({
       index: match,
       oldLength: oldLines.length,

@@ -20,10 +20,17 @@ import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
 
-const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash", "edit", "write"];
+/*
+ * `apply_patch` replaces edit/write here too.
+ *
+ * the sub-agent runs a fresh pi with an explicit --tools allowlist, and pi's
+ * native edit/write are hidden by our session_start hook, so listing them
+ * would leave the sub-agent unable to change any file at all.
+ */
+const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash", "apply_patch"];
 const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash",
-	"edit", "write", "format_file", "skill", "finder",
+	"apply_patch", "format_file", "skill", "finder",
 	"web_search",
 ];
 
@@ -33,7 +40,7 @@ export function createTaskTool(): ToolDefinition {
 		label: "Task",
 		description:
 			"Perform a task (a sub-task of the user's overall task) using a sub-agent that has access to " +
-			"the following tools: read, grep, find, ls, bash, edit, write, format_file, skill, finder, web_search.\n\n" +
+			"the following tools: read, grep, find, ls, bash, apply_patch, format_file, skill, finder, web_search.\n\n" +
 			"When to use the Task tool:\n" +
 			"- When you need to perform complex multi-step tasks\n" +
 			"- When you need to run an operation that will produce a lot of output (tokens) " +

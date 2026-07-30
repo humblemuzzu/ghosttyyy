@@ -32,8 +32,14 @@ import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
  */
 const TOOL_ALIASES: Record<string, string> = {
 	glob: "find",
-	edit_file: "edit",
-	create_file: "write",
+	// every mutation name now resolves to apply_patch: edit-file.ts and
+	// create-file.ts are gone, and pi's natives are hidden at session_start
+	// (see index.ts), so a config still asking for "edit"/"write" would
+	// otherwise silently grant the sub-agent NO way to change a file.
+	edit_file: "apply_patch",
+	create_file: "apply_patch",
+	edit: "apply_patch",
+	write: "apply_patch",
 };
 
 export function resolveAliases(names: string[]): string[] {

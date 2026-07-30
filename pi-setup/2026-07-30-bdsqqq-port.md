@@ -21,7 +21,9 @@ His pi lives at `/tmp/dots/user/pi/packages/{core,extensions}/`.
 | 1 | remove `pi-web-access` + `pi-tasks` | done |
 | 2 | subagent tool injection + tool-name fixes | done |
 | 3 | codex-patch, tool-policy, web_search, agent-message, search_sessions | done |
-| **4** | **`apply_patch` replaces `edit`/`write`; `delegate` replaces `Task`** | **next** |
+| 4a | `apply_patch` ported | done |
+| **4b** | **cutover: `edit`/`write` deleted and natives hidden** | **done** |
+| 4c | `delegate` replaces `Task` | pending |
 | 5 | `workflow` + `workflow-api` (strip `lookAt`) | pending |
 | 6 | optional: `emil-design-eng` skill | pending |
 
@@ -125,7 +127,121 @@ During Phase 2 a model repeatedly claimed "I don't have tool X" while the probe
 proved X was active. **Never trust a model's self-report.** Use
 `port-harness/probe.ts`, which calls `pi.getActiveTools()`.
 
-### 3.5 Extensions load once, at session start
+### 3.5 macOS realpath: sync and async DISAGREE about case
+
+`fs.realpathSync("dup.txt")` returns `dup.txt`; `fs.promises.realpath("dup.txt")`
+and `fs.realpathSync.native("dup.txt")` return the true on-disk `Dup.txt`.
+
+This caused a **hard hang** in the ported `apply_patch`: his alias guard used
+the JS `realpathSync`, so two case-variant paths looked distinct and passed the
+check — but pi core's `withFileMutationQueue` keys by the ASYNC realpath, so
+both collapsed to one key, and nesting an acquisition of a held key deadlocks
+forever. No error, no timeout, just a frozen tool.
+
+**Rule: any path key that must agree with pi core's queue MUST use
+`fs.realpathSync.native`.** Not a bug upstream — case-sensitive filesystems
+never show it. Regression test: `apply-patch.test.ts` "case-variant aliases are
+refused instead of deadlocking".
+
+### 3.6 Models need the patch format SHOWN, not described
+
+Measured with haiku on a one-line edit: the original schema (`input` required,
+`additionalProperties: false`, prose-only description) produced **15 consecutive
+failed calls and an abandoned task**. The model sent `{path, patch}` with a
+plain unified diff, then flailed against terse errors.
+
+After (a) accepting aliases via `lib/params.ts` with `input` Optional, (b) an
+example envelope in the description, and (c) errors that explain the difference
+between a unified diff and a Codex envelope: **2 calls, task completed**.
+
+Unified diffs are deliberately NOT auto-converted — their hunk headers may be
+invented, and silently reinterpreting a patch is how files get corrupted.
+
+### 3.7 UPSTREAM BUG: `Add File` clobbered existing files
+
+His `apply_patch` has no existence guard on the `add` branch, while `delete`
+and `update` both guard on `current`. `*** Add File:` on an existing path
+replaced the entire file with the patch body — no context matching, reported
+only as `M path`. Verified: a 4-line file became 1 line.
+
+Found by our own `code_review` tool during Phase 4a verification. Fixed with a
+mirror guard; wholesale replacement must now be spelled Delete File + Add File.
+Regression-tested.
+
+### 3.8 Sub-agent verdicts must be verified, not applied
+
+Same verification pass, two sub-agents produced confident but wrong advice:
+
+- **oracle** said `withMutationQueues` (pi's queue) is redundant and advised
+  deleting `canonicalMutationPath` with it. Its premise was right (only pi's
+  own `edit.js`/`write.js` take that queue, and we shadow them) but the advice
+  was wrong twice: `canonicalPaths` also feeds the hierarchy check, the
+  **alias/data-loss guard** and the permission check; and Phase 4b DELETES our
+  `edit`/`write`, which un-shadows pi's native ones — making the queue more
+  necessary, not less.
+- **code_review** called the outer `path.resolve(resolveToAbsolute(...))`
+  redundant. It is not: `resolveToAbsolute` returns absolute paths unnormalised,
+  so `/tmp/a/b/../c` stays as-is and only the outer resolve produces `/tmp/a/c`.
+  It is load-bearing for path-traversal safety.
+
+Both were caught by checking the claim against the code before acting. The
+critical `Add File` finding from the same review WAS real — so the lesson is
+verify each claim independently, not trust or dismiss the tool wholesale.
+
+### 3.9 Provider-gated failures: ALWAYS test BOTH model families
+
+A tool schema change passed every Anthropic test and **broke every OpenAI
+session**, because pi-ai gates the check on the provider:
+
+- `constrainedSampling: {type:"grammar"}` requires the schema to have EXACTLY
+  ONE required string property (`inferGrammarInputProperty`,
+  `pi-ai/dist/api/constrained-sampling.js:38`).
+- `resolveGrammarConstrainedSampling` returns early when the provider lacks
+  grammar support (**line 68**) — so on Anthropic the schema is never checked.
+
+Making `input` optional (to accept aliases) set `required: []`. Every
+`openai-codex/*` request then died with *"Tool apply_patch cannot use grammar
+constrained sampling"* before the turn even started, while 153 Claude-based
+tests stayed green.
+
+**Rules:**
+1. After ANY tool-schema change, smoke-test on an OpenAI model AND an
+   Anthropic model. `defaultModel` is currently `openai-codex/gpt-5.6-sol`.
+2. A tool with `constrainedSampling` cannot use the `lib/params.ts` optional-
+   alias pattern. Grammar sampling is the better deal on OpenAI anyway: it
+   forces a syntactically valid envelope at the token level.
+3. Guarded by `apply-patch.test.ts` → "schema satisfies pi-ai's
+   grammar-sampling contract".
+
+**Cross-provider matrix** (same task: one-line edit via apply_patch, exact file
+comparison). Run this after any change to the tool's schema, description or
+promptGuidelines:
+
+| model | calls | errors | result |
+|---|---|---|---|
+| `openai-codex/gpt-5.6-sol` | 1 | none | exact |
+| `openai-codex/gpt-5.5` | 1 | none | exact |
+| `anthropic/claude-opus-4-8` | 1 | none | exact |
+| `deepseek/deepseek-v4-pro` | 1 | none | exact |
+| `kimi-code/kimi-for-coding:high` | 2 | 1 rejected hunk, retried | exact |
+| `deepseek/deepseek-v4-flash` | 1 | none | **wrong** |
+
+What closed the gap on non-OpenAI providers was `promptGuidelines` + the
+parameter description, NOT the schema: grammar sampling only exists on
+OpenAI-family providers, so for Anthropic/Kimi/DeepSeek/Sakana that prose is
+the entire contract. Naming the single `input` argument explicitly, and saying
+"there is no path argument", took claude-opus from 3 calls to 1.
+
+`deepseek-v4-flash` emitted a syntactically VALID envelope that expressed the
+wrong intent (an add-only hunk keeping the old line as context, so the file
+gained a line instead of changing one). No schema or grammar can catch that —
+it is model capability, not tool design. Treat flash-class models as unsuitable
+for patching.
+
+The kimi run is the safety property working as designed: a hunk whose context
+did not match was refused, and the retry succeeded.
+
+### 3.10 Extensions load once, at session start
 
 Deploying a file does **not** affect a running session. Every mid-work
 "regression" we chased turned out to be a stale in-memory session. Verify in a
@@ -172,15 +288,79 @@ are allowed and only newly-introduced ones are rejected. `snapshot()` also
 refuses symlinks and hard-linked files.
 
 **Cutover order (user approved real testing, not test files):**
-1. Port `apply_patch` alongside existing `edit`/`write`.
-2. Verify `undo_edit` still works — ours depends on `file-tracker.saveChange`;
-   confirm `apply_patch` records changes the same way. **Main integration risk.**
-3. Verify rendering visually.
-4. Only then delete `edit-file.ts` + `create-file.ts`, flip `TOOL_ALIASES` to
-   `apply_patch`, and update the system prompt to teach the patch envelope.
+1. ~~Port `apply_patch` alongside existing `edit`/`write`.~~ **DONE**
+2. ~~Verify `undo_edit` still works.~~ **DONE** — and it needed real work:
+   - `file-tracker` gained `saveChanges` (plural) and optional
+     `beforeExists`/`afterExists`/`beforeMode`/`afterMode`
+   - `revertChange` honoured `beforeExists`, which **fixed a pre-existing bug**:
+     undoing a file CREATION used to leave an empty file behind. it now removes
+     the file. old records without the field fall back to `isNewFile`
+     (regression-tested).
+   - `mutex` gained `withFileLocks` (plural, sorted acquisition = no deadlock)
+3. ~~Verify rendering.~~ **DONE** — one Shiki component PER FILE (the component
+   renders `parsePatchFiles(...)[0]` and detects language from a single path,
+   so a shared one would show only the first file). Collapsed = last file,
+   expanded = all files.
+4. ~~delete edit/write, retarget aliases, teach the prompt.~~ **DONE — see §4.1b**
+
+**Status:** 19 behavioural tests in `apply-patch.test.ts` (real temp FS, no
+mocks); live-verified with haiku for single-file, multi-file atomic, rollback,
+and the alias/deadlock case. 40 tools registered, clean boot.
+
+**Verified in a real session (Phase 4a sign-off):** `apply_patch` used directly
+for a 3-file atomic patch (2 updates + 1 create); `undo_edit` correctly REMOVED
+the created file and restored the modified one; a spawned `Task` sub-agent
+reported its 11 tools and edited files successfully; `finder`, `librarian`,
+`code_review` and `oracle` all returned accurate, tool-backed results
+(librarian's GitHub data matched his real package.json — it used to
+hallucinate). `format_file`/`finder`/`web_search` surviving in the sub-agent
+tool list re-confirms the Phase 2 OAuth-filter fix still holds.
 
 Backups exist (`~/pi-port-backup-*`, git history) — user explicitly said we can
 restore `edit`/`write` if it feels worse.
+
+### 4.1b The cutover (done) — what it actually required
+
+1. **`edit-file.ts` + `create-file.ts` deleted.** Only `index.ts` imported them;
+   `resolveWithVariants` lives in `read.ts`, so nothing else broke.
+2. **pi's NATIVE edit/write hidden** — a `session_start` hook in `index.ts`
+   drops them from the active set. Deleting our files only UN-shadows the
+   built-ins, which have no mutex/tracking/scrubbing. Verified: 38 tools, zero
+   natives.
+   **Caveat measured:** an explicit `--tools read,edit,write` allowlist
+   RESURRECTS the natives (it is applied after our hook). Our spawn path is
+   safe because `TOOL_ALIASES` rewrites those names first — keep both layers.
+3. **`TOOL_ALIASES`** now maps `edit`/`write`/`edit_file`/`create_file` ->
+   `apply_patch`.
+4. **`Task`** requests `apply_patch` instead of `edit`/`write`, and
+   `sub-agent-render.ts` gained an `apply_patch` case (without it the tree line
+   fell through to `default` and printed the whole envelope as raw JSON).
+5. **System prompt** teaches `apply_patch` and explicitly forbids mutating files
+   via bash. **This mattered:** with the natives hidden but the prompt stale,
+   the model silently fell back to `bash` (`sed`/redirection), bypassing undo
+   tracking and permissions entirely. Prompt fixed -> both families use
+   `apply_patch`.
+
+**Two bugs found during cutover verification** (both silent corruption):
+
+- **fuzzy match rewrote indentation.** Old lines matched via a whitespace-
+  insensitive normalizer, but new lines were inserted VERBATIM — so the patch's
+  wrong indentation replaced the file's real one. Hit live on
+  `claude-opus-4-8`, which grepped instead of reading and produced a hunk one
+  space off. `applyPatchChunks` now re-indents replacements to the FILE's
+  indentation whenever the match ignored leading whitespace, preserving
+  relative indentation inside the hunk. **Upstream's own test asserted the
+  buggy behaviour** (`new` de-indented to column 0 out of a function body) and
+  was updated with a comment recording the divergence.
+- **ambiguous hunks were guessed, not refused.** `seekSequence` returned the
+  first match, so a hunk whose context appears twice silently edited the wrong
+  occurrence. An unanchored ambiguous hunk is now rejected with a message
+  telling the model to add context or an `@@ <anchor>`; anchored and
+  extra-context forms still work.
+
+**Post-cutover matrix — 4/4 EXACT:** gpt-5.6-sol, claude-opus-4-8,
+deepseek-v4-pro, kimi-for-coding:high. 160 tests, patches 8/8, 38 tools,
+zero natives, repo<->live synced.
 
 ### 4.2 `delegate` replaces `Task`
 
