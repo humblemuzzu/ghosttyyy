@@ -154,7 +154,13 @@ function toolLabel(name: string): string {
 	return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function toolArgSummary(toolName: string, args: Record<string, unknown>): string {
+/**
+ * one-line summary of a tool call's arguments.
+ *
+ * exported so the sub-agent inspector renders tool calls identically to the
+ * collapsed tree — two implementations would drift.
+ */
+export function toolArgSummary(toolName: string, args: Record<string, unknown>): string {
 	switch (toolName) {
 		case "bash": {
 			const command = (args.cmd || args.command || "...") as string;

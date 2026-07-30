@@ -85,9 +85,34 @@ PI_CLAUDE_CODE_USE_DEBUG_LOG=/tmp/ccu.log pi --tools read_github ...
 we pass an explicit `--tools` allowlist**, so an unrestricted child is not left
 ungated at both layers.
 
-**Gotcha:** this only covers tools we spawn. A bare `pi -p "..."` from the shell
-still gets stripped. User does not use `pi -p`, so we deliberately did **not**
-set it globally. The e2e test harnesses set it themselves.
+**Gotcha:** this only covers tools we spawn. Anything else — a bare
+`pi -p "..."`, **or a normal interactive TUI session** — still gets stripped.
+
+> **CORRECTED 2026-07-31.** This section previously said "User does not use
+> `pi -p`, so we deliberately did not set it globally," which framed the filter
+> as headless-only. **It is not.** The gate is
+> `model.provider === "anthropic" && ctx.modelRegistry.isUsingOAuth(model)`
+> (`extensions/index.ts:733`) with **no mode check**, and our Anthropic auth is
+> `type: "oauth"`. The TUI was never exempt — it simply never took the Anthropic
+> path while the default model was `openai-codex`.
+>
+> Switching the default to `anthropic/claude-opus-5` silently turned that
+> assumption false and took `finder`/`oracle`/`delegate`/`librarian`/
+> `code_review` (and 20+ others) out of **every new session**, with no error.
+> Measured: 11 tools reported vs 38 with the flag — and of those 11, only
+> `Read`/`Bash`/`Grep`/`Skill` were real (`CORE_TOOL_NAMES`); the other 7 were
+> parroted from pi core's own non-exhaustive `Available tools:` preamble
+> (`system-prompt.js:42` lists only tools that define a `promptSnippet`).
+> That parroting is what made an earlier session misdiagnose it as a system-
+> prompt bug and blame an innocent commit.
+>
+> **Now set globally** in `~/.zshrc`:
+> `export PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER=1`. Verified: a fresh
+> `pi -p` launched from an interactive zsh reports all 38 tools with no inline
+> env, and `pi -p -t finder "..."` actually spawns the sub-agent.
+>
+> **Re-check this whenever the default provider changes.** A filter keyed on
+> provider is invisible until you switch to that provider.
 
 ### 3.2 Subagent tool gating — use native `--tools`, nothing else
 

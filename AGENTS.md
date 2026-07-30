@@ -47,6 +47,19 @@ left at `enabled: false` there returns `{}` no matter what. Anthropic is now
 `enabled: "auto"` + `fetchStatus: true`, which surfaces real Claude Max quota
 (5-hour and weekly windows) in the status bar and in both usage tools.
 
+**REQUIRED for Anthropic: `PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER=1`** (set in
+`~/.zshrc`). `pi-claude-code-use` rewrites every anthropic+OAuth request to look
+like Claude Code, and its `filterAndRemapTools()` **silently drops any tool whose
+name is not one of Claude Code's own 17** — removing `finder`, `oracle`,
+`delegate`, `librarian`, `code_review`, the seven github tools and more. 38 tools
+become 4 (`Read`/`Bash`/`Grep`/`Skill`), with no error anywhere.
+
+This is **not** headless-only: the gate is `provider === "anthropic" &&
+isUsingOAuth`, with no mode check, so a normal TUI session is affected too. It
+stayed hidden for months only because the default model was `openai-codex`.
+Without the flag, a fresh session will tell you it cannot call your sub-agents.
+See `pi-setup/2026-07-30-bdsqqq-port.md` §3.1.
+
 **Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
 ### System Prompt Assembly
@@ -581,7 +594,66 @@ Updated `pi update` → **0.82.1** and the two flagged packages. **Audited again
 
 ---
 
-## Extensions (11 active)
+## Subagent Inspector (`extensions/subagent-inspector/`)
+
+Ctrl+Shift+A (or `/subagents`) opens an overlay listing every sub-agent run in the
+session. Enter opens one: its **thinking**, tool calls and tool results, scrollable.
+`←`/`→` switch between runs, `f` toggles trimmed/full tool results, Esc backs out
+one level then closes. Works while an agent is still running and after it finished.
+
+**Read-only by design.** It observes what the sub-agent tools already report; it
+never resumes a child, never writes to a running process, and writes nothing to disk.
+
+### Why it needs no session files
+
+The parent session JSONL already stores each sub-agent's *entire* transcript in the
+tool result's `details.messages` — thinking blocks included (measured: librarian 114
+messages / 57 thinking, oracle 64/7, delegate 193/49). So history survives for all
+five agent tools even though only `delegate` persists its own session.
+
+### Why the registry is fed by events, not a shared module
+
+pi loads every extension file with its own jiti instance and `moduleCache: false`
+(`dist/core/extensions/loader.js`). A module-level `Map` in `tools/lib/` is therefore
+**not the same Map** when imported from another extension — it reads empty, silently,
+with no error. `registry.ts` is fed by `pi.on("tool_execution_start"/"update"/"end")`,
+which cross the boundary carrying the tool's full `details` payload. Do not "simplify"
+this into a shared module.
+
+### Layout
+
+| File | Purpose |
+|------|---------|
+| `index.ts` | extension entry — events, shortcut, `/subagents`, overlay |
+| `registry.ts` | tracks runs from tool events (pure, tested) |
+| `transcript.ts` | `Message[]` → transcript nodes incl. thinking (pure, tested) |
+| `inspector.ts` | the overlay component — list + scrollable detail |
+| `types.ts` | shared types |
+| `registry.test.ts`, `transcript.test.ts` | 28 unit tests, no pi deps |
+
+`inspector.ts` imports `@mariozechner/*`, which only resolve through pi's jiti
+aliases — so it is not unit-testable under bare `bun test`. It is covered instead by
+a render harness (real session data, 5 widths × 2 themes × every scroll position,
+asserting no line exceeds the width) and by pty tests driving a real pi.
+
+**Rendering contract:** the detail view is built from pi's own `Markdown`/`Text`/
+`TruncatedText` components inside a `Container`, so a sub-agent's transcript looks
+like the parent agent's transcript rather than a dialog. Source text is passed
+through `normalizeForDisplay()` first, and every emitted row is truncated to the
+render width and then padded back out to it: each view emits exactly
+terminal-height × full-width rows so the overlay fully occludes the conversation
+instead of interleaving with it. One over-wide row re-opens the TUI smear class
+documented above. `getMarkdownTheme()` throws before `initTheme()`, so it is
+wrapped — a throw inside `render()` would take the TUI down.
+
+**No core patches.** Pure extension API (`pi.on`, `registerShortcut`,
+`registerCommand`, `ctx.ui.custom`). Deployed by `install.sh`'s `cp -R extensions`.
+Mouse click-to-open is *not* possible: pi never enables mouse tracking and no pi-tui
+component knows its screen position (see the research notes in the port log).
+
+---
+
+## Extensions (12 active)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
@@ -597,6 +669,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | MD Export | `md-export.ts` | `/md` — session JSONL → markdown export (clipboard or file) |
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
+| Subagent Inspector | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
 | Tools | `tools/` | 24 custom tools (see below) |
 
 **Note:** pi auto-discovers every `.ts` file in `extensions/` — there is no "present but disabled" state. To disable an extension, delete it or move it out of `extensions/`. `kimi-code-token.mjs` also lives here but is a helper script (called by the `kimi-code` provider), not a loaded extension. The 2026-07-23 cleanup deleted the former disabled extensions (handoff, brain-loader, opencode-zen, commandcode, pi-vcc-config) and `btw.ts` / `local-model.ts` / `crof.ts` / `import-opencode.ts` entirely — recover from git if ever needed.
