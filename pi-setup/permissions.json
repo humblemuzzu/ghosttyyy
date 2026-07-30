@@ -33,6 +33,16 @@
     "message": "use 'trash <file>' instead of rm \u2014 recoverable deletion"
   },
   {
+    "tool": "Bash",
+    "matches": {
+      "cmd": [
+        "regex:(?:^|(?<!\\\\)[;&|(]\\s*|\\bnohup\\s+|\\bxargs\\s+|-exec\\s+)amp\\s+[-\\w\"']"
+      ]
+    },
+    "action": "reject",
+    "message": "do not launch the amp CLI from bash \u2014 this session's persona is Amp but that binary is a separate program. use the delegate / oracle / finder / code_review / librarian tools, which run inside this pi session with your tools, permissions and visible output"
+  },
+  {
     "tool": "*",
     "action": "allow"
   }

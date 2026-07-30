@@ -45,16 +45,49 @@ import { getEnabledExtensionConfig, type ExtensionConfigSchema } from "./lib/con
 import { withPromptPatch } from "./lib/prompt-patch";
 import type { ToolCostDetails } from "./lib/tool-cost";
 
+/*
+ * SEARCH MODES — and why these names differ from Parallel's published docs.
+ *
+ * parallel.ai's pricing page and the "Search Turbo" blog document
+ * `turbo` / `basic` / `advanced`, which belong to the **v1** endpoint. we call
+ * **v1beta**, which accepts an older set of names and rejects the new ones:
+ *
+ *   Invalid search mode: 'turbo'. Please use one of: 'agentic', 'fast', 'one-shot'
+ *
+ * we stay on v1beta deliberately: **v1 forbids `max_results` and `excerpts`**
+ * (verified — it answers `extra_forbidden` for both), so it always returns 10
+ * results with uncapped excerpts. measured on one query, v1 payloads ran
+ * 9k-33k characters against ~4k for v1beta. for an agent paying context for
+ * every character, losing excerpt control is a worse deal than any price
+ * difference — especially as the free tier (5,000 requests/month) already
+ * covers our usage at any mode.
+ *
+ * measured, same query and excerpt caps:
+ *
+ *   ours (v1beta)        v1 analogue    latency    excerpt chars
+ *   fast                 turbo            979ms      940
+ *   one-shot (default)   basic           1553ms     3001
+ *   agentic              advanced        2251ms     2895
+ *
+ * `one-shot` is the default because it reproduces what this tool already did
+ * when no mode was sent — the choice becomes deliberate without silently
+ * changing behaviour, and we stop inheriting server-side default changes.
+ */
+const SEARCH_MODES = ["fast", "one-shot", "agentic"] as const;
+type SearchMode = (typeof SEARCH_MODES)[number];
+
 type WebSearchExtConfig = {
   defaultMaxResults: number;
   endpoint: string;
   curlTimeoutSecs: number;
+  defaultMode: SearchMode;
 };
 
 const CONFIG_DEFAULTS: WebSearchExtConfig = {
   defaultMaxResults: 10,
   endpoint: "https://api.parallel.ai/v1beta/search",
   curlTimeoutSecs: 30,
+  defaultMode: "one-shot",
 };
 
 function isWebSearchConfig(
@@ -68,9 +101,13 @@ function isWebSearchConfig(
     value.endpoint.trim().length > 0 &&
     typeof value.curlTimeoutSecs === "number" &&
     Number.isInteger(value.curlTimeoutSecs) &&
-    value.curlTimeoutSecs >= 1
-  );
-}
+    value.curlTimeoutSecs >= 1 &&
+    // reject an unknown mode at config load rather than on every search:
+    // v1beta answers a hard error for names it does not know (e.g. "turbo").
+    typeof value.defaultMode === "string" &&
+    (SEARCH_MODES as readonly string[]).includes(value.defaultMode)
+    );
+    }
 
 const WEB_SEARCH_CONFIG_SCHEMA: ExtensionConfigSchema<WebSearchExtConfig> = {
   validate: isWebSearchConfig,
@@ -298,6 +335,20 @@ export function createWebSearchTool(
           description: `The maximum number of results to return (default: ${config.defaultMaxResults}).`,
         }),
       ),
+      mode: Type.Optional(
+        Type.Union(
+          SEARCH_MODES.map((m) => Type.Literal(m)),
+          {
+            description:
+              `Retrieval depth (default: ${config.defaultMode}). ` +
+              "'fast' ~1s, shallowest excerpts — use for a single fact: a version number, " +
+              "a release date, whether an API still exists. English and Japanese only. " +
+              "'one-shot' ~1.5s, fuller excerpts — the sensible default for documentation lookups. " +
+              "'agentic' ~2.5s, multi-hop retrieval — use when one page will not answer it, " +
+              "e.g. comparing options or tracing a change across releases.",
+          },
+        ),
+      ),
     }),
 
     async execute(_toolCallId, params, signal) {
@@ -321,6 +372,9 @@ export function createWebSearchTool(
         objective: p.objective,
         max_results: p.max_results ?? config.defaultMaxResults,
         excerpts: { max_chars_per_result: 2000 },
+        // always explicit: never inherit whatever the server default happens
+        // to be on a given day.
+        mode: p.mode ?? config.defaultMode,
       };
       if (p.search_queries?.length) {
         body.search_queries = p.search_queries;

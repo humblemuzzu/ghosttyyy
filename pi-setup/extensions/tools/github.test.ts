@@ -431,3 +431,63 @@ describe.skipIf(!ENABLED)("librarian e2e", () => {
 		expect(result.content.length).toBeGreaterThan(100);
 	}, 180_000);
 });
+
+// ---------------------------------------------------------------------------
+// repository parameter handling (no network, always runs)
+//
+// observed in a real session: the model called search_github with
+// `{"pattern": ""}` and no repository, and pi answered with a bare
+// "must have required properties repository". it had reached for a GitHub tool
+// while meaning to search the local checkout, and the message told it nothing
+// useful. `repository` is now Optional in the schema so execute() can answer
+// with the alias list AND the local-tool alternative.
+// ---------------------------------------------------------------------------
+
+describe("github tools: repository parameter", () => {
+	const withRepo = [
+		["read_github", "read"],
+		["search_github", "grep"],
+		["list_directory_github", "ls"],
+		["glob_github", "find"],
+		["commit_search", "bash (git log)"],
+		["diff", "bash (git diff)"],
+	] as const;
+
+	it("does not mark repository as schema-required (so execute can explain)", async () => {
+		const mod: any = await import("./github");
+		const factories: Record<string, string> = {
+			read_github: "createReadGithubTool",
+			search_github: "createSearchGithubTool",
+			list_directory_github: "createListDirectoryGithubTool",
+			glob_github: "createGlobGithubTool",
+			commit_search: "createCommitSearchTool",
+			diff: "createDiffTool",
+		};
+		for (const [name] of withRepo) {
+			const tool = mod[factories[name]]();
+			expect(tool.parameters.required ?? []).not.toContain("repository");
+			expect(Object.keys(tool.parameters.properties)).toContain("repository");
+		}
+	});
+
+	it("explains the miss and names the local alternative", async () => {
+		const mod: any = await import("./github");
+		const tool = mod.createSearchGithubTool();
+		// the exact shape observed in the failing session
+		const result = await tool.execute("t", { pattern: "" }, undefined, undefined, { cwd: "/tmp" });
+		expect(result.isError).toBe(true);
+		const text = String(result.content[0].text);
+		expect(text).toContain("repository");
+		expect(text).toContain("repo, repo_url, url");
+		expect(text).toContain("`grep`");
+	});
+
+	it("accepts the `repo` alias models actually reach for", async () => {
+		const mod: any = await import("./github");
+		const tool = mod.createGlobGithubTool();
+		// no network: a bad URL still proves the alias resolved past the guard
+		const result = await tool.execute("t", { repo: "not-a-url" }, undefined, undefined, { cwd: "/tmp" });
+		const text = String(result.content[0].text);
+		expect(text).not.toContain("missing required parameter");
+	});
+});

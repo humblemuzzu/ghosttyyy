@@ -6,8 +6,8 @@
   },
   "providers": {
     "anthropic": {
-      "enabled": false,
-      "fetchStatus": false
+      "enabled": "auto",
+      "fetchStatus": true
     },
     "copilot": {
       "enabled": false,
@@ -32,10 +32,6 @@
     "zai": {
       "enabled": "auto",
       "fetchStatus": false
-    },
-    "kimi": {
-      "enabled": true,
-      "fetchStatus": false
     }
   },
   "behavior": {
@@ -57,8 +53,7 @@
     "antigravity",
     "codex",
     "kiro",
-    "anthropic",
-    "kimi"
+    "anthropic"
   ],
-  "defaultProvider": null
+  "defaultProvider": "anthropic"
 }

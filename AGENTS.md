@@ -32,14 +32,20 @@ Verification harnesses live in `pi-setup/port-harness/`.
 ### Provider Chain
 
 ```
-pi CLI (v0.82.1) — @earendil-works/pi-coding-agent
+pi CLI (v0.83.0) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
        └─ Claude API
 ```
 
-Current default provider is `anthropic` with `claude-opus-4-8` (set in settings.json). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and `openai-codex` with `gpt-5.5` is also available. Switch the default any time with `/model`.
+Current default provider is `anthropic` with **`claude-opus-5`** (set in settings.json, and listed in `enabledModels` so it appears in `/model`). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and `openai-codex` with `gpt-5.5`/`gpt-5.6-sol` is also available. Switch the default any time with `/model`.
+
+**When you change the default provider, also update `pi-sub-core-settings.json`:**
+its `defaultProvider` is what `get_current_usage` reports on, and a provider
+left at `enabled: false` there returns `{}` no matter what. Anthropic is now
+`enabled: "auto"` + `fetchStatus: true`, which surfaces real Claude Max quota
+(5-hour and weekly windows) in the status bar and in both usage tools.
 
 **Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
 
@@ -515,14 +521,14 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.82.1 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.83.0 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.5 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
-| `pi-context` | 2.1.1 | Context management: context_log, context_tag, context_checkout | No |
+| `pi-context` | 2.1.2 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
-| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
+| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (**config**: see below) |
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
-| `pi-codex-goal` | 0.1.38 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-codex-goal` | 0.1.39 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
 | `pi-mcp-adapter` | 2.15.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
 
 **Active in settings.json (8):** `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `pi-codex-goal`, `pi-mcp-adapter`
@@ -540,6 +546,21 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 **Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
 **Removed 2026-07-23:** `pi-computer-use` — uninstalled entirely (git clone + `helpers/` copy). It was installed-but-inactive, so its `computer-use` skill loaded but its GUI tools (`screenshot`/`click`/`type_text`) never registered — a dead skill. Removed to stop it surfacing in the skill list.
+
+### pi 0.83.0 migration (2026-07-30) — live update off 0.82.1 + pi-context 2.1.2 + pi-codex-goal 0.1.39
+
+Updated `pi update` → **0.83.0** and the two flagged packages (`pi-context` 2.1.1→2.1.2, `pi-codex-goal` 0.1.38→0.1.39). **Audited against the real tarballs before updating** (`npm pack` + diff, no install). pi 0.83.0 is mostly additive but carries **one Breaking Change** (TypeBox 1.3.7); our source is clean of it. One patched core file (`resource-loader.js`) had real upstream drift and was **re-derived, not blind-copied**.
+
+- **0.83.0 Breaking Change — TypeBox → 1.3.7:** removes `Type.Base/Awaited/Promise/AsyncIterator/Iterator/Options` and `Value.Mutate`, and fixes compiled validation of nullable array tool args (#7243). **Verified our 24 tools + all extensions are CLEAN** — grep of our `.ts` source for those APIs returned zero (the only matches were inside vendored `node_modules/@sinclair/typebox` internals/readme). No migration needed.
+- **0.83.0 additive:** `pi auth print-api-key`/`print-bearer-token` credential export with OAuth refresh (#7168), headless OpenRouter login via pasted redirect URL/code, Claude Opus 5 on GitHub Copilot, `ctx.scopedModels` exposed to extensions (#7191), per-request `fetch` injection, `"pending"` stop reason, raw provider stop reasons surfacing unmapped terminal reasons as errors (#7272). OAuth now refreshes tokens with <5 min validity remaining (#7168).
+- **pi-core patches — precise per-file handling (verified stock 0.82.1 vs stock 0.83.0):**
+  - `resource-loader.js` — **RE-DERIVED**, not blind-copied. 0.83.0 added a new `findShadowedContextFile()` worktree-shadowing function (~lines 52-80, imports `basename` + `findGitPaths` from `footer-data-provider.js`) — **outside** our patch region. Our conflict-suppression edit is at the `addExtensionConflictDiagnostics` method (~line 458, `for (const conflict of conflicts) errors.push()` loop, anchor still present). Copied fresh stock 0.83.0 live → repo as new canonical, applied our suppression edit onto it (removed the loop, kept `findShadowedContextFile`), deployed repo → live. Verified live: `findShadowedContextFile` ×2 (feature preserved), conflict-push loop ×0, `LOCAL PATCH` marker ×1, node parse OK. Blind-copying the 0.82.1 repo patch would have **reverted the worktree-shadowing feature**.
+  - `keybindings.js` + `session-selector.js` — **0 upstream drift** 0.82.1→0.83.0 (stock byte-identical, `diff` confirmed). Repo patches deployed as-is; verified live `app.session.pin` ×2, session-selector 7 `LOCAL PATCH`.
+  - pi-tui width patch — `pi update` brought a fresh **v0.83.0** pi-tui copy (into pi's own `node_modules`); `apply-pi-tui-width-patch.mjs` patched it cleanly (anchors unchanged), all other copies already-patched, exit 0.
+- **Packages (targeted `pi update npm:<pkg>`):**
+  - **pi-context 2.1.1 → 2.1.2** — single refinement in `src/index.ts`: adds `didConversationAdvance()` so passive session entries (`custom`/`label`/`session_info`/`model_change`/`thinking_level_change`) no longer cancel a requested compaction (only real conversation advance does) + a `test` npm script. No tool/command rename, no API surface change.
+  - **pi-codex-goal 0.1.38 → 0.1.39** — pauses an active goal when a hidden continuation run only calls `get_goal`/`*__get_goal` with no actionable progress (stops blocked status-inspection loops, surfaces `/goal resume`) + a token-budget doc note (#47). Goal-runtime internals only; `get_goal`/`create_goal`/`update_goal` unchanged.
+- **Smoke-tested:** `pi --version` = 0.83.0; `verify-patches.sh` ALL PASS (8/8); `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply (`UPDATE_OK`), zero load/tool/provider/conflict errors. Rollback backup: `~/pi-update-backup-20260730_235801` (auth.json + patched 0.82.1 dist files + VERSION).
 
 ### pi 0.82.1 migration (2026-07-27) — live update off 0.82.0 + pi-web-access 0.14.0 + pi-mcp-adapter 2.15.0
 
@@ -697,7 +718,7 @@ Installed packages ship their own skills inside their package dir: `context-mana
 ```json
 {
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-8",
+  "defaultModel": "claude-opus-5",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }
@@ -830,7 +851,25 @@ When pi or any package gets updated:
 
 2. **condensed-milk-pi**: REMOVED 2026-07-30 — do not reinstall. See "condensed-milk-pi: REMOVED" above for why (it reported failed git commands as successes).
 
-3. **pi-sub-bar updated**: CrofAI + Kimi providers are now built-in as of v1.5.0. No patches needed.
+3. **pi-sub-bar / pi-sub-core updated**: no code patches, but the settings files
+   must only name providers the installed version actually ships. As of
+   **pi-sub-core 1.5.0** those are exactly:
+
+   `anthropic, copilot, gemini, antigravity, codex, kiro, zai`
+
+   There is **no `kimi` and no `crofai`** — an earlier note here claimed they
+   were "built-in as of v1.5.0", which was wrong and cost a debugging session.
+   A provider named in `pi-sub-core-settings.json` that has no factory breaks
+   the usage tools in two different ways:
+
+   - in `providers{}` → `PROVIDER_FACTORIES[name] is not a function`
+   - in `providerOrder[]` → `Cannot read properties of undefined (reading 'enabled')`
+
+   Both surface only when `get_all_usage` runs, so a normal boot looks clean.
+   After any pi-sub-* update, re-check both keys in
+   `pi-sub-core-settings.json` **and** `pi-sub-bar-settings.json` against the
+   `PROVIDER_FACTORIES` map in
+   `~/.pi/agent/npm/node_modules/@marckrenn/pi-sub-core/src/providers/registry.ts`.
 
 4. **pi-tool-display updated**: Config file at `~/.pi/agent/extensions/pi-tool-display/config.json` is NOT touched by npm updates. But if you delete and reinstall, **recreate the config** with all tool overrides set to `false`. Without it, pi-tool-display overwrites our custom tools.
 

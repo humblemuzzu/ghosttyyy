@@ -26,6 +26,61 @@ import {
 } from "./lib/github";
 import { boxRendererWindowed, textSection, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
+import { resolveParam } from "./lib/params";
+
+/*
+ * SHARED `repository` PARAMETER.
+ *
+ * every tool in this file targets a REMOTE repository over the GitHub API, and
+ * every one of them needs the repo. two failure modes were observed in real
+ * sessions:
+ *
+ *   1. the model reaches for a github tool when it meant to search the local
+ *      checkout, and sends no repository at all (`{"pattern": ""}`)
+ *   2. the model calls the parameter `repo`, which is the more natural name
+ *
+ * declaring it Optional lets both reach execute(), where requireRepository()
+ * can say what is actually wrong and which tool to use instead — rather than
+ * pi's generic "must have required properties repository".
+ */
+const REPOSITORY_PARAM = Type.Optional(
+	Type.String({
+		description:
+			"REQUIRED. URL of the REMOTE repository to query, e.g. https://github.com/owner/repo. " +
+			"This tool never reads the local working copy.",
+	}),
+);
+
+/** parameter names models actually use for the repository, canonical first. */
+const REPO_PARAMS = ["repository", "repo", "repo_url", "url"] as const;
+
+/**
+ * resolve the repository, or return a result that tells the model precisely
+ * what to do instead of guessing again.
+ */
+function requireRepository(
+	params: Record<string, unknown>,
+	toolName: string,
+	localAlternative: string,
+): { value: string } | { error: any } {
+	const value = resolveParam(params, REPO_PARAMS);
+	if (value) return { value };
+	return {
+		error: {
+			content: [
+				{
+					type: "text" as const,
+					text:
+						`${toolName}: missing required parameter "repository" (aliases: repo, repo_url, url).\n\n` +
+						`${toolName} queries a REMOTE repository through the GitHub API and cannot run without one, ` +
+						`e.g. repository: "https://github.com/owner/repo".\n\n` +
+						`If you meant to search the local working copy in this session, use \`${localAlternative}\` instead.`,
+				},
+			],
+			isError: true as const,
+		},
+	};
+}
 
 /** collapsed: head 3 + tail 5 = 8 visual lines */
 const COLLAPSED_EXCERPTS: Excerpt[] = [
@@ -51,7 +106,7 @@ export function createReadGithubTool(): ToolDefinition {
 
 		parameters: Type.Object({
 			path: Type.String({ description: "The path to the file to read" }),
-			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
+			repository: REPOSITORY_PARAM,
 			read_range: Type.Optional(
 				Type.Array(Type.Number(), {
 					minItems: 2,
@@ -63,7 +118,9 @@ export function createReadGithubTool(): ToolDefinition {
 
 		async execute(_id, params) {
 			try {
-				const ref = parseRepoUrl(params.repository);
+				const repo = requireRepository(params as any, "read_github", "read");
+				if ("error" in repo) return repo.error;
+				const ref = parseRepoUrl(repo.value);
 				const data = ghApi<any>(`repos/${repoSlug(ref)}/contents/${params.path}`);
 
 				if (Array.isArray(data)) {
@@ -138,17 +195,18 @@ export function createSearchGithubTool(): ToolDefinition {
 		name: "search_github",
 		label: "Search GitHub",
 		description:
-			"Search for code patterns and content in a GitHub repository.\n\n" +
+			"Search code in a REMOTE GitHub repository over the API. Requires `repository`. " +
+			"This never looks at the local working copy — to search the code in this session use `grep`.\n\n" +
 			"WHEN TO USE THIS TOOL:\n" +
-			"- When you need to find code patterns across a repository\n" +
-			"- When you want to understand how functionality is implemented\n\n" +
+			"- Finding code patterns in a repository you have NOT cloned locally\n" +
+			"- Understanding how some other project implements something\n\n" +
 			"Supports GitHub search qualifiers (language:, path:, extension:, etc.).",
 
 		parameters: Type.Object({
 			pattern: Type.String({
 				description: "The search pattern. Supports GitHub search operators (AND, OR, NOT) and qualifiers.",
 			}),
-			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
+			repository: REPOSITORY_PARAM,
 			path: Type.Optional(Type.String({ description: "Optional path to limit search to" })),
 			limit: Type.Optional(Type.Number({ description: "Max results (default: 30, max: 100)", minimum: 1, maximum: 100 })),
 			offset: Type.Optional(Type.Number({ description: "Results to skip for pagination (default: 0)", minimum: 0 })),
@@ -156,7 +214,9 @@ export function createSearchGithubTool(): ToolDefinition {
 
 		async execute(_id, params) {
 			try {
-				const ref = parseRepoUrl(params.repository);
+				const repo = requireRepository(params as any, "search_github", "grep");
+				if ("error" in repo) return repo.error;
+				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 30;
 				const page = params.offset ? Math.floor(params.offset / limit) + 1 : 1;
 
@@ -242,13 +302,15 @@ export function createListDirectoryGithubTool(): ToolDefinition {
 
 		parameters: Type.Object({
 			path: Type.String({ description: "The directory path to list (defaults to root)" }),
-			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
+			repository: REPOSITORY_PARAM,
 			limit: Type.Optional(Type.Number({ description: "Max entries (default: 100, max: 1000)", minimum: 1, maximum: 1000 })),
 		}),
 
 		async execute(_id, params) {
 			try {
-				const ref = parseRepoUrl(params.repository);
+				const repo = requireRepository(params as any, "list_directory_github", "ls");
+				if ("error" in repo) return repo.error;
+				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 100;
 				const apiPath = params.path === "" || params.path === "." || params.path === "/"
 					? ""
@@ -418,7 +480,7 @@ export function createGlobGithubTool(): ToolDefinition {
 			pattern: Type.Optional(
 				Type.String({ description: "Alias for filePattern." }),
 			),
-			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
+			repository: REPOSITORY_PARAM,
 			limit: Type.Optional(Type.Number({ description: "Max results (default: 100)" })),
 			offset: Type.Optional(Type.Number({ description: "Results to skip (default: 0)" })),
 		}),
@@ -432,7 +494,9 @@ export function createGlobGithubTool(): ToolDefinition {
 						isError: true,
 					};
 				}
-				const ref = parseRepoUrl(params.repository);
+				const repo = requireRepository(params as any, "glob_github", "find");
+				if ("error" in repo) return repo.error;
+				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 100;
 				const offset = params.offset ?? 0;
 
@@ -512,7 +576,7 @@ export function createCommitSearchTool(): ToolDefinition {
 			"- When finding commits that changed specific files",
 
 		parameters: Type.Object({
-			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
+			repository: REPOSITORY_PARAM,
 			query: Type.Optional(Type.String({ description: "Search query for commit messages" })),
 			author: Type.Optional(Type.String({ description: "Filter by author username or email" })),
 			since: Type.Optional(Type.String({ description: 'ISO 8601 date for earliest commit (e.g., "2024-01-01T00:00:00Z")' })),
@@ -524,7 +588,9 @@ export function createCommitSearchTool(): ToolDefinition {
 
 		async execute(_id, params) {
 			try {
-				const ref = parseRepoUrl(params.repository);
+				const repo = requireRepository(params as any, "commit_search", "bash (git log)");
+				if ("error" in repo) return repo.error;
+				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 50;
 				const page = params.offset ? Math.floor(params.offset / limit) + 1 : 1;
 
@@ -614,7 +680,7 @@ export function createDiffTool(): ToolDefinition {
 		parameters: Type.Object({
 			base: Type.String({ description: 'The base ref to compare from (e.g., "main", "v1.0.0", or commit SHA)' }),
 			head: Type.String({ description: 'The head ref to compare to (e.g., "feature-branch", "v2.0.0", or commit SHA)' }),
-			repository: Type.String({ description: 'Repository URL (e.g., https://github.com/owner/repo)' }),
+			repository: REPOSITORY_PARAM,
 			includePatches: Type.Optional(Type.Boolean({
 				description: "Include unified diff patches per file (token heavy). Default false.",
 			})),
@@ -622,7 +688,9 @@ export function createDiffTool(): ToolDefinition {
 
 		async execute(_id, params) {
 			try {
-				const ref = parseRepoUrl(params.repository);
+				const repo = requireRepository(params as any, "diff", "bash (git diff)");
+				if ("error" in repo) return repo.error;
+				const ref = parseRepoUrl(repo.value);
 				const data = ghApi<any>(
 					`repos/${repoSlug(ref)}/compare/${encodeURIComponent(params.base)}...${encodeURIComponent(params.head)}`,
 				);

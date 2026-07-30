@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME } from "../config.js";
 import { loadThemeFromPath } from "../modes/interactive/theme/theme.js";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.js";
 import { createEventBus } from "./event-bus.js";
 import { clearExtensionCache, createExtensionRuntime, loadExtensionFromFactory, loadExtensionsCached, } from "./extensions/loader.js";
+import { findGitPaths } from "./footer-data-provider.js";
 import { DefaultPackageManager } from "./package-manager.js";
 import { loadPromptTemplates } from "./prompt-templates.js";
 import { SettingsManager } from "./settings-manager.js";
@@ -48,6 +49,35 @@ function loadContextFileFromDir(dir) {
     }
     return null;
 }
+/**
+ * The main repo's context file that a nested linked worktree's own copy shadows: both
+ * are the same tracked AGENTS.md/CLAUDE.md, so loading both loads it twice. Returns
+ * undefined when nothing is shadowed, leaving normal ancestor inheritance alone.
+ *
+ * Returned canonicalized (realpath), because `git worktree add` writes the `.git`
+ * file's `gitdir:` target in realpath form while cwd may still be symlinked
+ * (macOS `/tmp` -> `/private/tmp`).
+ */
+function findShadowedContextFile(cwd) {
+    const gitPaths = findGitPaths(cwd);
+    if (!gitPaths)
+        return undefined;
+    const commonGitDir = canonicalizePath(gitPaths.commonGitDir);
+    const worktreeRoot = canonicalizePath(gitPaths.repoDir);
+    const mainRepoRoot = dirname(commonGitDir);
+    // False for an ordinary repo, where the two are the same dir, and for a sibling
+    // worktree (`git worktree add ../feat`), whose main repo is not an ancestor.
+    if (!worktreeRoot.startsWith(`${mainRepoRoot}${sep}`))
+        return undefined;
+    // dirname of the common git dir is the main worktree root only when that dir is
+    // itself checked out from the same repo. In a bare layout (`proj/.bare` +
+    // `proj/main`) it is just the directory holding `.bare`, which tracks nothing; a
+    // submodule's gitdir has no `commondir`, so it lands under `.git/modules`.
+    if (canonicalizePath(join(mainRepoRoot, ".git")) !== commonGitDir)
+        return undefined;
+    const worktreeContextFile = loadContextFileFromDir(worktreeRoot);
+    return worktreeContextFile ? join(mainRepoRoot, basename(worktreeContextFile.path)) : undefined;
+}
 export function loadProjectContextFiles(options) {
     const resolvedCwd = resolvePath(options.cwd);
     const resolvedAgentDir = resolvePath(options.agentDir);
@@ -59,10 +89,12 @@ export function loadProjectContextFiles(options) {
         seenPaths.add(globalContext.path);
     }
     const ancestorContextFiles = [];
+    const shadowedContextFile = findShadowedContextFile(resolvedCwd);
     let currentDir = resolvedCwd;
     while (true) {
         const contextFile = loadContextFileFromDir(currentDir);
-        if (contextFile && !seenPaths.has(contextFile.path)) {
+        const isShadowed = shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
+        if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
             ancestorContextFiles.unshift(contextFile);
             seenPaths.add(contextFile.path);
         }
@@ -108,11 +140,14 @@ export class DefaultResourceLoader {
     themeDiagnostics;
     agentsFiles;
     systemPrompt;
+    systemPromptSourcePath;
     appendSystemPrompt;
+    appendSystemPromptSourcePaths;
     lastSkillPaths;
     extensionSkillSourceInfos;
     extensionPromptSourceInfos;
     extensionThemeSourceInfos;
+    resourceMetadataByPath;
     lastPromptPaths;
     lastThemePaths;
     loaded;
@@ -154,10 +189,12 @@ export class DefaultResourceLoader {
         this.themeDiagnostics = [];
         this.agentsFiles = [];
         this.appendSystemPrompt = [];
+        this.appendSystemPromptSourcePaths = [];
         this.lastSkillPaths = [];
         this.extensionSkillSourceInfos = new Map();
         this.extensionPromptSourceInfos = new Map();
         this.extensionThemeSourceInfos = new Map();
+        this.resourceMetadataByPath = new Map();
         this.lastPromptPaths = [];
         this.lastThemePaths = [];
         this.loaded = false;
@@ -180,8 +217,14 @@ export class DefaultResourceLoader {
     getSystemPrompt() {
         return this.systemPrompt;
     }
+    getSystemPromptSource() {
+        return this.systemPromptSourcePath ? { path: this.systemPromptSourcePath } : undefined;
+    }
     getAppendSystemPrompt() {
         return this.appendSystemPrompt;
+    }
+    getAppendSystemPromptSources() {
+        return this.appendSystemPromptSourcePaths.map((path) => ({ path }));
     }
     extendResources(paths) {
         const skillPaths = this.normalizeExtensionPaths(paths.skillPaths ?? []);
@@ -198,15 +241,15 @@ export class DefaultResourceLoader {
         }
         if (skillPaths.length > 0) {
             this.lastSkillPaths = this.mergePaths(this.lastSkillPaths, skillPaths.map((entry) => entry.path));
-            this.updateSkillsFromPaths(this.lastSkillPaths);
+            this.updateSkillsFromPaths(this.lastSkillPaths, this.resourceMetadataByPath);
         }
         if (promptPaths.length > 0) {
             this.lastPromptPaths = this.mergePaths(this.lastPromptPaths, promptPaths.map((entry) => entry.path));
-            this.updatePromptsFromPaths(this.lastPromptPaths);
+            this.updatePromptsFromPaths(this.lastPromptPaths, this.resourceMetadataByPath);
         }
         if (themePaths.length > 0) {
             this.lastThemePaths = this.mergePaths(this.lastThemePaths, themePaths.map((entry) => entry.path));
-            this.updateThemesFromPaths(this.lastThemePaths);
+            this.updateThemesFromPaths(this.lastThemePaths, this.resourceMetadataByPath);
         }
     }
     async loadProjectTrustExtensions() {
@@ -233,7 +276,9 @@ export class DefaultResourceLoader {
         const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
             temporary: true,
         });
-        const metadataByPath = new Map();
+        // Kept on the instance so post-reload passes (extendResources) can still resolve package metadata.
+        this.resourceMetadataByPath = new Map();
+        const metadataByPath = this.resourceMetadataByPath;
         this.extensionSkillSourceInfos = new Map();
         this.extensionPromptSourceInfos = new Map();
         this.extensionThemeSourceInfos = new Map();
@@ -332,16 +377,25 @@ export class DefaultResourceLoader {
         };
         const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
         this.agentsFiles = resolvedAgentsFiles.agentsFiles;
-        const baseSystemPrompt = resolvePromptInput(this.systemPromptSource ?? this.discoverSystemPromptFile(), "system prompt");
+        const systemPromptSource = this.systemPromptSource ?? this.discoverSystemPromptFile();
+        const baseSystemPrompt = resolvePromptInput(systemPromptSource, "system prompt");
         this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
-        const appendSources = this.appendSystemPromptSource ??
-            (this.discoverAppendSystemPromptFile() ? [this.discoverAppendSystemPromptFile()] : []);
+        this.systemPromptSourcePath =
+            systemPromptSource && existsSync(systemPromptSource) ? resolvePath(systemPromptSource) : undefined;
+        let appendSources = this.appendSystemPromptSource;
+        if (!appendSources) {
+            const discoveredAppendSystemPromptFile = this.discoverAppendSystemPromptFile();
+            appendSources = discoveredAppendSystemPromptFile ? [discoveredAppendSystemPromptFile] : [];
+        }
         const baseAppend = appendSources
             .map((s) => resolvePromptInput(s, "append system prompt"))
             .filter((s) => s !== undefined);
         this.appendSystemPrompt = this.appendSystemPromptOverride
             ? this.appendSystemPromptOverride(baseAppend)
             : baseAppend;
+        this.appendSystemPromptSourcePaths = appendSources
+            .filter((source) => existsSync(source))
+            .map((source) => resolvePath(source));
         this.loaded = true;
     }
     async loadCurrentExtensionSet(options) {
@@ -404,10 +458,10 @@ export class DefaultResourceLoader {
     addExtensionConflictDiagnostics(extensionsResult) {
         // Detect extension conflicts (tools, commands, flags with same names from different extensions)
         // Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
-        // LOCAL PATCH: run for internal bookkeeping but do NOT push conflicts to
-        // errors — they are fatal at startup and block launch even though user
-        // extensions already win by load order (first-wins). Safety net for any
-        // future extension-vs-package tool-name collision.
+        // LOCAL PATCH: run detection for internal bookkeeping but do NOT push conflicts
+        // to errors — pi treats extension errors as fatal boot errors. User extensions
+        // load before packages and win by first-wins precedence, so the diagnostic is
+        // the only problem. (see pi-setup AGENTS.md "Extension Tool Conflict Suppression")
         this.detectExtensionConflicts(extensionsResult.extensions);
     }
     mapSkillPath(resource, metadataByPath) {

@@ -1,9 +1,23 @@
 /**
  * format_file tool — runs a code formatter on a file.
  *
- * tries formatters in order: prettier, biome. uses whichever is
- * available on PATH (nix provides these). captures before/after
- * diff and tracks the change for undo_edit.
+ * tries prettier, then biome, and captures a before/after diff which is
+ * tracked for undo_edit.
+ *
+ * RESOLUTION ORDER MATTERS. this used to check `which <name>` only, i.e. the
+ * GLOBAL PATH. almost no JavaScript project installs prettier globally — it is
+ * a devDependency in `node_modules/.bin`. so the tool reported "no formatter
+ * found" in repositories that very much had one, and the only way to make it
+ * work was a global install the project never asked for.
+ *
+ * now, for the file being formatted, we look:
+ *   1. in `node_modules/.bin` of that file's directory and every ancestor
+ *      (the project's own pinned version — the one its config expects)
+ *   2. on PATH (a global install)
+ *   3. via `bunx`/`npx` (no install at all, resolves the package on demand)
+ *
+ * the first hit wins, so a project's pinned formatter always beats a global
+ * one of a different version.
  */
 
 import * as fs from "node:fs";
@@ -26,6 +40,16 @@ const COLLAPSED_EXCERPTS: Excerpt[] = [
 
 type Formatter = { name: string; args: (file: string) => string[] };
 
+/** a formatter resolved to something actually runnable. */
+type ResolvedFormatter = {
+	/** display name, e.g. "prettier (project)" */
+	label: string;
+	/** executable to spawn */
+	command: string;
+	/** full argv, including any runner prefix like `npx prettier` */
+	argv: string[];
+};
+
 const FORMATTERS: Formatter[] = [
 	{
 		name: "prettier",
@@ -37,10 +61,56 @@ const FORMATTERS: Formatter[] = [
 	},
 ];
 
-function findFormatter(): Formatter | null {
+/** `node_modules/.bin/<name>` for the file's directory and every ancestor. */
+function findLocalBin(name: string, startDir: string): string | null {
+	let dir = startDir;
+	while (true) {
+		const candidate = path.join(dir, "node_modules", ".bin", name);
+		try {
+			fs.accessSync(candidate, fs.constants.X_OK);
+			return candidate;
+		} catch {
+			/* keep walking up */
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) return null;
+		dir = parent;
+	}
+}
+
+function onPath(name: string): boolean {
+	return spawnSync("which", [name], { encoding: "utf-8", timeout: 3000 }).status === 0;
+}
+
+/**
+ * resolve a runnable formatter for `filePath`, preferring the project's own.
+ *
+ * `bunx`/`npx` are last: they can hit the network on a cold cache, so they are
+ * a convenience fallback rather than the normal path.
+ */
+function findFormatter(filePath: string): ResolvedFormatter | null {
+	const startDir = path.dirname(path.resolve(filePath));
+
 	for (const fmt of FORMATTERS) {
-		const result = spawnSync("which", [fmt.name], { encoding: "utf-8", timeout: 3000 });
-		if (result.status === 0) return fmt;
+		const local = findLocalBin(fmt.name, startDir);
+		if (local) {
+			return { label: `${fmt.name} (project)`, command: local, argv: fmt.args(filePath) };
+		}
+	}
+	for (const fmt of FORMATTERS) {
+		if (onPath(fmt.name)) {
+			return { label: `${fmt.name} (global)`, command: fmt.name, argv: fmt.args(filePath) };
+		}
+	}
+	for (const runner of ["bunx", "npx"]) {
+		if (!onPath(runner)) continue;
+		const fmt = FORMATTERS[0]; // prettier: the one npx can resolve by bare name
+		const prefix = runner === "npx" ? ["--yes", fmt.name] : [fmt.name];
+		return {
+			label: `${fmt.name} (via ${runner})`,
+			command: runner,
+			argv: [...prefix, ...fmt.args(filePath)],
+		};
 	}
 	return null;
 }
@@ -95,13 +165,19 @@ export function createFormatFileTool(): ToolDefinition {
 				} as any;
 			}
 
-			const formatter = findFormatter();
+			const formatter = findFormatter(resolved);
 			if (!formatter) {
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: "no formatter found. install prettier or biome.",
+							text:
+								"no formatter available. checked, in order: node_modules/.bin of this file's " +
+								"directory and its ancestors, then PATH, then bunx/npx.\n\n" +
+								"fix with one of:\n" +
+								"  npm i -D prettier      (project-local, preferred — pins the version)\n" +
+								"  npm i -g prettier      (global, available everywhere)\n" +
+								"  npm i -D @biomejs/biome",
 						},
 					],
 					isError: true,
@@ -111,7 +187,7 @@ export function createFormatFileTool(): ToolDefinition {
 			return withFileLock(resolved, async () => {
 				const before = fs.readFileSync(resolved, "utf-8");
 
-				const result = spawnSync(formatter.name, formatter.args(resolved), {
+				const result = spawnSync(formatter.command, formatter.argv, {
 					encoding: "utf-8",
 					timeout: 30_000,
 					cwd: ctx.cwd,
@@ -120,7 +196,7 @@ export function createFormatFileTool(): ToolDefinition {
 				if (result.status !== 0) {
 					const err = result.stderr?.trim() || result.stdout?.trim() || `exit code ${result.status}`;
 					return {
-						content: [{ type: "text" as const, text: `${formatter.name} failed: ${err}` }],
+						content: [{ type: "text" as const, text: `${formatter.label} failed: ${err}` }],
 						isError: true,
 					} as any;
 				}
@@ -155,7 +231,7 @@ export function createFormatFileTool(): ToolDefinition {
 					content: [
 						{
 							type: "text" as const,
-							text: `formatted ${path.basename(resolved)} with ${formatter.name}.\n\n${diff}`,
+							text: `formatted ${path.basename(resolved)} with ${formatter.label}.\n\n${diff}`,
 						},
 					],
 					details: { header: resolved },

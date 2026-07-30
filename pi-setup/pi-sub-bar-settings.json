@@ -22,7 +22,7 @@
     "resetTimeContainment": "blank",
     "statusIndicatorMode": "icon",
     "statusIconPack": "emoji",
-    "statusIconCustom": "✓⚠×?",
+    "statusIconCustom": "\u2713\u26a0\u00d7?",
     "statusProviderDivider": false,
     "statusDismissOk": true,
     "showProviderName": true,
@@ -34,7 +34,7 @@
     "showWindowTitle": true,
     "boldWindowTitle": true,
     "showUsageLabels": true,
-    "dividerCharacter": "│",
+    "dividerCharacter": "\u2502",
     "dividerColor": "dim",
     "dividerBlanks": 1,
     "showProviderDivider": true,
@@ -107,13 +107,6 @@
         "showTokens": true,
         "showMonthly": true
       }
-    },
-    "kimi": {
-      "showStatus": false,
-      "windows": {
-        "showWeek": true,
-        "show5h": true
-      }
     }
   },
   "displayThemes": [],
@@ -139,7 +132,7 @@
     "resetTimeContainment": "blank",
     "statusIndicatorMode": "icon",
     "statusIconPack": "emoji",
-    "statusIconCustom": "✓⚠×?",
+    "statusIconCustom": "\u2713\u26a0\u00d7?",
     "statusProviderDivider": false,
     "statusDismissOk": true,
     "showProviderName": true,
@@ -151,7 +144,7 @@
     "showWindowTitle": true,
     "boldWindowTitle": true,
     "showUsageLabels": true,
-    "dividerCharacter": "│",
+    "dividerCharacter": "\u2502",
     "dividerColor": "dim",
     "dividerBlanks": 1,
     "showProviderDivider": true,
