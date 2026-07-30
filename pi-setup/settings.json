@@ -1,10 +1,10 @@
 {
-  "lastChangelogVersion": "0.81.1",
-  "hideThinkingBlock": true,
+  "lastChangelogVersion": "0.82.1",
+  "hideThinkingBlock": false,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-8",
+  "defaultModel": "claude-opus-5",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -40,7 +40,6 @@
   "doubleEscapeAction": "tree",
   "quietStartup": true,
   "packages": [
-    "npm:pi-web-access",
     "npm:pi-context",
     "npm:pi-token-burden",
     "npm:@benvargas/pi-claude-code-use",
@@ -49,8 +48,7 @@
     "npm:pi-tool-display",
     "npm:@tomooshi/condensed-milk-pi",
     "npm:pi-codex-goal",
-    "npm:pi-mcp-adapter",
-    "npm:pi-tasks"
+    "npm:pi-mcp-adapter"
   ],
   "terminal": {
     "clearOnShrink": true

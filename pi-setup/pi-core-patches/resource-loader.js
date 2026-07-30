@@ -33,6 +33,9 @@ function loadContextFileFromDir(dir) {
         const filePath = join(dir, filename);
         if (existsSync(filePath)) {
             try {
+                if (!statSync(filePath).isFile()) {
+                    continue;
+                }
                 return {
                     path: filePath,
                     content: readFileSync(filePath, "utf-8"),
@@ -401,7 +404,10 @@ export class DefaultResourceLoader {
     addExtensionConflictDiagnostics(extensionsResult) {
         // Detect extension conflicts (tools, commands, flags with same names from different extensions)
         // Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
-        // LOCAL PATCH: Tool conflicts are intentional when user extensions override package tools — suppress the diagnostic (else pi refuses to start). Kept as a safety net.
+        // LOCAL PATCH: run for internal bookkeeping but do NOT push conflicts to
+        // errors — they are fatal at startup and block launch even though user
+        // extensions already win by load order (first-wins). Safety net for any
+        // future extension-vs-package tool-name collision.
         this.detectExtensionConflicts(extensionsResult.extensions);
     }
     mapSkillPath(resource, metadataByPath) {

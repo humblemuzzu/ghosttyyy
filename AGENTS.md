@@ -19,7 +19,7 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 ### Provider Chain
 
 ```
-pi CLI (v0.81.1) — @earendil-works/pi-coding-agent
+pi CLI (v0.82.1) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
@@ -530,9 +530,8 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.81.1 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.82.1 | The pi agent itself (installed via homebrew npm) | No |
 | `@benvargas/pi-claude-code-use` | 1.0.5 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
-| `pi-web-access` | 0.13.0 | Web access: read pages, search, GitHub API, librarian skill | No |
 | `pi-context` | 2.1.1 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (CrofAI/Kimi now built-in) |
@@ -540,12 +539,15 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `@tomooshi/condensed-milk-pi` | 1.9.0 | Bash output compression + context-level stale result masking | **Yes** |
 | `pi-codex-goal` | 0.1.38 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
-| `pi-mcp-adapter` | 2.11.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
-| `pi-tasks` | 0.2.0 | Execution-contract task engine — 12 `task_*` tools + `/tasks` + status widget; evidence-gated completion, atomic step decomposition, compaction-safe resume (edxeth, npm) | No |
+| `pi-mcp-adapter` | 2.15.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
 
-**Active in settings.json:** `pi-web-access`, `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-codex-goal`, `pi-mcp-adapter`, `pi-tasks`
+**Active in settings.json (9):** `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `@tomooshi/condensed-milk-pi`, `pi-codex-goal`, `pi-mcp-adapter`
 
-**Removed 2026-07-23 cleanup:** `pi-gpt-config` (+ its patch), `pi-ask`, `pi-grok-cli` — uninstalled and dropped from packages. Custom Codex `web_search` tool removed (pi-web-access's native `web_search` restored). See the cleanup migration entry below.
+**Removed 2026-07-30 (bdsqqq port, Phase 1):** `pi-web-access` and `pi-tasks` — uninstalled (`pi remove`) and dropped from packages, no backward compatibility kept.
+- `pi-web-access` provided `web_search`, `source_check`, `fetch_content`, `get_search_content`. All four were **removed deliberately**: `web_search` was 100% dead (OpenAI rejected the model for ChatGPT-account Codex auth, Exa hit its free rate limit, Perplexity key invalid) and `source_check` silently degraded to `missing-evidence` because it consumes `web_search`. Replaced in Phase 3 by a self-contained Parallel AI `web_search` tool (ported from bdsqqq). Page reading is covered by our own `read_web_page` tool.
+- `pi-tasks` provided 12 `task_*` tools + `/tasks` + a status widget. Removed because **array parameters were unusable**: its TypeBox schema is correct (`Type.Array`, `dist/src/tools.js:63`) but arrays arrived JSON-stringified and were rejected, so `task_plan` always failed and every tool gated behind it was unreachable.
+
+**Removed 2026-07-23 cleanup:** `pi-gpt-config` (+ its patch), `pi-ask`, `pi-grok-cli` — uninstalled and dropped from packages. Custom Codex `web_search` tool removed (pi-web-access's native `web_search` restored).
 
 **Kimi Code usage:** `/model kimi-code/kimi-for-coding:high`. Uses `~/.kimi-code/credentials/kimi-code.json` and `pi-setup/extensions/kimi-code-token.mjs` to refresh Kimi Code subscription OAuth tokens.
 
@@ -555,124 +557,22 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 
 **Removed 2026-07-23:** `pi-computer-use` — uninstalled entirely (git clone + `helpers/` copy). It was installed-but-inactive, so its `computer-use` skill loaded but its GUI tools (`screenshot`/`click`/`type_text`) never registered — a dead skill. Removed to stop it surfacing in the skill list.
 
-### pi 0.81.1 migration (2026-07-23) — live update off 0.80.10 + pi-context 2.1.1 + pi-codex-goal 0.1.38
+### pi 0.82.1 migration (2026-07-27) — live update off 0.82.0 + pi-web-access 0.14.0 + pi-mcp-adapter 2.15.0
 
-Updated `pi update` → **0.81.1** and the two flagged unpatched packages. **Audited against the real 0.81.1 tarball before updating** (downloaded, not installed) — no breaking changes.
+Updated `pi update` → **0.82.1** and the two flagged packages. **Audited against the real 0.82.1/0.14.0/2.15.0 tarballs before updating** (`npm pack`, no install). pi itself is **purely additive** (no `Breaking Changes`/`Removed` section); one patched core file (`resource-loader.js`) had real upstream drift and was **re-derived, not blind-copied**.
 
-- **0.81.0 + 0.81.1 upstream changes are additive** — no `Breaking Changes`/`Removed` section. New: llama.cpp model management (`/login` + `/llama` HF search/download), **full provider-extension API** (extensions can register complete pi-ai providers), Qwen Token Plan built-in providers, expanded usage accounting (tool/compaction/branch-summary persisted), resilient compaction with retry policy, verifiable release source archives.
-- **Compat surface intact (the two things our setup depends on):** `@mariozechner/*` loader aliases (incl `/compat`, `/oauth`) still present → all 46 extension imports resolve; `ctx.modelRegistry` shim still exposes `isUsingOAuth`/`getApiKeyAndHeaders`/`find`/`getAvailable`/`registerProvider`/`refresh` → pi-claude-code-use (Claude path) + our extensions safe. The 0.80.8 "legacy compat removed in a future release" caution has NOT landed yet.
-- **pi-core patches — precise per-file handling (verified stock 0.80.10 vs stock 0.81.1):**
-  - `resource-loader.js` — **RE-DERIVED**, not blind-copied. 0.81.1 added one line (`extension.hidden = isNamed && input.hidden;`) our 0.80.10 patch lacked. Applied our conflict-suppression edit onto fresh stock 0.81.1 (removed the `for (const conflict of conflicts) errors.push()` loop, marked `// LOCAL PATCH`), kept the new hidden-extension line, then copied live → repo as the new canonical.
-  - `keybindings.js` + `session-selector.js` — **0 upstream drift** 0.80.10→0.81.1 (stock byte-identical). Repo patches copied as-is; verified `app.session.pin` (2) + 7 `LOCAL PATCH` blocks live.
-  - pi-tui width patch — `pi update` brought a fresh **v0.81.1** pi-tui copy; `graphemeWidth` anchor unchanged (only 1 unrelated CRLF-split line differs in utils.js) → `apply-pi-tui-width-patch.mjs` patched it cleanly, `--check` exit 0 across all copies.
-- **Packages (targeted `pi update <src>`, NOT `--extensions`):** pi-context 2.1.0→**2.1.1** (one-file change, `context_*` namespaced), pi-codex-goal 0.1.37→**0.1.38** (changelog: *"make Pi the sole compaction owner — remove the hardcoded 50k turn_end trigger"* — this **improves** compat with our native compaction; no API break). Both `*` peer deps.
-- **condensed-milk patch-path FIX (pre-existing latent bug found during this migration):** pi LOADS condensed-milk from `~/.pi/agent/npm/node_modules/...` (per `pi list`), but the patch + `verify-patches.sh` + old `install.sh` all targeted only the `/opt/homebrew` global copy → the loaded copy was **stock** and the `$`-prefix strip was silently ineffective (git status could report "clean" on dirty repos). Fixed: patched the agent-npm copy, and rewrote `install.sh` + `verify-patches.sh` to **find-and-patch/check EVERY** condensed-milk copy. verify-patches now says "(all copies)".
-- **Smoke-tested:** `pi --version` = 0.81.1; `verify-patches.sh` ALL PASS; `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply, zero load/tool/provider/conflict errors. Rollback backup: `~/pi-update-backup-20260723_162405` (auth.json + patched 0.80.10 dist files + settings + VERSION).
-
-### 2026-07-23 cleanup — removed unused extensions, tools, providers, and packages
-
-Big deliberate cleanup of things no longer used (all recoverable from git history if ever needed). Investigated with two read-only audit subagents + dependency tracing before touching anything; the load-bearing patches (resource-loader conflict suppression, pi-tui width, condensed-milk `$`-strip, session pinning, editor label guards) were left **intact**.
-
-- **Extensions deleted:** `btw.ts` (`/btw`), `local-model.ts` (`/local`, `/llm`), `crof.ts` (CrofAI provider), `import-opencode.ts` + `import-opencode/` (one-time opencode session migrator). Removed from `settings.json` `extensions` where listed. `/md` (`md-export.ts`) **kept** — actively used, now documented as active.
-- **Disabled extensions deleted** (were in `extensions-disabled/`, already inert): `brain-loader.ts`, `commandcode.ts`, `handoff.ts`, `opencode-zen.ts`, `pi-vcc-config.json`.
-- **Tools:** deleted `look-at.ts` (+ `prompt.amp.look-at.md`) — image viewing works directly via the custom `read` tool. Deleted the custom Codex-Responses `web-search.ts`; **pi-web-access's native `web_search` restored** (it was always registered, the custom override just won by load order; authenticates with the same `openai-codex` OAuth token, so no "restore" work needed). Custom tool count 25 → 24.
-- **Packages uninstalled + dropped:** `pi-gpt-config` (+ `gpt-config-patches/` and its `verify-patches.sh` check), `pi-ask` (+ `eko24ive-pi-ask.json`; nothing referenced `ask_user`), `pi-grok-cli`. Packages 13 → 10.
-- **Providers removed from `models.json`:** `nvidia`, `local-llama` (+ `crof` via its extension). Providers now: `anthropic`, `deepseek`, `kimi-code`, `sakana`. Removed dangling `crof/*` `enabledModels` entries + crof blocks from `pi-sub-bar-settings.json` / `pi-sub-core-settings.json`.
-- **OpenRouter disabled:** it's a pi **built-in** provider that only appeared in `/model` because `OPENROUTER_API_KEY` was exported in `~/.zshrc` (line 190, now commented). pi marks any provider with credentials "available". No pi-setup file referenced it. Also cleared the cached `~/.pi/agent/models-store.json` so the catalog drops openrouter immediately.
-- **`install.sh`** trimmed: removed the dead `sub-bar-patches/` CrofAI block (dir never existed) and the 3 removed packages; banner counts corrected.
-- **`resource-loader.js` patch KEPT** — after removing the custom `web_search` there are no remaining extension-vs-package tool-name conflicts, but the patch is a harmless boot-safety net (and is checked by `verify-patches.sh`).
-
-### pi 0.80.10 migration (2026-07-17) — live update off 0.80.9 + pi-claude-code-use 1.0.5 + pi-codex-goal 0.1.37
-
-Updated `pi update` → **0.80.10** and two unpatched packages. Additive/fix-only — no breaking changes affecting this setup.
-
-- **0.80.10 changes:** Kimi Coding thinking compatibility — Kimi Coding models now use adaptive thinking correctly; K3 exposes its max level + supports replaying empty-signature thinking blocks. No `Removed`/breaking section. (Relevant only if we adopt native Kimi Coding / K3 — our `kimi-code` is still a custom models.json provider.)
-- **pi-claude-code-use 1.0.4 → 1.0.5 (PRIMARY Claude path) — SAFE, 6-line diff:** adds a no-op `registerEntryRenderer() {}` stub to its capture shim (keeps up with a new pi API so tool-capture doesn't duplicate display-only renderer registrations) + `as ExtensionAPI` → `satisfies ExtensionAPI` (TS tightening). **Does NOT touch the `isUsingOAuth` / `before_provider_request` / `transformPayload` Claude-auth mechanism** (diff-verified before updating). Confirmed live: real Claude round-trip returns on 0.80.10 + 1.0.5.
-- **pi-codex-goal 0.1.36 → 0.1.37 — SAFE:** migrated its internal SDK-runtime *smoke test* off the removed `AuthStorage`/`ModelRegistry` session options to the 0.80.9 `ModelRuntime` contract (in-memory credential store). Dev/test-only; no runtime behavior change.
-- **pi-core patches — NO upstream drift 0.80.9→0.80.10:** all three stock-identical (every diff inside our own suppression/pin edits). Deployed as-is; keybindings keeps Ctrl+X + pin. pi-tui refreshed to **v0.80.10** + re-patched (all copies, `--check` exit 0, re-run after pi update AND package updates).
-- **Smoke-tested:** `pi --version` = 0.80.10; `verify-patches.sh` all PASS; clean `pi -p` boot with real Claude reply, zero errors. Rollback backup: `~/pi-update-backup-20260717_122621`.
-
-### pi 0.80.9 migration (2026-07-16) — live update off 0.80.8
-
-Updated `pi update` → **0.80.9**. Additive/cosmetic upstream — no SDK-breaking changes affecting this setup.
-
-- **0.80.9 changes:** native **Kimi K3** support across built-in providers (Kimi Coding, Moonshot AI + China, OpenRouter, Vercel AI Gateway) + Kimi deferred/dynamic tool loading; xAI login relabeled "Sign in with SuperGrok or X Premium" with default model → Grok 4.5; **removed** Grok 3 / Grok 3 Fast / Grok 4.20 variants / Grok Code Fast 1 from the **built-in** xAI catalog.
-- **Why the xAI removal does NOT affect us:** those removals are from pi's **built-in** `api.x.ai` provider. **pi-grok-cli registers its own catalog via the CLI proxy** (`cli-chat-proxy.grok.com`), so our `grok-4.20-*` / Composer / Grok Build models there are untouched. Reconfirms keeping pi-grok-cli (native xAI still has no Composer 2.5).
-- **pi-core patches — NO upstream drift 0.80.8→0.80.9:** all three (`resource-loader.js`, `keybindings.js`, `session-selector.js`) stock-identical to 0.80.8 (every diff inside our own suppression/pin edits). Deployed repo patches as-is; keybindings keeps BOTH `app.message.copy` (Ctrl+X) AND `app.session.pin`. pi-tui refreshed to **v0.80.9** + re-patched (all copies, `--check` exit 0).
-- **Note (Kimi K3):** our Kimi access is a **custom `models.json` provider** (`kimi-code`), not pi's built-in "Kimi Coding" — so native K3 support doesn't auto-apply; would need a new model entry / endpoint check if we want K3.
-- **Smoke-tested:** `pi --version` = 0.80.9; `verify-patches.sh` all PASS; `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply, zero load/tool/provider errors. Rollback backup: `~/pi-update-backup-20260716_231531` (auth.json + patched 0.80.8 dist files).
-
-### pi 0.80.8 migration (2026-07-16) — live update off 0.80.7 (big ModelRuntime refactor upstream, but compat-shim = safe)
-
-Updated `pi update` → **0.80.8**. This was the scariest-looking release in a while (major SDK model/auth refactor) but turned out **low-risk for this setup** after verification. **Audited before updating** via two read-only subagents + direct inspection of the 0.80.8 dist (`npm pack @earendil-works/pi-coding-agent@0.80.8` to a temp dir, no install).
-
-- **The upstream refactor (`ModelRuntime`):** 0.80.8 centralizes model config + provider auth into a new async `ModelRuntime`, adds provider-owned `/login`, live catalog refresh (`pi update --models`, `models-store.json`), and native xAI device-code OAuth + Grok 4.5 Responses (public `api.x.ai` only — **not** Composer, so pi-grok-cli stays needed). Breaking changes are all at the **SDK-embedder** layer: `CreateAgentSessionOptions.authStorage`/`modelRegistry` → async `modelRuntime`; `AuthStorage` no longer exported; removed `ModelRuntime.getAll/find/getSnapshot/getAuthOptions` projections; `ModelRegistry.getApiKeyAndHeaders()` → `ModelRuntime.getAuth()`; `ModelRegistry.refresh()` sync→`Promise<void>`.
-- **Why it does NOT break us — the key finding:** the **extension-facing `ctx.modelRegistry` is preserved as a backward-compat shim** (`dist/core/model-registry.js`, wired at `extension-runner` `modelRegistry: extensionRunner.getModelRegistry()`) that still exposes `getAll`, `find`, `getApiKeyAndHeaders`, `getApiKeyForProvider`, `isUsingOAuth`, `registerProvider`, `refresh`, `getAvailable`, etc., delegating to the new ModelRuntime. The changelog's "removed" list describes the SDK-embedder API, **not** `ctx.modelRegistry`. Verified in the 0.80.8 dist:
-  - **pi-claude-code-use** (PRIMARY Claude path) — SAFE. `ctx.modelRegistry.isUsingOAuth(model)` still exists on the shim (`model-registry.js` `isUsingOAuth(model){ return this.runtime.isUsingOAuth(model.provider) }`). Confirmed live: real Claude round-trip returns on 0.80.8.
-  - **pi-web-access / pi-mcp-adapter / pi-ask** — SAFE (subagents flagged BREAKS from the changelog, but `getApiKeyAndHeaders`/`find`/`getAvailable` are all still on the shim).
-  - **pi-grok-cli** — SAFE (`getAll`/`getApiKeyForProvider` still present; provider `registerProvider`+`oauth`+`before_provider_request`+`model.headers` version-gate all intact).
-  - **our `session-name.ts` `.find()`** — SAFE (`find` still on shim). The `getApiKey(model)` calls in `btw.ts`/`session-name.ts` are **not a 0.80.8 regression** — 0.80.7 and 0.80.8 shims are identical there (neither has a bare `getApiKey`), so behavior is unchanged.
-  - Nothing uses `authStorage`/`AuthStorage`/`CreateAgentSessionOptions`/sync-`refresh()`-then-read, so the dangerous embedder changes don't apply.
-- **pi-core patches — NO real upstream drift 0.80.7→0.80.8:** all three (`resource-loader.js`, `keybindings.js`, `session-selector.js`) stock-identical to 0.80.7 (every diff was inside our own suppression/pin edits). Deployed repo patches as-is; verified keybindings keeps BOTH upstream `app.message.copy` (Ctrl+X) AND our `app.session.pin`. pi-tui refreshed to **v0.80.8** + re-patched (all copies, `--check` exit 0).
-- **Caveat for a FUTURE release:** the changelog says the legacy compat surface goes away "in a future release with a migration guide." When the shim is removed, pi-web-access/pi-mcp-adapter/pi-ask (and pi-claude-code-use's `isUsingOAuth`) will need upstream bumps that adopt `ModelRuntime.getAuth()`/pi-ai `Models`. Re-audit at that point. Not 0.80.8.
-- **Smoke-tested:** `pi --version` = 0.80.8; `verify-patches.sh` all PASS; `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply, zero load/tool/provider errors, no fatal conflict. Rollback backup: `~/pi-update-backup-20260716_221437` (auth.json + patched 0.80.7 dist files).
-
-### pi 0.80.7 migration (2026-07-16) — live update off 0.80.6 + 4 packages
-
-Updated `pi update` → **0.80.7** and three unpatched packages (pi-context 2.1.0, pi-codex-goal 0.1.36, pi-autoresearch latest HEAD). *(pi-grok-cli was also updated here; removed in the 2026-07-23 cleanup.)*
-
-- **0.80.7 breaking change does NOT affect us:** removed `openai-responses` `compat.sendSessionIdHeader` from models.json (now `compat.sessionAffinityFormat`). Our `models.json` `compat` blocks only use `supportsDeveloperRole`/`supportsReasoningEffort`/`supportsUsageInStreaming`/`thinkingFormat` — **no `sendSessionIdHeader`** (verified), and sakana doesn't emit it. Other 0.80.7 changes additive (cache-friendly dynamic tool loading, `Ctrl+X` copy-message shortcut, Fable 5 xhigh/max thinking).
-- **pi-core patches — precise per-file handling:**
-  - `keybindings.js` — **RE-DERIVED**, NOT blind-copied. 0.80.7 added the new `app.message.copy` (`Ctrl+X`) binding + platform-aware word-nav `defaultKeys` (`process.platform === "darwin" ? …`) that our 0.80.5-based patch lacked. Blind-copying would have reverted the new Ctrl+X shortcut. Applied our pin additions (`app.session.pin` ctrl+b binding, `pinSession` alias, `isRecord` helper + its two uses) onto fresh stock 0.80.7 via targeted edits. Verified live has BOTH `app.message.copy` (upstream) AND `app.session.pin` (ours).
-  - `resource-loader.js` + `session-selector.js` — **no upstream drift** 0.80.6→0.80.7 (only our suppression/pin edits differ from stock). Deployed repo patches as-is.
-  - pi-tui width patch — pi-core copy refreshed to **v0.80.7** (stock); re-ran `apply-pi-tui-width-patch.mjs` after pi update AND after the 4 package updates → all copies patched, `--check` exit 0.
-- **Packages (all unpatched, targeted `pi update <src>` — NOT `--extensions`, which would clobber condensed-milk):** pi-context 2.1.0 stays `context_*` namespaced. No new tool conflicts on boot.
-- **Smoke-tested:** `pi --version` = 0.80.7; `verify-patches.sh` all PASS; `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot, no fatal conflict. Rollback backup: `~/pi-update-backup-20260716_003847` (auth.json + patched 0.80.6 dist files).
-
-### pi 0.80.6 migration (2026-07-10) — live update off 0.80.5
-
-Updated `pi update` → **0.80.6** (same day as 0.80.5). Purely additive upstream — no `Removed` section, no API/patch-affecting changes.
-
-- **0.80.6 changes:** opt-in `max` thinking level above xhigh (GPT-5.6 + adaptive Claude; themes without `thinkingMax` fall back to `thinkingXhigh`, so gruvbox is unaffected), request-wide input-token pricing tiers, `~` expansion for `shellPath`. Our `defaultThinkingLevel: high` unaffected.
-- **pi-core patches — NO upstream drift 0.80.5→0.80.6:** `resource-loader.js`, `keybindings.js`, `session-selector.js` stock all byte-identical to 0.80.5 base (every diff vs stock was inside our own suppression/pin edits). Deployed repo patches as-is (repo == live, no repo-file changes needed).
-- pi-tui width patch — `pi update` refreshed the pi-core copy to **v0.80.6** (stock); re-ran `apply-pi-tui-width-patch.mjs` → freshly patched, `--check` exit 0, all copies clean.
-- **Smoke-tested:** `pi --version` = 0.80.6; `verify-patches.sh` all PASS; clean `pi -p` boot, no fatal conflict. Rollback backup: `~/pi-update-backup-20260710_131826` (auth.json + patched 0.80.5 dist files).
-
-### pi 0.80.5 migration (2026-07-10) — live update off 0.80.3
-
-Updated `pi update` → **0.80.5** (0.80.4+0.80.5 in one hop). All patches re-applied and verified. *(A pi-gpt-config bump was also handled here; the package was removed in the 2026-07-23 cleanup.)*
-
-- **0.80.4/0.80.5 upstream changes are additive** — new extension hooks (`agent_settled`, `before_provider_headers`, `InlineExtension`, `project_trust`, `ctx.mode`, `ctx.getSystemPromptOptions`, autocomplete trigger chars, `--exclude-tools`), OSC 8 file links, edit-diff helper exports. **`pi update` now updates pi only** (extensions need `--all`). pi-ai global API moved to `/compat` but the **loader alias keeps extensions working at runtime unchanged** (removal deferred to a future release). Removed `/base` entrypoints — our extensions don't import them (verified). No breaking changes for this setup.
-- **pi-core patches — precise per-file handling (NOT blind copy):**
-  - `resource-loader.js` — **re-derived**, NOT blind-copied. 0.80.5 changed the file in two places our 0.80.3-based patch lacked: new `dirname`-based directory walking (import + `parentDir = dirname(currentDir)`) and **`InlineExtension` support** (`isNamed ? input.factory : input`). Rebuilt from stock 0.80.5 + only the conflict-suppression edit (`detectExtensionConflicts` without the `errors.push` loop). Blind-copying would have reverted both upstream improvements.
-  - `keybindings.js` + `session-selector.js` — **no upstream drift** 0.80.3→0.80.5 (every diff line vs stock was inside our own pin blocks: import, `app.session.pin` binding, `isRecord` helper, `📌` render prefix). Deployed our repo patches as-is. Verified `const prefix = node.pinned ? "📌 " : this.buildTreePrefix(node)` intact.
-  - pi-tui width patch — `pi update` refreshed the pi-core copy to **v0.80.5** (stock); re-ran `apply-pi-tui-width-patch.mjs` → all **15 copies** patched, `--check` exit 0. Other packages' copies were untouched (already-patched).
-- **Smoke-tested:** `pi --version` = 0.80.5; `verify-patches.sh` all PASS; `apply-pi-tui-width-patch.mjs --check` exit 0; `pi -p` full boot, no fatal conflict (resource-loader suppression works on 0.80.5), prompt round-trip returns. Rollback backup: `~/pi-update-backup-20260710_*` (auth.json + patched 0.80.3 dist files + VERSION).
-
-### pi 0.80.3 migration (2026-07-01) — actual live migration off 0.79.10
-
-The live system was still on **0.79.10** until this migration (the earlier 0.80.2 notes below described a prepared/documented migration that had not been applied live). This step actually updated `pi update` → **0.80.3** and re-applied all patches. What was required and verified:
-
-- **`@mariozechner/*` aliases still present in 0.80.3** `loader.js` (`pi-ai`, `pi-tui`, `pi-coding-agent`, `pi-agent-core`, `/oauth`) + pi-ai root→`compat` alias → all ~46 extension files resolve unchanged. Runtime pi-ai funcs (`complete`/`completeSimple`/`streamSimple`/`StringEnum`) keep working. ✓
-- **0.80.3 upstream changes are additive/fixes only** — no `Removed` section. Notable: default OpenAI model → `gpt-5.5` (we default to anthropic, no impact), Codex SSE timeout now respects configured HTTP timeout, `streamSimple()` max-token cap fix (helps `btw.ts`). Claude Sonnet 5, `outputPad`, `externalEditor`, RPC `get_entries`/`get_tree`, `session_info_changed` all additive.
-- **Core patches — precise per-file handling (not blind copy):**
-  - `keybindings.js` — stock **byte-identical** 0.79.10↔0.80.3 → stored patch (stock + pin binding) copied as-is. ✓
-  - `session-selector.js` — stored patch already = **stock 0.80.3 + LOCAL PATCH blocks** (diff vs stock-0.80.3 shows only our 7 pin blocks; upstream `latestActivity` threaded-tree code already baked in) → copied as-is. ✓
-  - `resource-loader.js` — **re-derived**, NOT blind-copied. 0.80.3 added `resetTimings` (import line 14 + call ~line 220) that our 0.79.10-based stored patch lacked. Rebuilt from stock 0.80.3 + only the conflict-suppression edit (`detectExtensionConflicts` without the `errors.push` loop). Repo copy updated. Verified: `resetTimings` count 2 + suppression present + zero conflict-push. ✓
-- **Smoke-tested:** `pi --version` = 0.80.3; `pi list` clean; `pi -p` full boot loads all extensions, registers `web_search`/`mcp`/`oracle`/`finder` with **no fatal conflict** (proves resource-loader patch works), prompt round-trip returns. ✓
-- `condensed-milk` (`$ ` strip + `cmd` param) patch intact (separate package, untouched by core update). ✓
-
-Rollback backup from this migration: `~/pi-migration-backup-20260701_*` (auth.json + 0.79.10 patched dist files + VERSION).
-
-### pi 0.80.2 migration (2026-06-28) — prepared notes (superseded by 0.80.3 above)
-
-Previously `pi-web-access@0.10.7` and `pi-codex-goal@0.1.29` were **pinned** because newer versions import `@earendil-works/pi-ai/compat`, which only exists in pi **0.80.0+**. On 0.79.10 they failed with `Cannot find module '.../pi-ai/dist/index.js/compat'`. Both are now unpinned (`pi-web-access 0.13.0`, `pi-codex-goal 0.1.32`).
-
-- **`/compat` entrypoint** exists in pi 0.80.0+ (`.../pi-ai/dist/compat.js`) → the two packages load. ✓
-- **Removed two orphan non-patches** found during the audit: `pi-core-patches/runner.js` (live was stock — never actually patched; repo copy was stale) and `pi-ai-patches/anthropic.js` (byte-identical to stock pi-ai — a backup copy, not a patch). Neither was in `install.sh`.
-- `condensed-milk` patch untouched by `pi update --self` (separate package).
-
-**Caution carried forward:** the `/compat` entrypoint and `@mariozechner/*` aliases are still slated for removal "in a future release" (no version announced). When that lands, the 48 files must be renamed `@mariozechner/*` → `@earendil-works/*` (sed command in the migration log) and runtime pi-ai imports moved to `/compat` or the new `createModels()` API.
+- **0.82.1 upstream changes are additive:** **Claude Opus 5** on Anthropic + Bedrock (adaptive thinking incl `xhigh`, inference profiles, prompt caching — new model available, we still default `claude-opus-4-8`), `ANTHROPIC_AUTH_TOKEN` bearer auth for Anthropic-compatible gateways (incl compaction/branch-summaries), `If-None-Match` catalog revalidation (unchanged providers answer `304`), `outputPad` exposed to custom message renderers (#7045). Fixes that help us: **startup context-file discovery now skips directories named like `AGENTS.md`** (#7106 — the `statSync().isFile()` EISDIR guard; we have an `AGENTS.md`), unavailable scoped models hidden from `/models` (#7032), llama.cpp catalog persistence.
+- **Compat surface intact (verified in the 0.82.1 dist):** `@mariozechner/*` loader aliases (`pi-tui`, `pi-ai` + `/compat` + `/oauth` + `/providers`, `pi-coding-agent`, `pi-agent-core`) all present → all ~46 extension imports resolve. `ctx.modelRegistry` shim still exposes `isUsingOAuth`/`getApiKeyAndHeaders`/`getApiKeyForProvider`/`registerProvider`/`getAvailable`/`find`/`refresh` → **pi-claude-code-use Claude path safe**.
+- **Caution carried forward (future release):** the `/compat` entrypoint and `@mariozechner/*` aliases are slated for removal "in a future release" (no version announced). When it lands, the ~48 extension files must be renamed `@mariozechner/*` → `@earendil-works/*` and runtime pi-ai imports moved to `/compat` or the new `createModels()` API. Re-audit the compat surface at that point.
+- **pi-core patches — precise per-file handling (verified stock 0.82.0 vs stock 0.82.1):**
+  - `resource-loader.js` — **RE-DERIVED**, not blind-copied. 0.82.1 added a new `if (!statSync(filePath).isFile()) continue;` block (~line 36, the #7106 EISDIR/`AGENTS.md` fix) in the directory-walk method — **outside** our patch region. Our conflict-suppression edit is at the `addExtensionConflictDiagnostics`/`detectExtensionConflicts` loop (~line 407, anchor still present). Applied our suppression edit onto fresh stock 0.82.1 in place (removed the `for (const conflict of conflicts) errors.push()` loop, kept the new statSync line), then copied live → repo as new canonical. Blind-copying the 0.82.0 repo patch would have **reverted the EISDIR fix**.
+  - `keybindings.js` + `session-selector.js` — **0 upstream drift** 0.82.0→0.82.1 (stock byte-identical). Repo patches deployed as-is; verified live `app.session.pin` ×2, session-selector 7 `LOCAL PATCH`.
+  - pi-tui width patch — `pi update` brought a fresh **v0.82.1** pi-tui copy; `apply-pi-tui-width-patch.mjs` patched it cleanly (anchors unchanged), all other copies already-patched, `--check` exit 0 (re-run after pi update AND after the package updates).
+- **Packages (targeted `pi update npm:<pkg>`, NOT `--extensions` — that clobbers condensed-milk):**
+  - **pi-web-access 0.13.0 → 0.14.0** — mostly additive (new search providers: AnySearch/SERPdive/SearXNG/self-hosted Firecrawl; `source_check` research artifacts; `$ENV`/`!command` credential sources; `typebox` now a real runtime dep). Default public tool names **unchanged** (`web_search`/`fetch_content`/`get_search_content`/`source_check`) — no collision with our 24 custom tools (verified). **`### Removed`: the bundled `librarian` skill is dropped** — confirmed gone from `~/.pi/agent/npm/node_modules/pi-web-access/skills/`. Our custom **`librarian` tool** (`extensions/tools/librarian.ts`) is separate and unaffected; only the package skill disappears (skill count 28 → 27).
+  - **pi-mcp-adapter 2.11.0 → 2.15.0** (4 minor bumps) — all additive/fixes. `get_<resource>`→`read_<resource>` rename (2.13.0) affects only *generated MCP resource tools*, not the `mcp` proxy tool; OAuth creds moved to OS credential store (2.13.0) — we use `auth:false` (localhost astro/paper), no OAuth creds, no impact. Single `mcp` proxy tool name unchanged; `mcp.json` servers intact.
+- **condensed-milk untouched** by the targeted updates (separate package) — `$`-prefix strip intact.
+- **Smoke-tested:** `pi --version` = 0.82.1; `verify-patches.sh` ALL PASS (8/8); `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply (`MIGRATION_OK`), zero load/tool/provider/conflict errors. Rollback backup: `~/pi-update-backup-20260727_152216` (auth.json + patched 0.82.0 dist files + VERSION).
 
 ---
 
@@ -733,7 +633,7 @@ These replace pi's default tool implementations with customized versions:
 | **code-review** | `code-review.ts` | Code review with diff analysis |
 | **github** | `github.ts` | GitHub operations (repos, diffs, commits, search) |
 
-**Web search:** provided by the `pi-web-access` package's native `web_search` tool (authenticates with the `openai-codex` OAuth login). The former custom `web-search.ts` (Codex Responses API override) and the unregistered `look-at.ts` were deleted in the 2026-07-23 cleanup — image viewing works directly via the custom `read` tool.
+**Web search:** `pi-web-access` was removed 2026-07-30 (see Packages). As of Phase 1 there is **no `web_search` tool** until Phase 3 lands the Parallel AI port. Page reading is covered by our own `read_web_page` tool. The earlier custom `web-search.ts` (Codex Responses API override) and the unregistered `look-at.ts` were deleted in the 2026-07-23 cleanup — image viewing works directly via the custom `read` tool.
 
 ### Tool Libraries (`tools/lib/`)
 
@@ -788,7 +688,7 @@ No repo-stored pi-level skills (`pi-skills/` is empty). `find-skills` and `useri
 
 ### Package-provided skills (discovered by the `skill` tool as of 2026-07-23)
 
-Installed packages ship their own skills inside their package dir: `librarian` (pi-web-access), `context-management` (pi-context), `autoresearch-create/finalize/hooks` (pi-autoresearch). pi's native listing shows these in the `/` menu, but our custom `skill` tool (`tools/skill.ts`) originally only scanned the settings/agent/project skill roots — so `skill({ name: "librarian" })` failed with "skill not found" even though the skill was visible. **Fix:** `skill.ts` now also discovers `~/.pi/agent/npm/node_modules/<pkg>/skills/` (incl `@scope/name`) and `~/.pi/agent/git/<host>/<org>/<repo>/skills/`, and an `isDirLike()` helper makes symlinked skill dirs (find-skills, userinterface-wiki) list correctly (`Dirent.isDirectory()` is false for symlinks). User/config skills still win over package skills of the same name. **28 skills** loadable by name (21 config + find-skills + userinterface-wiki + librarian + context-management + 3 autoresearch). *(The `computer-use` skill from pi-computer-use was here until that package was removed 2026-07-23 — its tools were never active.)*
+Installed packages ship their own skills inside their package dir: `context-management` (pi-context), `autoresearch-create/finalize/hooks` (pi-autoresearch). pi's native listing shows these in the `/` menu, but our custom `skill` tool (`tools/skill.ts`) originally only scanned the settings/agent/project skill roots — so `skill({ name: "..." })` failed with "skill not found" even though the skill was visible. **Fix:** `skill.ts` now also discovers `~/.pi/agent/npm/node_modules/<pkg>/skills/` (incl `@scope/name`) and `~/.pi/agent/git/<host>/<org>/<repo>/skills/`, and an `isDirLike()` helper makes symlinked skill dirs (find-skills, userinterface-wiki) list correctly (`Dirent.isDirectory()` is false for symlinks). User/config skills still win over package skills of the same name. **27 skills** loadable by name (21 config + find-skills + userinterface-wiki + context-management + 3 autoresearch). *(The `librarian` skill shipped by pi-web-access until **0.14.0 removed it** 2026-07-27 — our custom `librarian` **tool** is separate and unaffected. The `computer-use` skill from pi-computer-use was here until that package was removed 2026-07-23 — its tools were never active.)*
 
 ---
 
@@ -952,7 +852,7 @@ When pi or any package gets updated:
 
 4. **pi-tool-display updated**: Config file at `~/.pi/agent/extensions/pi-tool-display/config.json` is NOT touched by npm updates. But if you delete and reinstall, **recreate the config** with all tool overrides set to `false`. Without it, pi-tool-display overwrites our custom tools.
 
-5. **Other packages** (pi-web-access, pi-context, pi-token-burden, pi-codex-goal, pi-autoresearch, pi-mcp-adapter): Generally safe to update. No patches on these. Check if they register tools or skills that conflict with ours.
+5. **Other packages** (pi-context, pi-token-burden, pi-codex-goal, pi-autoresearch, pi-mcp-adapter): Generally safe to update. No patches on these. Check if they register tools or skills that conflict with ours.
 
 ### Quick re-patch after any update
 
