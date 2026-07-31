@@ -1,7 +1,7 @@
 ---
 name: oracle
 description: Expert technical advisor with advanced reasoning
-model: claude-sonnet-4-6
+model: claude-opus-4-6
 tools: [read, grep, glob, ls, bash]
 ---
 

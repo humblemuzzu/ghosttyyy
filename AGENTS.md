@@ -401,7 +401,7 @@ This meant finder/oracle/librarian/code-review always inherited the parent model
 ### The Fix
 
 Conditional resolution based on parent provider:
-- **Parent is Anthropic** (provider `anthropic` or `claude-bridge`, or model name contains `claude`) → use designated model (`claude-haiku-4-5`, `claude-sonnet-4-6`)
+- **Parent is Anthropic** (provider `anthropic` or `claude-bridge`, or model name contains `claude`) → use the designated model (`claude-sonnet-5`, `claude-opus-4-6` — see "Sub-agent Models")
 - **Parent is non-Anthropic** (ZAI, local-llama, etc.) → inherit parent model (can't use Claude without separate API access)
 
 This means subagents use cheap Claude models when you're on Claude, but don't break when you're on ZAI/local.
@@ -782,9 +782,30 @@ Installed packages ship their own skills inside their package dir: `context-mana
 | `sakana` | `fugu`, `fugu-ultra` (both 1M ctx, text+image) | Sakana AI "Fugu" multi-agent orchestration. OpenAI **Responses** API at `https://api.sakana.ai/v1` (`api: openai-responses`), Bearer `$SAKANA_API_KEY`. $20/mo "Standard" subscription. See "Sakana AI (Fugu)" section below. |
 
 ### Sub-agent Models
-- **finder**: `claude-haiku-4-5` (cheapest, fast parallel search)
-- **librarian**: `claude-haiku-4-5` (cheapest, GitHub API exploration)
-- **oracle**: `claude-sonnet-4-6` (strong reasoning for architecture/review)
+
+Set 2026-07-31. Constants live in each tool file (`const MODEL = …`); the
+Anthropic-parent conditional in `lib/pi-spawn.ts` is unchanged, so a
+non-Anthropic parent (deepseek/kimi/sakana) still makes every child inherit the
+parent instead of demanding separate Claude access.
+
+| sub-agent | model | why |
+|---|---|---|
+| **finder** | `claude-sonnet-5` | concept search is worth real reasoning; haiku missed connections |
+| **librarian** | `claude-sonnet-5` | multi-repo exploration over the GitHub API |
+| **code_review** | `claude-sonnet-5` | diff review |
+| **oracle** | `claude-opus-4-6` | strongest model; architecture, hard bugs, alternative view |
+| **delegate** | *(none — inherits `parentModel`)* | **deliberate.** a delegate is a peer doing your work, so it must match your model and provider. Do not add a `MODEL` const to `delegate.ts`. |
+| **read_session** | `claude-sonnet-5` | picking the right branch out of a long, branching session is comprehension, not summarisation |
+| **read_web_page** | `claude-sonnet-5` | only the optional `prompt` path spawns a model; a plain fetch spawns none |
+
+Verified live (model read off the wire, not just the constant): parent
+`claude-opus-5` → finder `claude-sonnet-5`, oracle `claude-opus-4-6`, delegate
+`claude-opus-5` (inherited), read_web_page `claude-sonnet-5`, read_session
+`claude-sonnet-5`.
+
+**Still on haiku, deliberately:** `extensions/session-name.ts` (`NAMING_MODEL`)
+generates the short session title. It runs on *every* session for a one-line
+output, so the cheap tier is the right call. Everything else we own is off haiku.
 
 ### Active Settings
 

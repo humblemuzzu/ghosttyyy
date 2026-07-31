@@ -26,7 +26,10 @@ const TAIL_LINES = 500;
 const MAX_CHARS = 64_000;
 const CURL_TIMEOUT_SECS = 30;
 const MAX_REDIRECTS = 5;
-const PROMPT_MODEL = "claude-haiku-4-5";
+// matches the sub-agent tier (see AGENTS.md "Sub-agent Models"). only used for
+// the optional `prompt` path, where the question is answered against fetched
+// page content; the plain fetch path spawns no model at all.
+const PROMPT_MODEL = "claude-sonnet-5";
 
 const DEFAULT_PROMPT_SYSTEM = `Analyze web page content and answer questions. Be concise, answer from provided content only. No filler.`;
 

@@ -23,7 +23,7 @@ import { requireParam } from "./lib/params";
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const FINDER_PARAM_NAMES = ["query", "task", "prompt", "description", "search"] as const;
 
-const MODEL = "claude-haiku-4-5";
+const MODEL = "claude-sonnet-5";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 const EXTENSION_TOOLS = ["read", "grep", "find", "ls"];
 

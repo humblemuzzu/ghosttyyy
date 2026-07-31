@@ -25,7 +25,7 @@ import { requireParam } from "./lib/params";
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const CODE_REVIEW_PARAM_NAMES = ["diff_description", "task", "query", "prompt", "description"] as const;
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-sonnet-5";
 
 /** sub-agent needs bash (git diff), read/grep/find (context), web tools (docs lookup) */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];

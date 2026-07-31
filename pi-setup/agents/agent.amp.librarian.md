@@ -1,7 +1,7 @@
 ---
 name: librarian
 description: Codebase research and understanding agent
-model: claude-haiku-4-5
+model: claude-sonnet-5
 tools: [read_github, search_github, list_directory_github, list_repositories, glob_github, commit_search, diff]
 ---
 

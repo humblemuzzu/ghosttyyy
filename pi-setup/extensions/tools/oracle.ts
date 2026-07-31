@@ -24,7 +24,7 @@ import { requireParam } from "./lib/params";
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const ORACLE_PARAM_NAMES = ["task", "query", "prompt", "question", "description"] as const;
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-opus-4-6";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
 const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash"];
 

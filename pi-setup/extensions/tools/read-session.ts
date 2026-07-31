@@ -21,7 +21,10 @@ import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } fr
 import { normalizeForDisplay } from "./lib/box-format";
 import { headTailChars } from "./lib/output-buffer";
 
-const MODEL = "claude-haiku-4-5";
+// matches the sub-agent tier (see AGENTS.md "Sub-agent Models"). extracting the
+// relevant thread out of a long, branching session is a comprehension job, not a
+// summarisation one — the cheap tier tended to return the wrong branch.
+const MODEL = "claude-sonnet-5";
 const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
 /**
  * sub-agent (delegate) conversations live outside pi's session directory so

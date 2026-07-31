@@ -142,7 +142,7 @@ export interface PiSpawnConfig {
 	task: string;
 	model?: string;
 	/**
-	 * the parent session's full model string (e.g. "claude-agent-sdk/claude-haiku-4-5").
+	 * the parent session's full model string (e.g. "anthropic/claude-opus-5").
 	 * when set, takes priority over `model` so child processes use the same
 	 * provider+auth route as the parent session.
 	 */

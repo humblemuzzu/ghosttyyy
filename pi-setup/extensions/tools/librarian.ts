@@ -1,5 +1,5 @@
 /**
- * librarian tool — cross-repo codebase understanding via haiku sub-agent.
+ * librarian tool — cross-repo codebase understanding via a sonnet sub-agent.
  *
  * replaces the generic subagent pattern with a dedicated tool. the model
  * calls librarian(query: "...", repository?: [...], context?: "...") directly.
@@ -12,7 +12,7 @@
  * spec, so it read this file to find the argument shape. see the tool-contract
  * invariants in tool-contract.test.ts, which now fail if that regresses.
  *
- * spawns `pi --mode json` with claude haiku, constrained to the 7
+ * spawns `pi --mode json` with claude sonnet, constrained to the 7
  * github tools (read_github, search_github, list_directory_github,
  * list_repositories, glob_github, commit_search, diff). the librarian
  * explores repos thoroughly before providing comprehensive answers.
@@ -61,7 +61,7 @@ export function normalizeRepositories(input: unknown): string[] {
 		.filter((r) => r.length > 0);
 }
 
-const MODEL = "claude-haiku-4-5";
+const MODEL = "claude-sonnet-5";
 
 export interface LibrarianConfig {
 	systemPrompt?: string;

@@ -1,6 +1,6 @@
 ---
 name: code-review
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 tools: [read, grep, glob, ls, bash, web_search, read_web_page]
 rpc: true
 ---

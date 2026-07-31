@@ -1,7 +1,7 @@
 ---
 name: finder
 description: fast parallel code search agent — finds files and line ranges by concept, not exact match
-model: claude-haiku-4-5
+model: claude-sonnet-5
 tools: [read, grep, glob, ls]
 ---
 
