@@ -369,6 +369,34 @@ anchors in the script and re-run the harness suite.
 
 ### If the smear ever returns
 
+**First check whether it is the OTHER width bug — the one that CRASHES rather
+than smears.** On 2026-08-04 pi died with `Rendered line 2822 exceeds terminal
+width (140 > 125)` at `pi-tui/dist/tui.js` `doRender`. That was **not** the
+pi-tui patch and **not** a smear: `box-format.ts` defined its own
+`visibleWidth` counting **one column per codepoint**, so a Japanese
+`web_search` result title was clamped to "122 columns" and rendered at 140
+(18 East-Asian Wide chars × 2). pi-tui asserts every line fits and throws an
+uncaughtException, which kills the process — that assertion has existed since
+pi-tui **0.6.2 (2025-11-12)**; what changed was `web_search` (added 2026-07-30)
+becoming the first tool to put **arbitrary web-page titles** in a box header.
+Stock unpatched pi-tui measures that line at 140 too, so our width patch was
+never implicated.
+
+Fixed by deleting the private measure and using pi-tui's `truncateToWidth` /
+`visibleWidth` — **the invariant is that we must clamp with the same function
+pi-tui asserts with.** Also clamped the `╰────` footer (a *constant* is still 5
+columns and boxes render into narrower nested contexts) and made
+`renderCallLine` honour its `width`. Guarded by `lib/box-format.test.ts`: 480
+tests over ~28 scripts (CJK, Devanagari, Bengali, Tamil, Thai, Vietnamese,
+Arabic, Hebrew, emoji ZWJ/skin-tone/flags, zero-width, tabs, ANSI) × 12 widths,
+asserting `visibleWidth(line) <= width` for every emitted line. Verified the
+suite actually catches it: reintroducing the old measure fails 26 tests,
+starting with "the string that crashed pi @ width 125".
+
+The same file also flattens `\r\n\v\f\u2028\u2029` in headers and notices —
+a newline in a single-line sink is width-0, passes every width check, and still
+advances a row nobody counted (that one smears rather than crashes).
+
 1. Re-run `pi-setup/render-repro/` (see its README): DSR phases in Ghostty +
    tmux must show 0 desyncs, visual phases MATCH, `find-bad-clusters.mjs`
    must report `bad: 0` (fatal undercounts only).

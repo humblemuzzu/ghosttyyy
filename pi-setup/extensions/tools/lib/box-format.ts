@@ -23,7 +23,7 @@
  * rendered line exceeds terminal width.
  */
 
-import { Text, visibleWidth as tuiVisibleWidth } from "@mariozechner/pi-tui";
+import { Text, truncateToWidth, visibleWidth as tuiVisibleWidth } from "@mariozechner/pi-tui";
 import { windowItems, type Excerpt } from "./show";
 
 const DIM = "\x1b[2m";
@@ -162,52 +162,30 @@ export function normalizeForDisplay(text: string): string {
 	return out;
 }
 
-/**
- * ANSI-aware visible width + truncation.
- * pi-tui exports these too (with better wide-char support), but we
- * keep local versions so box-format works in test environments where
- * pi-tui isn't available.
+/*
+ * WIDTH MEASUREMENT — read before changing.
+ *
+ * box-format used to define its own `visibleWidth` and `truncateToWidth` here,
+ * justified as "so box-format works where pi-tui isn't available". That premise
+ * was false (line 26 hard-imports pi-tui unconditionally), and the local
+ * measure counted **one column per codepoint**.
+ *
+ * That crashed pi. A Japanese web-search result title was clamped to "122
+ * columns" — but 18 of those characters are East-Asian Wide and occupy 2
+ * columns each, so the line rendered at 122 + 18 = 140 in a 125-column
+ * terminal. pi-tui's doRender asserts every line fits and throws an
+ * uncaughtException, which kills the process (that assertion has existed since
+ * pi-tui 0.6.2 — nothing changed in pi; we simply started feeding arbitrary
+ * web-page titles into box headers when web_search was added).
+ *
+ * THE INVARIANT: the function we clamp with must be the SAME function pi-tui
+ * asserts with. Anything else makes agreement a coincidence. So we use pi-tui's
+ * — imported live, so it also picks up our conservative-width patch (see
+ * AGENTS.md "TUI Width Desync Fix"), which a private copy never would.
+ *
+ * Do not reintroduce a local width function. box-format.test.ts fails if the
+ * two measures ever disagree.
  */
-const ANSI_RE = /\x1b\[[0-9;]*m|\x1b\]8;;[^\x07]*\x07/g;
-
-/** tab stop width — terminals default to 8 but most code uses 4 */
-const TAB_WIDTH = 4;
-
-function visibleWidth(text: string): number {
-	const stripped = text.replace(ANSI_RE, "");
-	let w = 0;
-	for (const ch of stripped) {
-		w += ch === "\t" ? TAB_WIDTH : 1;
-	}
-	return w;
-}
-
-function truncateToWidth(text: string, maxWidth: number, ellipsis = "…"): string {
-	if (visibleWidth(text) <= maxWidth) return text;
-
-	const ellipsisLen = ellipsis.length;
-	const target = maxWidth - ellipsisLen;
-	if (target <= 0) return ellipsis.slice(0, maxWidth);
-
-	let visible = 0;
-	let i = 0;
-	while (i < text.length && visible < target) {
-		// skip SGR escape sequences (\x1b[...m)
-		if (text[i] === "\x1b" && text[i + 1] === "[") {
-			const end = text.indexOf("m", i);
-			if (end !== -1) { i = end + 1; continue; }
-		}
-		// skip OSC 8 hyperlink sequences (\x1b]8;;...\x07)
-		if (text[i] === "\x1b" && text[i + 1] === "]") {
-			const end = text.indexOf("\x07", i);
-			if (end !== -1) { i = end + 1; continue; }
-		}
-		visible += text[i] === "\t" ? TAB_WIDTH : 1;
-		i++;
-	}
-
-	return text.slice(0, i) + RST + ellipsis;
-}
 
 /**
  * defensive padding subtracted from width before truncating.
@@ -217,6 +195,24 @@ function truncateToWidth(text: string, maxWidth: number, ellipsis = "…"): stri
  * to prevent wrapping without wasting visible space.
  */
 const WIDTH_SAFETY_MARGIN = 2;
+
+/**
+ * collapse anything that would move the cursor to a new row.
+ *
+ * headers and notices are SINGLE-LINE sinks: the caller emits exactly one array
+ * entry and the TUI accounts for exactly one row. A newline inside that string
+ * is width-0 to every width check, so it passes clamping untouched — and then
+ * the terminal advances a row nobody counted. The box chrome is left unclosed
+ * and every later differential write lands on the wrong line. This is the same
+ * mechanism as the editor-label smear documented in AGENTS.md, and it is a
+ * distinct bug from over-wide lines: width is not violated at all.
+ *
+ * Headers come from web-page titles, LLM-generated session names and user
+ * queries, so "callers won't pass a newline" is not an assumption we can hold.
+ */
+function flattenToSingleLine(text: string): string {
+	return text.replace(/[\r\n\u2028\u2029\v\f]+/g, " ");
+}
 
 export interface BoxLine {
 	/** optional gutter text (e.g., line number). right-aligned to gutter width. */
@@ -348,7 +344,9 @@ export function formatBoxesWindowed(
 
 		// header (omitted for headless sections)
 		if (section.header != null) {
-			out.push(clamp(`${DIM}╭─[${RST}${normalizeForDisplay(section.header)}${DIM}]${RST}`));
+			out.push(
+				clamp(`${DIM}╭─[${RST}${flattenToSingleLine(normalizeForDisplay(section.header))}${DIM}]${RST}`),
+			);
 		}
 
 		let anyBlockTruncated = false;
@@ -398,7 +396,12 @@ export function formatBoxesWindowed(
 		}
 
 		// footer
-		out.push(`${DIM}╰${"─".repeat(4)}${RST}`);
+		// clamped like every other line: the footer is a constant, but a
+		// constant is still 5 columns wide, and pi renders boxes into nested
+		// contexts (sub-agent trees, indented panels) where the available width
+		// can be smaller than the chrome. an unclamped "constant" line is
+		// exactly how a hardcoded string becomes an uncaughtException.
+		out.push(clamp(`${DIM}╰${"─".repeat(4)}${RST}`));
 	}
 
 	// section elision
@@ -409,7 +412,7 @@ export function formatBoxesWindowed(
 
 	if (notices?.length) {
 		out.push("");
-		out.push(clamp(`${DIM}[${normalizeForDisplay(notices.join(". "))}]${RST}`));
+		out.push(clamp(`${DIM}[${flattenToSingleLine(normalizeForDisplay(notices.join(". ")))}]${RST}`));
 	}
 
 	return out.join("\n");
@@ -491,8 +494,12 @@ export function renderCallLine(label: string, context: string, theme: any): { re
 	const line = theme.fg("toolTitle", theme.bold(normalizeForDisplay(label))) +
 		(context ? " " + theme.fg("dim", normalizeForDisplay(context)) : "");
 	return {
-		render(_width: number): string[] {
-			return [line];
+		// `context` is usually a path, but nothing stops a caller passing a
+		// title or query. Returning `line` unbounded made this the next crash
+		// site after the box header: one over-wide line kills the process.
+		render(width: number): string[] {
+			if (!Number.isFinite(width) || width <= 0) return [line];
+			return [truncateToWidth(line, width, "…")];
 		},
 		invalidate() {},
 	};
