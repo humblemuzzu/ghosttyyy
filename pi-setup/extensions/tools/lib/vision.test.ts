@@ -4,11 +4,9 @@ import {
   countImageTokens,
   MAX_BASE64_BYTES,
   MAX_EDGE_ABSOLUTE,
-  paddedSize,
   planView,
   resizedSize,
   resolveTier,
-  snapToPatch,
   TIERS,
 } from "./vision";
 
@@ -123,28 +121,15 @@ describe("the practical ceilings (§10)", () => {
   });
 });
 
-describe("padding and snapping (§5)", () => {
-  test("924×1307 pads to 924×1316; a multiple of 28 is not padded", () => {
-    expect(paddedSize(924, 1307)).toEqual(size(924, 1316));
-    expect(paddedSize(1092, 1092)).toEqual(size(1092, 1092));
-  });
-
-  test("snapToPatch rounds down, so the snapped size still fits what the input fit", () => {
-    expect(snapToPatch(924, 1307)).toEqual(size(924, 1288));
-    expect(countImageTokens(924, 1288)).toBeLessThanOrEqual(TIERS.standard.maxTokens);
-  });
-
-  test("snapToPatch leaves a sub-patch axis alone rather than enlarging it", () => {
-    expect(snapToPatch(20, 20)).toEqual(size(20, 20));
-    expect(snapToPatch(27, 56)).toEqual(size(27, 56));
-  });
-
-  test("snapToPatch never enlarges either axis", () => {
-    for (let w = 1; w <= 200; w++) {
-      const snapped = snapToPatch(w, w);
-      expect(snapped.width).toBeLessThanOrEqual(w);
-      expect(snapped.height).toBeLessThanOrEqual(w);
-    }
+describe("padding (§5)", () => {
+  // `paddedSize` was removed as dead code, but the rule it described is still
+  // load-bearing and lives inside `fits()`: the edge limit is checked against
+  // the PADDED edge. A 1560px edge is really 1568 to the limit check, so an
+  // image one pixel over a patch boundary costs a whole extra row of tokens.
+  test("the padded edge, not the raw edge, is what the limit sees", () => {
+    expect(countImageTokens(1560, 28)).toBe(56); // 1560 pads to 1568 = 56 patches
+    expect(countImageTokens(1568, 28)).toBe(56); // …and so does 1568 itself
+    expect(countImageTokens(1569, 28)).toBe(57); // one pixel over costs a patch
   });
 });
 

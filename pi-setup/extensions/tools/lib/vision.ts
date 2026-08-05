@@ -128,42 +128,17 @@ export function resizedSize(width: number, height: number, tier: Tier = TIERS.st
   return { width: lo, height: heightFor(lo) };
 }
 
-/**
- * §5: Claude pads every image up to the next multiple of 28 on the bottom and
- * right. The padding holds no content — normalise coordinates by the resized
- * size, never by this.
- */
-export function paddedSize(width: number, height: number): Size {
-  return {
-    width: Math.ceil(width / PATCH) * PATCH,
-    height: Math.ceil(height / PATCH) * PATCH,
-  };
-}
-
-/**
- * Round DOWN to a multiple of 28. §5: an image whose dimensions are already
- * multiples of 28 incurs no padding and no wasted tokens. Rounding down rather
- * than up guarantees the result still fits whatever budget the input fit.
+/*
+ * REMOVED 2026-08-05: `paddedSize` and `snapToPatch`.
  *
- * An axis under one patch is LEFT ALONE rather than clamped up to 28. Clamping
- * up is an enlargement, which contradicts everything above: it can push an
- * image back over a budget it already fit, and `downscale` — correctly —
- * refuses to enlarge.
+ * Both were ported from caliper and neither had a production caller here.
+ * `paddedSize` reported the size Claude pads to, but the padding rule it
+ * describes is already inside `fits()`, which is what actually decides.
+ * `snapToPatch` traded up to 2.7% of the aspect ratio for ~3% of the token
+ * budget, so it was off by default — a switch with nothing wired to it.
  *
- * OFF BY DEFAULT in the screenshot tool. It saves at most ~3% of the budget and
- * trims each axis independently, distorting the aspect ratio by up to 2.7%.
- * ClaudeImageResizer reached the same conclusion: trading geometry for 3% of the
- * budget is the wrong default for a tool whose job is handing Claude an
- * accurate picture.
+ * Both still exist in caliper if a measurement use ever needs them.
  */
-export function snapToPatch(width: number, height: number): Size {
-  return { width: snapAxis(width), height: snapAxis(height) };
-}
-
-function snapAxis(pixels: number): number {
-  const snapped = Math.floor(pixels / PATCH) * PATCH;
-  return snapped >= PATCH ? snapped : pixels;
-}
 
 /** §7: base64 encodes 3 bytes as 4 characters, so a payload is ~1.37× the file. */
 export function base64Bytes(rawBytes: number): number {

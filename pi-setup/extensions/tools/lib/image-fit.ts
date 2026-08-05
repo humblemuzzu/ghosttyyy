@@ -24,7 +24,6 @@ import {
 	MAX_BASE64_BYTES,
 	planView,
 	resolveTier,
-	snapToPatch,
 	type TierName,
 	type ViewPlan,
 } from "./vision";
@@ -58,8 +57,6 @@ export interface FitOptions {
 	basename?: string;
 	minLongEdge?: number;
 	overlap?: number;
-	/** Off by default: saves ~3% of budget at the cost of up to 2.7% aspect distortion. */
-	snap?: boolean;
 }
 
 export interface FitOutput {
@@ -325,8 +322,7 @@ export function fitImageFile(file: string, opts: FitOptions = {}): FitResult {
 				`${outputs[0]!.width}×${outputs[0]!.height} ` +
 				`(${sliceTokens} tokens total, cropped not scaled)`;
 		} else if (plan.kind === "downscale") {
-			const target = opts.snap ? snapToPatch(plan.to.width, plan.to.height) : plan.to;
-			const small = downscale(img, target);
+			const small = downscale(img, plan.to);
 			resamples = 1;
 			outputs = [applyPayloadLadder(small, outDir, base, cap, notes)];
 			const reduction = size.width / outputs[0]!.width;

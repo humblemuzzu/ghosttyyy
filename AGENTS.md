@@ -872,8 +872,12 @@ Load-bearing details that look like nits and are not:
   `round()`. `Math.round` drifts a pixel on tie-hitting aspect ratios — pinned by the
   2000×1500 test.
 - **The edge limit is tested against the PADDED edge**, `ceil(w/28)*28`.
-- **`snapToPatch` is OFF by default.** It saves ~3% of the budget and distorts the aspect
-  ratio by up to 2.7%. ClaudeImageResizer reached the same conclusion independently.
+- **Patch-snapping was removed, not merely defaulted off.** Trimming each axis down to a
+  multiple of 28 saves ~3% of the budget and distorts the aspect ratio by up to 2.7%;
+  ClaudeImageResizer reached the same conclusion independently, so nothing ever enabled
+  it. It lives on in caliper if a measurement use ever wants it. `paddedSize` went the
+  same way — the padding rule it reported is already inside `fits()`, which is what
+  actually decides.
 - **Area-average, not Lanczos.** Lanczos/bicubic ring on hard edges, and UI is nothing
   but hard edges (text stems, 1px borders). This is a deliberate divergence from
   ClaudeImageResizer's CoreGraphics `.high` path, which is the better choice for photos

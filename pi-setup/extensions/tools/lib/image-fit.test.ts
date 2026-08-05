@@ -100,23 +100,15 @@ describe("fitImageFile — downscale", () => {
 		expect(result.notes.join(" ")).not.toMatch(/reduction/);
 	});
 
-	test("snap trades aspect ratio for patch alignment only when asked", () => {
-		const src = write("snap.png", noise(1920, 1080, 11));
-		const plain = fitImageFile(src, { outDir, basename: "plain" });
-		const snapped = fitImageFile(src, { outDir, basename: "snapped", snap: true });
-		// The fitted 16:9 width is 1456 = 52×28, already patch-aligned by luck of
-		// the aspect ratio. Only the height (819) carries padding waste, so that
-		// is the axis snapping can be observed on.
-		expect(plain.outputs[0]!.width).toBe(1456);
-		expect(plain.outputs[0]!.height).toBe(819);
-		expect(plain.outputs[0]!.height % 28).not.toBe(0);
-		expect(snapped.outputs[0]!.height).toBe(812);
-		expect(snapped.outputs[0]!.height % 28).toBe(0);
-		// …and this is the cost: the aspect ratio moved.
-		expect(snapped.outputs[0]!.width / snapped.outputs[0]!.height).not.toBeCloseTo(
-			plain.outputs[0]!.width / plain.outputs[0]!.height,
-			3,
-		);
+	test("the fitted size preserves the source aspect ratio", () => {
+		// What `snapToPatch` used to trade away, before it was removed as dead
+		// code: patch-aligning each axis independently moved the aspect ratio by
+		// up to 2.7%. The fit must not do that.
+		const src = write("aspect.png", noise(1920, 1080, 11));
+		const out = fitImageFile(src, { outDir, basename: "aspect" }).outputs[0]!;
+		expect(out.width).toBe(1456);
+		expect(out.height).toBe(819);
+		expect(out.width / out.height).toBeCloseTo(1920 / 1080, 2);
 	});
 });
 
