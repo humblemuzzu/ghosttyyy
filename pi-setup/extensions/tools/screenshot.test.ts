@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { describeWindow, groupLikelyTabs, type WindowInfo } from "./lib/capture";
 import fs from "node:fs";
 import path from "node:path";
-import { createScreenshotTool, normalizeRegion, resolveWindow } from "./screenshot";
+import {
+	createScreenshotTool,
+	displayedSibling,
+	normalizeRegion,
+	resolveWindow,
+	tabRescueAdvice,
+} from "./screenshot";
 import { evaluatePermission, type PermissionRule } from "./lib/permissions";
 
 const tool = createScreenshotTool() as any;
@@ -394,5 +400,157 @@ describe("tab-heavy apps are counted honestly", () => {
 		const line = describeWindow(tab(1, 0, "x"));
 		expect(line).toContain("not on screen");
 		expect(line).not.toMatch(/other Space|minimi|hidden/i);
+	});
+});
+
+describe("feedback: one-shot capture, folded lists, tab rescue", () => {
+	const tab = (id: number, over: Partial<WindowInfo> = {}): WindowInfo => ({
+		id,
+		app: "Ghostty",
+		title: `tab ${id}`,
+		layer: 0,
+		onScreen: false,
+		x: 4,
+		y: 40,
+		width: 1916,
+		height: 1040,
+		...over,
+	});
+
+	describe("(a) one call, not two", () => {
+		test("exactly one on-screen candidate is captured, not refused", () => {
+			const pool = [tab(1), tab(2), tab(3), tab(9, { onScreen: true })];
+			const choice = resolveWindow({ app: "ghostty" }, pool);
+			expect(choice.window.id).toBe(9);
+		});
+
+		test("and the choice is said out loud", () => {
+			const pool = [tab(1), tab(2), tab(9, { onScreen: true })];
+			expect(resolveWindow({ app: "ghostty" }, pool).autoPicked).toEqual({
+				total: 3,
+				query: 'app "ghostty"',
+			});
+		});
+
+		test("it only refuses when the on-screen set is genuinely ambiguous", () => {
+			// two separate frames, both visible: nothing justifies choosing for you
+			const pool = [tab(1, { onScreen: true }), tab(2, { onScreen: true, x: 900 })];
+			expect(() => resolveWindow({ app: "ghostty" }, pool)).toThrow();
+		});
+	});
+
+	describe("(b) the list folds by frame", () => {
+		const many = [
+			...[1, 2, 3, 4, 5, 6, 7].map((i) => tab(i, { x: 0, width: 1920 })),
+			...[8, 9, 10, 11, 12, 13, 14, 15].map((i) => tab(i)),
+		];
+
+		test("17 rows become one entry per frame", () => {
+			let msg = "";
+			try {
+				resolveWindow({ app: "ghostty" }, many);
+			} catch (e: any) {
+				msg = e.message;
+			}
+			// one "capture id" line per frame, not per tab
+			expect((msg.match(/capture id/g) ?? []).length).toBe(2);
+			expect(msg).toContain("15 across 2 window frame(s)");
+		});
+
+		test("the folded entry still exposes every id", () => {
+			let msg = "";
+			try {
+				resolveWindow({ app: "ghostty" }, many);
+			} catch (e: any) {
+				msg = e.message;
+			}
+			for (const id of [1, 8, 15]) expect(msg).toContain(String(id));
+		});
+
+		test("apps without tabs still render as a plain flat list", () => {
+			const plain = [
+				tab(1, { app: "Safari", x: 0, y: 0 }),
+				tab(2, { app: "Safari", x: 800, y: 200 }),
+			];
+			let msg = "";
+			try {
+				resolveWindow({ app: "safari" }, plain);
+			} catch (e: any) {
+				msg = e.message;
+			}
+			expect(msg).not.toContain("window frame(s)");
+			expect(msg).toContain("id 1");
+		});
+	});
+
+	describe("(c) a dead end becomes a next step", () => {
+		test("the on-screen sibling of a background tab is found", () => {
+			const target = tab(13707);
+			const pool = [target, tab(16543, { onScreen: true })];
+			expect(displayedSibling(target, pool)?.id).toBe(16543);
+		});
+
+		test("a window that is already on screen needs no rescue", () => {
+			const target = tab(1, { onScreen: true });
+			expect(displayedSibling(target, [target, tab(2, { onScreen: true })])).toBeUndefined();
+		});
+
+		test("a different frame is not offered as a substitute", () => {
+			// same app, different geometry: not the same window, so not a rescue
+			const target = tab(1);
+			expect(displayedSibling(target, [target, tab(2, { onScreen: true, x: 900 })])).toBeUndefined();
+		});
+
+		test("the advice names the id to use and does not pretend it is the same content", () => {
+			const msg = tabRescueAdvice(tab(13707), tab(16543, { onScreen: true, title: "live" }));
+			expect(msg).toContain("16543");
+			expect(msg).toContain("13707");
+			expect(msg).toMatch(/switch to that tab/i);
+			// Must not assert impossibility — background tabs often DO capture.
+			expect(msg).not.toMatch(/can never be captured|impossible/i);
+		});
+	});
+});
+
+describe("the tool never claims a capture is impossible", () => {
+	/*
+	 * Measured: window_id 13861 — a BACKGROUND tab — captured fine at 3840×2080
+	 * (exactly bounds×2, without the group's tab bar). An earlier draft of the
+	 * rescue message said "a background tab can never be captured on its own",
+	 * and one live test disproved it. Absolute claims about macOS behaviour have
+	 * been wrong every time they were made in this file.
+	 */
+	const w = (over: Partial<WindowInfo> = {}): WindowInfo => ({
+		id: 1,
+		app: "Ghostty",
+		title: "t",
+		layer: 0,
+		onScreen: false,
+		x: 0,
+		y: 40,
+		width: 1920,
+		height: 1040,
+		...over,
+	});
+
+	test("the rescue advice describes what will work, not what cannot", () => {
+		const msg = tabRescueAdvice(w({ id: 13707 }), w({ id: 16543, onScreen: true }));
+		expect(msg).not.toMatch(/never|impossible|cannot be captured/i);
+		expect(msg).toMatch(/will succeed/i);
+	});
+
+	test("it warns that the content differs, which is the real trap", () => {
+		const msg = tabRescueAdvice(w({ id: 13707 }), w({ id: 16543, onScreen: true }));
+		expect(msg).toMatch(/not id 13707|ACTIVE tab/i);
+	});
+
+	test("the folded list does not promise a failure either", () => {
+		let msg = "";
+		try {
+			resolveWindow({ app: "ghostty" }, [w({ id: 1 }), w({ id: 2 }), w({ id: 3, x: 900 })]);
+		} catch (e: any) {
+			msg = e.message;
+		}
+		expect(msg).not.toMatch(/cannot be captured/i);
 	});
 });

@@ -43,6 +43,7 @@ import {
 	imageSize,
 	pruneOutDir,
 } from "./lib/image-fit";
+import { crop, load, save } from "./lib/image";
 import { captureWebPage, WebCaptureError } from "./lib/web-capture";
 import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
 import { getContainer, getText } from "./lib/tui";
@@ -95,11 +96,61 @@ export function normalizeRegion(
 	return { x: x!, y: y!, width: width!, height: height! };
 }
 
+/**
+ * Render a window list, folding tab groups into one entry each.
+ *
+ * A flat list is actively misleading on a tab-heavy machine: 4 visible terminals
+ * produced 17 rows that differed only by id, and the row you can actually
+ * capture was buried among 15 you cannot. Grouping by frame shows the same
+ * information at a third of the length and puts the capturable id first.
+ *
+ * Falls back to the flat list when nothing groups, so ordinary apps read exactly
+ * as before.
+ */
 function renderWindowTable(windows: WindowInfo[], heading: string): string {
-	const shown = windows.slice(0, MAX_CANDIDATES);
-	const lines = [heading, ...shown.map(describeWindow)];
-	if (windows.length > shown.length) {
-		lines.push(`  … and ${windows.length - shown.length} more`);
+	const groups = groupLikelyTabs(windows);
+	if (groups.length === windows.length) {
+		const shown = windows.slice(0, MAX_CANDIDATES);
+		const lines = [heading, ...shown.map(describeWindow)];
+		if (windows.length > shown.length) {
+			lines.push(`  … and ${windows.length - shown.length} more`);
+		}
+		return lines.join("\n");
+	}
+
+	const grouped = groups.filter((g) => g.length > 1).length;
+	const lines = [
+		`${heading} ${windows.length} across ${groups.length} window frame(s) — ` +
+			`${grouped} of them tab group(s)`,
+	];
+	for (const g of groups.slice(0, MAX_CANDIDATES)) {
+		const head = g[0]!;
+		// A frame with one window is just a window. Folding it adds a "1 tab(s)"
+		// header and an indent around a single line, which is pure noise — only
+		// the genuinely grouped entries earn the extra structure.
+		if (g.length === 1) {
+			lines.push(describeWindow(head));
+			continue;
+		}
+		// The on-screen tab is the one that can actually be captured, so it leads.
+		const live = g.find((w) => w.onScreen);
+		const lead = live ?? head;
+		const state = live ? "on screen" : "not on screen";
+		lines.push(
+			`  ${lead.app} ${lead.width}×${lead.height} @${lead.x},${lead.y} — ` +
+				`${g.length} tab(s), ${state}`,
+		);
+		lines.push(
+			`      capture id ${lead.id}  ${lead.title ? `"${lead.title}"` : "(untitled)"}` +
+				(live ? "" : "  ← nothing in this group is on screen; capture may fail"),
+		);
+		const others = g.filter((w) => w.id !== lead.id);
+		if (others.length) {
+			lines.push(`      other tabs: ${others.map((w) => w.id).join(", ")}`);
+		}
+	}
+	if (groups.length > MAX_CANDIDATES) {
+		lines.push(`  … and ${groups.length - MAX_CANDIDATES} more frame(s)`);
 	}
 	return lines.join("\n");
 }
@@ -117,6 +168,53 @@ export interface WindowChoice {
 	window: WindowInfo;
 	/** Set when more than one window matched and one was picked for the caller. */
 	autoPicked?: { total: number; query: string };
+}
+
+/**
+ * The sibling of `target` that is currently on screen, if its tab group has one.
+ *
+ * Capturing any tab grabs the whole group as it is *currently displayed*, so a
+ * background tab is never capturable on its own — but the group usually is,
+ * under a different id. Without this, "13707 cannot be captured" is a dead end
+ * when a perfectly good capture of that same window is one id away.
+ */
+export function displayedSibling(target: WindowInfo, pool: WindowInfo[]): WindowInfo | undefined {
+	if (target.onScreen) return undefined;
+	return pool.find(
+		(w) =>
+			w.id !== target.id &&
+			w.onScreen &&
+			w.app === target.app &&
+			w.width === target.width &&
+			w.height === target.height &&
+			w.x === target.x &&
+			w.y === target.y,
+	);
+}
+
+/**
+ * What to tell a caller whose target is a background tab.
+ *
+ * Only ever reached AFTER a capture has actually failed. Do not claim a
+ * background tab is uncapturable in principle — measured, it often is
+ * capturable: `window_id 13861`, a background tab, captured fine at 3840×2080
+ * (exactly bounds×2, without the group's tab bar). An earlier draft of this
+ * message asserted "a background tab can never be captured on its own" and a
+ * single live test disproved it.
+ *
+ * Deliberately does NOT auto-capture the sibling either: the group renders
+ * whichever tab is active, so capturing it returns different CONTENT than was
+ * asked for. Silently substituting it would be the same class of bug as the
+ * silent auto-pick — right pixels, wrong subject, no disclosure.
+ */
+export function tabRescueAdvice(target: WindowInfo, sibling: WindowInfo): string {
+	return (
+		`\n\nid ${target.id} looks like a background tab of a window that IS on screen ` +
+		`right now as id ${sibling.id}${sibling.title ? ` ("${sibling.title}")` : ""}. ` +
+		`Capturing ${sibling.id} will succeed and returns that window as it currently ` +
+		`appears — which is the ACTIVE tab's content, not id ${target.id}'s. To get ` +
+		`id ${target.id}'s own content, switch to that tab first, then retry this call.`
+	);
 }
 
 /**
@@ -263,7 +361,7 @@ export function createScreenshotTool(): ToolDefinition {
 			region: Type.Optional(
 				Type.Array(Type.Number(), {
 					description:
-						"Rectangle in screen points as [x, y, width, height], origin top-left. On a 2x display the captured image is twice these numbers in pixels, which is handled for you.",
+						"Rectangle as [x, y, width, height], origin top-left, in points. Alone it means SCREEN coordinates. Combined with window_id/app it means coordinates INSIDE that window, so [0,0,600,200] is the window's top-left corner regardless of where the window sits — and it keeps working after the window moves. On a 2x display the captured image is twice these numbers in pixels, which is handled for you.",
 				}),
 			),
 			display: Type.Optional(
@@ -417,7 +515,8 @@ export function createScreenshotTool(): ToolDefinition {
 						);
 					}
 				} else if (wantsWindow) {
-					const choice = resolveWindow(params);
+					const pool = listWindows();
+					const choice = resolveWindow(params, pool);
 					let window = choice.window;
 					if (choice.autoPicked) {
 						notes.push(
@@ -459,14 +558,71 @@ export function createScreenshotTool(): ToolDefinition {
 						// deliberate opt-out; an on-screen failure is a different problem
 						// (permissions, most likely) that stealing focus would not fix.
 						const mayRetry = params.activate === undefined && !window.onScreen;
-						if (!mayRetry) throw err;
-						await bringForward();
-						await captureWindow(rawPath, window, opts);
-						autoActivated = true;
+						if (!mayRetry) {
+							// Same dead end, reached without the retry: an explicit
+							// activate:false, or an on-screen window that failed anyway.
+							const sibling = displayedSibling(window, pool);
+							if (!sibling) throw err;
+							throw new CaptureError(
+								String((err as any).message ?? err) + tabRescueAdvice(window, sibling),
+							);
+						}
+						try {
+							await bringForward();
+							await captureWindow(rawPath, window, opts);
+							autoActivated = true;
+						} catch (retryErr: any) {
+							/*
+							 * Bringing the app forward did not help, which for a tab means
+							 * it never could: the group renders one tab at a time. Point at
+							 * the sibling that IS displayed rather than stopping dead.
+							 */
+							const sibling = displayedSibling(window, pool);
+							if (!sibling) throw retryErr;
+							throw new CaptureError(
+								String(retryErr.message ?? retryErr) + tabRescueAdvice(window, sibling),
+							);
+						}
 					}
 					captured = `${window.app} — ${window.title || "(untitled)"} [id ${window.id}]`;
 					if (autoActivated) {
 						captured += " (brought forward — it was on another Space)";
+					}
+					/*
+					 * A region given alongside a window means "inside that window".
+					 *
+					 * Cropping AFTER the capture rather than converting to screen
+					 * coordinates and calling captureRegion is deliberate: screen
+					 * coordinates go stale the instant the window moves, and they cannot
+					 * express the tab-bar offset that CGWindowBounds omits. Cropping the
+					 * window's own pixels is correct by construction.
+					 */
+					if (region) {
+						const shot = imageSize(rawPath);
+						const scale = Math.max(1, Math.round(shot.width / window.width));
+						const box = {
+							x: region.x * scale,
+							y: region.y * scale,
+							width: region.width * scale,
+							height: region.height * scale,
+						};
+						const clamped = {
+							x: Math.max(0, Math.min(box.x, shot.width - 1)),
+							y: Math.max(0, Math.min(box.y, shot.height - 1)),
+							width: 0,
+							height: 0,
+						};
+						clamped.width = Math.max(1, Math.min(box.width, shot.width - clamped.x));
+						clamped.height = Math.max(1, Math.min(box.height, shot.height - clamped.y));
+						save(crop(load(rawPath), clamped), rawPath);
+						captured += ` — region ${region.x},${region.y} ${region.width}×${region.height} within the window`;
+						if (clamped.width !== box.width || clamped.height !== box.height) {
+							notes.push(
+								`the requested region ran past the window edge and was clamped to ` +
+									`${clamped.width / scale}×${clamped.height / scale} points. The window ` +
+									`is ${shot.width / scale}×${shot.height / scale} points as captured.`,
+							);
+						}
 					}
 					/*
 					 * `CGWindowBounds` and `screencapture -l` do not always agree, and the
@@ -478,21 +634,28 @@ export function createScreenshotTool(): ToolDefinition {
 					 * menu bar, so nothing extra was captured and nothing was lost.
 					 *
 					 * Saying so costs one line and stops a reviewer having to re-derive it.
+					 *
+					 * Only when the whole window was captured. After a region crop the
+					 * comparison is meaningless — the image is deliberately smaller — and
+					 * the note would end by claiming the full window was captured, which
+					 * would be flatly untrue.
 					 */
-					try {
-						const shot = imageSize(rawPath);
-						const scale = Math.round(shot.width / window.width) || 1;
-						const extra = shot.height - window.height * scale;
-						if (extra !== 0) {
-							notes.push(
-								`the window listed as ${window.width}×${window.height} captured at ` +
-									`${shot.width}×${shot.height} (${extra > 0 ? "+" : ""}${extra}px height). ` +
-									`Window bounds exclude chrome such as a native tab bar; the capture ` +
-									`includes it. The full window was captured.`,
-							);
+					if (!region) {
+						try {
+							const shot = imageSize(rawPath);
+							const scale = Math.round(shot.width / window.width) || 1;
+							const extra = shot.height - window.height * scale;
+							if (extra !== 0) {
+								notes.push(
+									`the window listed as ${window.width}×${window.height} captured at ` +
+										`${shot.width}×${shot.height} (${extra > 0 ? "+" : ""}${extra}px height). ` +
+										`Window bounds exclude chrome such as a native tab bar; the capture ` +
+										`includes it. The full window was captured.`,
+								);
+							}
+						} catch {
+							// A size read is a nicety; never fail a good capture over it.
 						}
-					} catch {
-						// A size read is a nicety; never fail a good capture over it.
 					}
 				} else if (region) {
 					await captureRegion(rawPath, region, opts);

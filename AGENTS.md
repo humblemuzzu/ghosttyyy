@@ -1023,6 +1023,41 @@ group.
 window, a hidden app, and — most often by far — a background tab. 15 of these 16 were
 "not on screen" and almost none were on another Space. Naming an unchecked cause sends
 people hunting a Spaces problem that is not there.
+
+### Four refinements from a reviewer, and the false claim one of them exposed
+
+- **(a) one call, not two.** The rule is "exactly one candidate on screen → capture it
+  and disclose the choice". Verified it was already one-shot; it only refuses when the
+  *on-screen* set is genuinely ambiguous, which is the one case nothing can decide.
+- **(b) the list folds by frame.** `renderWindowTable` groups tab siblings into one
+  entry with the capturable id first and the rest as `other tabs: …`. 28 flat rows
+  became 13 entries. Singletons deliberately stay flat — folding one window into a
+  "1 tab(s)" header is pure noise.
+- **(c) a dead end becomes a next step.** On capture failure, `displayedSibling()` finds
+  the on-screen member of the same tab group and names it. It does **not** auto-capture
+  it: the group renders whichever tab is active, so substituting silently would be the
+  silent auto-pick bug again — right pixels, wrong subject.
+- **(d) `region` is now window-relative.** With `window_id`/`app`, `region` means
+  coordinates *inside that window*, cropped from the window's own pixels after capture.
+  Screen coordinates go stale the moment a window moves and cannot express the tab-bar
+  offset `CGWindowBounds` omits; cropping the window's pixels is correct by
+  construction. Over-large regions clamp to the window and say so. Measured: a
+  `[0,0,700,120]` crop costs **450 tokens instead of 2840**.
+
+**The false claim:** the first draft of the rescue message said *"a background tab can
+never be captured on its own"*. One live test disproved it — `window_id 13861`, a
+background tab, captured fine at **3840×2080** (exactly bounds×2, without the group's
+tab bar). The message now describes what will work rather than asserting what cannot,
+and a test greps it for `never|impossible|cannot be captured`.
+
+**Pattern worth internalising: every absolute claim made about macOS window behaviour in
+this file has been wrong.** `[other Space]`, "cannot be captured while off screen", "a
+background tab can never be captured" — three for three. State the observation, offer
+the next step, and let the capture attempt be the authority.
+
+Also fixed while verifying (d): the chrome-mismatch note fired on cropped captures and
+ended with "The full window was captured", which after a deliberate crop is simply
+untrue. It is now suppressed whenever a region was applied.
 - **Patch-snapping was removed, not merely defaulted off.** Trimming each axis down to a
   multiple of 28 saves ~3% of the budget and distorts the aspect ratio by up to 2.7%;
   ClaudeImageResizer reached the same conclusion independently, so nothing ever enabled
