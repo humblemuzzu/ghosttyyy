@@ -21,7 +21,14 @@ import { formatBoxesWindowed, osc8Link, type BoxSection, type BoxLine, type Exce
 import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
-import { defaultOutDir, fitImageFile, fitResultBlocks, pruneOutDir } from "./lib/image-fit";
+import {
+	DegenerateImageError,
+	defaultOutDir,
+	fitImageFile,
+	fitResultBlocks,
+	pruneOutDir,
+	UnusableImageError,
+} from "./lib/image-fit";
 
 // --- limits ---
 
@@ -306,7 +313,25 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 							} as any;
 						}
 						return { content: blocks, details: { header: resolved, plan: fit.plan } } as any;
-					} catch {
+					} catch (fitErr: any) {
+						// The fallback exists so that a FIT failure never makes `read`
+						// worse than the five-line version it replaced. But it must not
+						// fire for an image that CANNOT be rendered: sending the raw
+						// bytes would deliver the exact payload the API rejects with
+						// "Could not process image", and that 400 fails the whole
+						// request rather than this one call. Report it instead — a
+						// readable error beats a dead turn.
+						if (fitErr instanceof UnusableImageError) {
+							return {
+								content: [
+									{
+										type: "text" as const,
+										text: `cannot read ${resolved}: ${fitErr.message}`,
+									},
+								],
+								isError: true,
+							} as any;
+						}
 						const base64 = fs.readFileSync(resolved).toString("base64");
 						return { content: [{ type: "image" as const, data: base64, mimeType: mime }] } as any;
 					}

@@ -61,7 +61,10 @@ describe("read: images are fitted before they reach the model", () => {
 		const result = await run(p);
 		const text = result.content.find((c: any) => c.type === "text").text;
 		const [, w, h] = /(\d+)×(\d+)\s*\((\d+) tokens/.exec(text) ?? [];
-		expect(countImageTokens(Number(w), Number(h))).toBeLessThanOrEqual(TIERS.standard.maxTokens);
+		// `read` goes through the same seam as `screenshot`, so it gets the high
+		// tier by default too — an image the model OPENS deserves the same
+		// treatment as one it TAKES.
+		expect(countImageTokens(Number(w), Number(h))).toBeLessThanOrEqual(TIERS.highRes.maxTokens);
 	});
 
 	test("base64 stays padded through the fitted path", async () => {

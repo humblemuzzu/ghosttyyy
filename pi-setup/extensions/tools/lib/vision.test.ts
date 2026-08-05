@@ -5,6 +5,7 @@ import {
   MANY_IMAGE_MAX_EDGE,
   MAX_BASE64_BYTES,
   MAX_EDGE_ABSOLUTE,
+  MAX_IMAGES_PER_CALL,
   planView,
   resizedSize,
   resolveTier,
@@ -210,12 +211,107 @@ describe("planView", () => {
 });
 
 describe("resolveTier", () => {
-  test('"high" selects the high-res tier; everything else is standard', () => {
+  test("high is the DEFAULT — absent, unknown, or explicit all give high", () => {
+    // The dominance sweep says high is never worse, so there is no decision to
+    // delegate. Only an explicit "standard" opts down.
+    expect(resolveTier(undefined).maxTokens).toBe(TIERS.highRes.maxTokens);
     expect(resolveTier("high").maxTokens).toBe(TIERS.highRes.maxTokens);
+    // a model inventing a name must not silently get the weaker tier
+    expect(resolveTier("ultra").maxTokens).toBe(TIERS.highRes.maxTokens);
+    expect(resolveTier("").maxTokens).toBe(TIERS.highRes.maxTokens);
+  });
+
+  test('"standard" is still honoured when explicitly asked for', () => {
     expect(resolveTier("standard")).toBe(TIERS.standard);
-    expect(resolveTier(undefined)).toBe(TIERS.standard);
-    // A model that invents a tier name gets the safe default, not a throw.
-    expect(resolveTier("ultra")).toBe(TIERS.standard);
+  });
+
+  test("the default tier is never worse than standard, for any shape", () => {
+    const shapes: Array<[number, number]> = [
+      [3840, 2160], [2800, 1800], [1800, 1200], [1000, 600],
+      [1440, 900], [5120, 2880], [660, 1664], [390, 844],
+    ];
+    for (const [w, h] of shapes) {
+      const std = resizedSize(w, h, resolveTier("standard"));
+      const def = resizedSize(w, h, resolveTier(undefined));
+      expect({ w, h, worse: def.width * def.height < std.width * std.height })
+        .toEqual({ w, h, worse: false });
+    }
+  });
+});
+
+/**
+ * The 100-images-per-request wall is Anthropic's; this cap is ours, and it
+ * exists because ONE call slicing a very long page can clear that wall on its
+ * own. Truncating is the deliberate choice: a partial answer that says what is
+ * missing beats a dead turn.
+ */
+describe("the per-call image cap", () => {
+  const tall = (h: number, opts = {}) =>
+    planView(1440, h, { tier: resolveTier(undefined), ...opts });
+
+  test("no page height can produce more than the cap", () => {
+    for (const h of [3000, 6996, 12000, 20000, 50000, 100000, 200000, 1_000_000]) {
+      const plan = tall(h);
+      const n = plan.kind === "slice" ? plan.slices.length : 1;
+      expect({ h, over: n > MAX_IMAGES_PER_CALL }).toEqual({ h, over: false });
+    }
+  });
+
+  test("a page that fits under the cap is NOT marked truncated and covers everything", () => {
+    const plan = tall(6996);
+    if (plan.kind !== "slice") throw new Error("expected a slice plan");
+    expect(plan.truncated).toBeUndefined();
+    const last = plan.slices[plan.slices.length - 1]!;
+    // the bottom-align trick must still reach the very bottom of the page
+    expect(last.y + last.height).toBe(6996);
+  });
+
+  test("a page over the cap is truncated, and reports exactly what it covered", () => {
+    const plan = tall(1_000_000);
+    if (plan.kind !== "slice") throw new Error("expected a slice plan");
+    expect(plan.slices).toHaveLength(MAX_IMAGES_PER_CALL);
+    expect(plan.truncated).toBeDefined();
+
+    const last = plan.slices[plan.slices.length - 1]!;
+    expect(plan.truncated!.coveredHeight).toBe(last.y + last.height);
+    expect(plan.truncated!.totalHeight).toBe(1_000_000);
+    expect(plan.truncated!.neededSlices).toBeGreaterThan(MAX_IMAGES_PER_CALL);
+  });
+
+  test("a truncated plan is contiguous from the top — no hole in the middle", () => {
+    const plan = tall(1_000_000);
+    if (plan.kind !== "slice") throw new Error("expected a slice plan");
+    expect(plan.slices[0]!.y).toBe(0);
+    for (let i = 1; i < plan.slices.length; i++) {
+      const prev = plan.slices[i - 1]!;
+      const cur = plan.slices[i]!;
+      // starts before the previous one ends: overlapping, never a gap
+      expect(cur.y).toBeLessThan(prev.y + prev.height);
+    }
+  });
+
+  test("truncation never bottom-aligns — that would skip the middle silently", () => {
+    const plan = tall(1_000_000);
+    if (plan.kind !== "slice") throw new Error("expected a slice plan");
+    const last = plan.slices[plan.slices.length - 1]!;
+    expect(last.y + last.height).toBeLessThan(1_000_000);
+  });
+
+  test("the cap is overridable, and 1 is a legal value", () => {
+    const plan = tall(50_000, { maxSlices: 1 });
+    if (plan.kind !== "slice") throw new Error("expected a slice plan");
+    expect(plan.slices).toHaveLength(1);
+    expect(plan.slices[0]!.y).toBe(0);
+    expect(plan.truncated!.coveredHeight).toBe(plan.slices[0]!.height);
+  });
+
+  test("high tier needs fewer images than standard for the same page", () => {
+    // Slice height scales with the tier budget, so the richer tier is also the
+    // one less likely to hit an image-count limit.
+    const std = planView(1440, 20000, { tier: resolveTier("standard"), maxSlices: 999 });
+    const high = planView(1440, 20000, { tier: resolveTier(undefined), maxSlices: 999 });
+    if (std.kind !== "slice" || high.kind !== "slice") throw new Error("expected slice plans");
+    expect(high.slices.length).toBeLessThan(std.slices.length);
   });
 });
 

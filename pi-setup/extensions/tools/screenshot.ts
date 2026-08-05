@@ -31,11 +31,18 @@ import {
 	CaptureError,
 	describeWindow,
 	findWindows,
+	groupLikelyTabs,
 	listWindows,
 	permissionAdvice,
 	type WindowInfo,
 } from "./lib/capture";
-import { defaultOutDir, fitImageFile, fitResultBlocks, pruneOutDir } from "./lib/image-fit";
+import {
+	defaultOutDir,
+	fitImageFile,
+	fitResultBlocks,
+	imageSize,
+	pruneOutDir,
+} from "./lib/image-fit";
 import { captureWebPage, WebCaptureError } from "./lib/web-capture";
 import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
 import { getContainer, getText } from "./lib/tui";
@@ -97,13 +104,32 @@ function renderWindowTable(windows: WindowInfo[], heading: string): string {
 	return lines.join("\n");
 }
 
-/** Resolve a window target, or explain the ambiguity well enough to fix it. */
-function resolveWindow(params: any): WindowInfo {
-	const pool = listWindows();
+/**
+ * What `resolveWindow` decided, so the caller can disclose a choice it made.
+ *
+ * Auto-picking silently was a real complaint from a test run: `app:"ghostty"`
+ * matched 12 windows and captured one with no signal, while `app` + a
+ * `window_title` matched 5 and refused outright. Both behaviours are defensible;
+ * the problem was that the caller could not tell which had happened, so it had
+ * no reason to doubt it got the window it meant.
+ */
+export interface WindowChoice {
+	window: WindowInfo;
+	/** Set when more than one window matched and one was picked for the caller. */
+	autoPicked?: { total: number; query: string };
+}
 
+/**
+ * Resolve a window target, or explain the ambiguity well enough to fix it.
+ *
+ * `pool` is injectable because the interesting branches depend on which Spaces
+ * happen to be active, which makes them untestable against the live desktop —
+ * the ambiguous case stops being ambiguous the moment a window moves.
+ */
+export function resolveWindow(params: any, pool: WindowInfo[] = listWindows()): WindowChoice {
 	if (params.window_id !== undefined) {
 		const byId = findWindows({ id: Number(params.window_id) }, pool);
-		if (byId.length === 1) return byId[0]!;
+		if (byId.length === 1) return { window: byId[0]! };
 		throw new CaptureError(
 			`no window with id ${params.window_id}. Window ids change when an app relaunches, ` +
 				`so re-read the list rather than reusing an old one.\n\n` +
@@ -128,13 +154,43 @@ function resolveWindow(params: any): WindowInfo {
 		// Prefer an unambiguous on-screen match before giving up: a background
 		// app with six hidden helper windows should not defeat "screenshot Safari".
 		const onScreen = matches.filter((w) => w.onScreen);
-		if (onScreen.length === 1) return onScreen[0]!;
+		if (onScreen.length === 1) {
+			return { window: onScreen[0]!, autoPicked: { total: matches.length, query } };
+		}
+		/*
+		 * Only suggest `window_title` when it could actually work. Telling a
+		 * caller to "narrow it with window_title" after it already passed one —
+		 * or when every candidate shares a byte-identical title — is advice that
+		 * cannot succeed, and it invites a retry loop.
+		 */
+		const distinctTitles = new Set(matches.map((w) => w.title)).size;
+		const titleCouldHelp = distinctTitles > 1;
+		const advice = titleCouldHelp
+			? params.window_title
+				? `Refine window_title (the candidates below differ), or pass window_id.`
+				: `Narrow it with window_title, or pass window_id.`
+			: `Every candidate reports the same title, so window_title cannot separate them — ` +
+				`pass window_id.`;
+		/*
+		 * A raw count is misleading under native tabbing: every tab is its own
+		 * window, so two real windows can report sixteen matches. Say how many
+		 * distinct frames there are, so the number matches what the user sees.
+		 */
+		const groups = groupLikelyTabs(matches);
+		const tabNote =
+			groups.length < matches.length
+				? `\n\nThese occupy only ${groups.length} distinct window frame(s) — under macOS ` +
+					`native tabbing each TAB is reported as its own window, so most of these are ` +
+					`likely tabs of the same window. Capturing any one of them grabs the whole ` +
+					`tab group as it is currently displayed.`
+				: "";
 		throw new CaptureError(
-			`${matches.length} windows match ${query}. Narrow it with window_title, or pass window_id.\n\n` +
-				renderWindowTable(matches, "candidates:"),
+			`${matches.length} windows match ${query}. ${advice}\n\n` +
+				renderWindowTable(matches, "candidates:") +
+				tabNote,
 		);
 	}
-	return matches[0]!;
+	return { window: matches[0]! };
 }
 
 export function createScreenshotTool(): ToolDefinition {
@@ -156,7 +212,9 @@ export function createScreenshotTool(): ToolDefinition {
 			"Pass a url to render a page in a headless browser instead of photographing the screen. " +
 			"That captures the WHOLE page including everything below the fold, which no screen capture " +
 			"can do, and a very tall page is returned as ordered readable slices rather than one " +
-			"illegible strip. Use it for web UI you are building.\n\n" +
+			"illegible strip. Use it for web UI you are building. A page too long to return in one " +
+			"call is truncated from the top and says so — pass a selector to reach a specific " +
+			"section instead.\n\n" +
 			'Example: screenshot({ app: "Safari" })',
 
 		parameters: Type.Object({
@@ -243,7 +301,7 @@ export function createScreenshotTool(): ToolDefinition {
 			tier: Type.Optional(
 				Type.Union([Type.Literal("standard"), Type.Literal("high")], {
 					description:
-						'Detail budget. "standard" is 1568 visual tokens and suits most UI. "high" is 4784 tokens (~3x the cost) and keeps small text readable on dense or high-resolution screens.',
+						'Detail level. Defaults to "high", which is never worse than "standard" and often needs no resampling at all. Pass "standard" only to deliberately request a smaller image; there is no reason to reach for it otherwise.',
 				}),
 			),
 		}),
@@ -334,6 +392,18 @@ export function createScreenshotTool(): ToolDefinition {
 					});
 					captured = `${web.finalUrl}${web.title ? ` — ${web.title}` : ""}`;
 					if (params.selector) captured += ` [${params.selector}]`;
+					if (web.clipped) {
+						// Distinct from the slice cap: this is the browser being unable to
+						// DRAW past its texture limit, not us choosing to return less.
+						notes.push(
+							`CLIPPED BY THE BROWSER: the document is ` +
+								`${web.clipped.documentHeight.toLocaleString()}px tall, but Chromium cannot ` +
+								`render past ${web.clipped.capturedHeight.toLocaleString()}px in one pass — ` +
+								`beyond that it returns blank pixels rather than failing. Only the top ` +
+								`${web.clipped.capturedHeight.toLocaleString()}px is real. Use a selector to ` +
+								`reach a section further down.`,
+						);
+					}
 					if (web.overflow > 0) {
 						notes.push(
 							`page scrolls sideways by ${web.overflow}px at this viewport width — ` +
@@ -347,7 +417,17 @@ export function createScreenshotTool(): ToolDefinition {
 						);
 					}
 				} else if (wantsWindow) {
-					let window = resolveWindow(params);
+					const choice = resolveWindow(params);
+					let window = choice.window;
+					if (choice.autoPicked) {
+						notes.push(
+							`${choice.autoPicked.total} windows match ${choice.autoPicked.query}; ` +
+								`captured the only one currently on screen (id ${window.id}). Under macOS ` +
+								`native tabbing every TAB counts as a window, so that number is usually ` +
+								`much larger than the number of windows you can see. Pass window_id to ` +
+								`choose a different one — list:true shows them all.`,
+						);
+					}
 					const bringForward = async () => {
 						await activateApp(window.app);
 						// The window may have moved or resized coming forward, and a
@@ -387,6 +467,32 @@ export function createScreenshotTool(): ToolDefinition {
 					captured = `${window.app} — ${window.title || "(untitled)"} [id ${window.id}]`;
 					if (autoActivated) {
 						captured += " (brought forward — it was on another Space)";
+					}
+					/*
+					 * `CGWindowBounds` and `screencapture -l` do not always agree, and the
+					 * mismatch looks like a bug when it is not. Measured on Ghostty: the
+					 * list reports 1920x1040 at y=40 (the content area) while the capture
+					 * is 1920x1080 from y=0 — the difference is exactly the native tab
+					 * bar, which the bounds exclude and the capture rightly includes.
+					 * Verified by reading the top strip: it is Ghostty's tab bar, not the
+					 * menu bar, so nothing extra was captured and nothing was lost.
+					 *
+					 * Saying so costs one line and stops a reviewer having to re-derive it.
+					 */
+					try {
+						const shot = imageSize(rawPath);
+						const scale = Math.round(shot.width / window.width) || 1;
+						const extra = shot.height - window.height * scale;
+						if (extra !== 0) {
+							notes.push(
+								`the window listed as ${window.width}×${window.height} captured at ` +
+									`${shot.width}×${shot.height} (${extra > 0 ? "+" : ""}${extra}px height). ` +
+									`Window bounds exclude chrome such as a native tab bar; the capture ` +
+									`includes it. The full window was captured.`,
+							);
+						}
+					} catch {
+						// A size read is a nicety; never fail a good capture over it.
 					}
 				} else if (region) {
 					await captureRegion(rawPath, region, opts);

@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Endless Page</title>
+    <style>
+      body { margin: 0; font: 16px/1.5 -apple-system, sans-serif; background: #fff; }
+      section { height: 1200px; padding: 40px; border-bottom: 3px solid #222; }
+      h2 { font-size: 64px; margin: 0 0 16px; }
+      p { font-size: 24px; color: #444; }
+    </style>
+  </head>
+  <body>
+    <script>
+      // 40 sections x 1200px = ~48,000px tall. Far past any sane slice cap, so
+      // the truncation path is guaranteed to fire.
+      for (let i = 1; i <= 40; i++) {
+        document.write(
+          `<section><h2>SECTION ${i}</h2><p>marker-${i} — this is section ${i} of 40</p></section>`,
+        );
+      }
+    </script>
+  </body>
+</html>

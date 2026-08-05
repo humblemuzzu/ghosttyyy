@@ -46,12 +46,11 @@
     "tool": "Bash",
     "matches": {
       "cmd": [
-        "regex:(?:^|(?<!\\\\)[;&|(]\\s*|\\bnohup\\s+|\\bxargs\\s+|-exec\\s+)screencapture\\b",
-        "regex:\\bsips\\b[^|;&]*\\s-[Zz]\\s"
+        "regex:(?:^|(?<!\\\\)[;&|(]\\s*|\\bnohup\\s+|\\bxargs\\s+|-exec\\s+)screencapture\\b"
       ]
     },
     "action": "reject",
-    "message": "use the screenshot tool instead. it captures the same thing and fits the image to the vision budget in ONE resample pass; 'sips -Z <n>' picks a long edge that ignores the visual-token limit, so the API resamples a second time and small text stops being readable. windows/regions/displays are all supported \u2014 call screenshot({ list: true }) to see the targets"
+    "message": "use the screenshot tool instead of capturing by hand \u2014 it takes the same shot and fits the image to the vision budget in ONE resample pass, where the hand-rolled way resizes to a guessed long edge that ignores the visual-token limit and makes the API resample a second time. displays, windows, regions and whole web pages are all supported; call screenshot({ list: true }) to see the targets"
   },
   {
     "tool": "*",

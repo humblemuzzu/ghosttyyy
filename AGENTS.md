@@ -874,6 +874,155 @@ Load-bearing details that look like nits and are not:
 - **The edge limit is tested against the PADDED edge**, `ceil(w/28)*28`.
 - **The high-res tier is clamped to 2000px, not the spec's 2576.** See below — this is
   not a nit, it took out a live request.
+- **High is the DEFAULT tier, and nothing decides it.** Swept 851 shapes
+  (`port-harness/tier-dominance.ts`): high was larger 801 times, identical 50 times, and
+  smaller **zero** times. It is not a trade-off, so there is nothing for a model to
+  weigh. Only an explicit `tier:"standard"` opts down; an absent or invented tier name
+  gets high. In 54 of the wins the source already fitted, so high meant **no resample at
+  all** where standard would have shrunk it.
+- **High tier is also the safer choice for image COUNT.** Its slices are 1988px tall vs
+  840, so the same page needs less than half the images — a 6,996px page goes 9 → 4, a
+  20,000px page 25 → 11. Image count is what hits the >20 and 100-image rules, so the
+  richer tier trips them less.
+- **No cost language anywhere in the tool surface.** A `screenshot.test.ts` case greps
+  the description and every parameter for `token cost|cheaper|Nx the cost|expensive` and
+  fails if any appears. Cost is the caller's business; the tool's business is not
+  returning a degraded picture. The old `"~3x the token cost"` note actively pushed
+  models to the weaker tier.
+
+### Two caps that are ours, not Anthropic's
+
+**`MAX_IMAGES_PER_CALL = 12`** (`lib/vision.ts`). Anthropic's wall is 100 images per
+*request*, and a request is the whole conversation resent each turn — so one call
+emitting 52 slices can clear that wall on its own. Measured at 1440px wide on the high
+tier: a 100,000px page wanted 52 slices. 12 leaves 8× headroom and covers a ~23,000px
+page. Exceeding it **truncates from the top** and says so in pixels; it never
+bottom-aligns when truncating, because jumping to the end would leave an unannounced
+hole in the middle.
+
+**`MAX_RENDERABLE_HEIGHT = 16384`** (`lib/web-capture.ts`) — see below.
+
+### Chromium silently returns BLANK past 16384px
+
+Found by a model **reading our own slices** and reporting that a 51,320px capture
+repeated and blanked out. Chromium cannot render a full-page screenshot taller than its
+maximum texture size (2^14). Past that it does **not** fail — it returns an image of the
+requested height whose lower portion is empty.
+
+Measured (`port-harness/tall-page-limit.ts`) on a 40-section fixture: sections 1–13
+rendered, **sections 14–40 came back blank**, boundary inside 15,506..16,719. The tool
+then sliced that emptiness and handed it over as page content — worse than truncation,
+because a caller cannot tell blank-because-empty from blank-because-broken.
+
+`captureWebPage` now clips to 16384 and reports `clipped: { capturedHeight,
+documentHeight }`, which `screenshot.ts` surfaces as a loud note. After the fix the same
+fixture yields 13 distinct headings and **0 blank bands**.
+
+**Two probe bugs on the way to this, both mine, both worth remembering:** the first
+sampled at 1200px per section (the CSS `height`) when content-box sizing makes them
+1283px, so it sampled blank body areas and "found" a repeat that did not exist. The
+second asserted the bottom 300px of the capture had ink, when that fixture's sections
+are mostly whitespace by design. **Derive geometry from the artifact; do not assume it.**
+
+### Two files that look like images and kill the request
+
+`400 Could not process image` fails the **whole request**, not the one tool call — so it
+takes the turn down. Two inputs reached the API and caused it, both for the same
+structural reason: **the `asis` fast path deliberately never decodes.** Anything a decode
+would catch is therefore already safe; only things that survive a *header read* need an
+explicit refusal.
+
+| input | why it slipped through |
+|---|---|
+| **0x0 PNG** (`DegenerateImageError`) | structurally valid, and zero tokens is inside every budget — so it is judged to "fit" perfectly and ships untouched |
+| **truncated PNG** (`TruncatedImageError`) | intact IHDR reports plausible dimensions; measured, the first 100 bytes of a 300×200 PNG report 300×200 and ship as a 100-byte "image" |
+
+Found live: a script killed mid-run left 65-byte 0x0 PNGs in `~/pi-scratch`, and reading
+one killed the session. Empty files, not-an-image and half-a-file all throw while
+decoding and never had this problem.
+
+Both now throw `UnusableImageError` (the shared base) from `fitImageFile`, before
+`planView` runs. Truncation is detected by the **missing 12-byte IEND chunk** — one tail
+read, so `asis` stays decode-free. **PNG only, deliberately**: every valid PNG ends with
+IEND so there are no false positives, and PNG is what `screencapture`, Chromium and our
+own encoder produce — every path that can write a partial file. JPEGs commonly carry
+trailing bytes after EOI, and refusing a valid image would be worse than the bug.
+
+**`read.ts`'s raw-bytes fallback must skip this class.** It exists so a *fit* failure
+never makes `read` worse than the five-line version it replaced — but falling back for
+an unusable image re-sends the exact payload the API rejects. It now catches
+`UnusableImageError` and reports it instead. Verified live: a fresh session read both
+corrupt shapes, got clean errors, and kept working.
+
+### Window targeting: disclose the choice, and only give advice that can work
+
+Three findings from a live test run, all about the tool being *silent* rather than wrong:
+
+- **Auto-picking was invisible.** `app:"ghostty"` matched 12 windows and captured one
+  with no signal, while `app` + `window_title` matched 5 and refused. Both behaviours
+  are defensible; being unable to tell which happened is not. `resolveWindow` now
+  returns a `WindowChoice` carrying `autoPicked`, and the tool emits a note naming the
+  match count and the chosen id.
+- **The refusal gave impossible advice.** It said *"Narrow it with window_title"* to a
+  caller that had just supplied one, when all five candidates had byte-identical titles
+  — no value could ever have worked. The advice is now conditional on
+  `new Set(titles).size > 1`; when titles are identical it says so and asks for
+  `window_id`, which is the only thing that can separate them.
+- **Left-truncated titles hide the distinguishing part.** Ghostty renders
+  `…/Documents/Code stuff/stripema` itself, so the prefix is gone before we see it.
+  `describeWindow` now includes `@x,y`, which is the only remaining discriminator.
+
+`resolveWindow` takes an injectable `pool` because these branches depend on which Space
+is active — the ambiguous case stops being ambiguous the moment a window moves, so it
+cannot be tested against the live desktop.
+
+### `CGWindowBounds` under-reports windows with a native tab bar (not a bug)
+
+A window capture reported a `3840×2160` source for a window `list` called `1920×1040` —
+an 80px discrepancy that looks like capturing the wrong thing. Measured, it is not:
+
+| | value |
+|---|---|
+| `CGWindowBounds` | 1920×1040 at y=40 — the **content area** |
+| `screencapture -l` | 1920×1080 from y=0 — the **true window frame** |
+| difference | exactly the 40pt native tab bar |
+
+Confirmed by cropping the top 90px of the capture and reading it: it is Ghostty's tab
+bar (`π - stripema ⌘1 …`), **not** the menu bar. Nothing extra was captured and nothing
+was lost. A control window in the same run (Stripema, 1624×941) captured at exactly
+3248×1882 — so the general path is correct and only chrome-bearing windows differ.
+
+The tool now emits a note when captured pixels ≠ bounds × scale, because a silent
+mismatch costs a reviewer an investigation every time.
+
+### Every TAB is a window — why "4 terminals" reports 16
+
+Measured on this machine with 4 visible Ghostty terminals:
+
+```
+24 Ghostty windows raw → 16 after the layer-0 / ≥100px filter
+  1920×1040 @0,40   ×7    terminal surfaces   ┐ two real windows,
+  1916×1040 @4,40   ×8    terminal surfaces   ┘ 7 and 8 tabs
+  500×500   @0,580  ×1    helper
+  1920×40   @0,0    ×3  ┐ TAB BARS — filtered out by the height floor
+  1920×30   @0,0    ×4  ┘
+```
+
+Under macOS native tabbing **each tab is its own `NSWindow`**, and the tab bar is a
+*further* separate window at y=0. So the raw count is accurate and useless. Tabs of one
+window share an app, size and position exactly, which is what `groupLikelyTabs()` keys
+on; the ambiguity message now reports distinct frames alongside the raw count.
+
+**This also explains the +80px capture** precisely: `id 15883` (terminal, 1920×1040
+@0,40) and `id 15884` (its tab bar, 1920×40 @0,0) are siblings, and `screencapture -l`
+returns the whole **tab group** — 1920×1080 from y=0. Not padding, not the display: the
+group.
+
+**`[other Space]` was a false claim and is now `[not on screen]`.** All macOS reports is
+`kCGWindowIsOnscreen: false`, which is equally true of another Space, a minimised
+window, a hidden app, and — most often by far — a background tab. 15 of these 16 were
+"not on screen" and almost none were on another Space. Naming an unchecked cause sends
+people hunting a Spaces problem that is not there.
 - **Patch-snapping was removed, not merely defaulted off.** Trimming each axis down to a
   multiple of 28 saves ~3% of the budget and distorts the aspect ratio by up to 2.7%;
   ClaudeImageResizer reached the same conclusion independently, so nothing ever enabled
@@ -1002,11 +1151,16 @@ the 10MB API cap** before fitting; after fitting, 16.2%.
   `read` both funnel through it. Nothing else should base64 an image.
 - **The `asis` path never decodes.** Dimensions come from the IHDR; if the image already
   fits, the original bytes ship untouched.
-- `permissions.json` rejects `screencapture` and `sips -Z/-z` in bash and names the tool
-  in the rejection message. `sips -g` and `sips -s format` stay allowed — the tool uses them.
-- Available to `delegate`, `oracle` and `code_review` sub-agents. **A sub-agent's images do
-  not reach the parent** — `getFinalOutput` keeps text parts only, so you get its prose
-  about the image. To see pixels yourself, call `screenshot` at the top level.
+- `permissions.json` rejects the capture binary in bash and names the tool in the
+  message. It does **not** match `sips` at all any more: that pattern produced three
+  false positives in a single session — a git commit message describing the old pattern,
+  and two files written through a shell heredoc that merely QUOTED it. The guard exists
+  to stop an agent TAKING a screenshot by hand, not to stop anyone writing about it, and
+  with the capture binary blocked there is no fresh screenshot to badly resize anyway.
+  Pinned by `port-harness/permission-precision.ts` (5 real invocations still blocked,
+  7 "talking about it" cases allowed) and by cases in `screenshot.test.ts`.
+- Available to `delegate`, `oracle` and `code_review` sub-agents, and **a sub-agent's
+  images now reach the parent** — see "Sub-agent screenshots reach the caller" above.
 
 ### `read` is covered too
 

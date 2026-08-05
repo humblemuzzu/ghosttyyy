@@ -29,7 +29,9 @@
           "id": "deepseek-v4-pro",
           "name": "🧠 DeepSeek V4 Pro — 1M context, thinking mode",
           "reasoning": true,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 1048576,
           "maxTokens": 393216,
           "thinkingLevelMap": {
@@ -50,7 +52,9 @@
           "id": "deepseek-v4-flash",
           "name": "⚡ DeepSeek V4 Flash — 1M context, fast",
           "reasoning": true,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 1048576,
           "maxTokens": 393216,
           "thinkingLevelMap": {
@@ -82,7 +86,10 @@
           "id": "kimi-for-coding",
           "name": "K2.7 Code — Kimi Code subscription OAuth",
           "reasoning": true,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 262144,
           "maxTokens": 32768,
           "cost": {
@@ -103,7 +110,10 @@
           "id": "fugu",
           "name": "🐡 Fugu — 1M ctx, multi-agent orchestration (Responses)",
           "reasoning": true,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 1000000,
           "maxTokens": 32768,
           "thinkingLevelMap": {
@@ -125,7 +135,10 @@
           "id": "fugu-ultra",
           "name": "🐡 Fugu Ultra — deeper orchestration, reasoning summaries (Responses)",
           "reasoning": true,
-          "input": ["text", "image"],
+          "input": [
+            "text",
+            "image"
+          ],
           "contextWindow": 1000000,
           "maxTokens": 32768,
           "thinkingLevelMap": {
@@ -140,6 +153,37 @@
             "input": 5,
             "output": 30,
             "cacheRead": 0.5,
+            "cacheWrite": 0
+          }
+        }
+      ]
+    },
+    "llama-local": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "llama",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "supportsStore": false,
+        "supportsStrictMode": false,
+        "supportsUsageInStreaming": true,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "LFM2.5-2.6B",
+          "name": "🧪 LFM2.5-2.6B — local (llama.cpp Q6_K)",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 65536,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
             "cacheWrite": 0
           }
         }

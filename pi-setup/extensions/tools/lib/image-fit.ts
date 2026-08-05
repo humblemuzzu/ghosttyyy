@@ -57,6 +57,8 @@ export interface FitOptions {
 	basename?: string;
 	minLongEdge?: number;
 	overlap?: number;
+	/** Hard ceiling on images produced by one call. See MAX_IMAGES_PER_CALL. */
+	maxSlices?: number;
 }
 
 export interface FitOutput {
@@ -83,6 +85,85 @@ export interface FitResult {
 
 function sips(args: string[]): string {
 	return execFileSync("sips", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/**
+ * A file that LOOKS like a valid image to a header read, but cannot be rendered.
+ *
+ * This is a distinct error type because it is the one failure a caller must NOT
+ * recover from by falling back to the original bytes. Anthropic rejects such a
+ * payload with `400 Could not process image`, and that 400 fails the whole
+ * REQUEST, not just the one tool call — it takes the turn down with it.
+ *
+ * Both known members of this class slip through for the same structural reason:
+ * the `asis` fast path deliberately never decodes (see AGENTS.md — decoding a
+ * 4K PNG costs ~118ms and the whole point of `asis` is to ship bytes untouched
+ * when they already fit). Anything caught by a DECODE is therefore already
+ * safe; only things that survive a header read need an explicit refusal.
+ */
+export class UnusableImageError extends Error {}
+
+/**
+ * An image that parses but describes no pixels — an IHDR of 0x0, or any axis
+ * that is zero or negative.
+ *
+ * Observed live: a script killed mid-run left 65-byte 0x0 PNGs on disk, and
+ * reading one killed the session. It is doubly invisible because zero tokens is
+ * inside every budget, so it is judged to "fit" perfectly.
+ */
+export class DegenerateImageError extends UnusableImageError {
+	constructor(file: string, width: number, height: number) {
+		super(
+			`${file} declares ${width}x${height} — an image with no pixels. It cannot ` +
+				`be sent: the API rejects zero-area images with "Could not process ` +
+				`image", which fails the entire request. The file is corrupt.`,
+		);
+		this.name = "DegenerateImageError";
+	}
+}
+
+/**
+ * An image whose header is intact but whose pixel data was never finished —
+ * a capture interrupted mid-write, a partial download, a killed process.
+ *
+ * The header still reports plausible dimensions, so it passes every geometry
+ * check and takes `asis` straight to the API. Measured: the first 100 bytes of
+ * a 300x200 PNG report 300x200 and ship as a 100-byte "image".
+ */
+export class TruncatedImageError extends UnusableImageError {
+	constructor(file: string, bytes: number) {
+		super(
+			`${file} is ${bytes} bytes and has no end-of-image marker — the pixel ` +
+				`data was never finished writing. It cannot be sent: the API rejects ` +
+				`incomplete images with "Could not process image", which fails the ` +
+				`entire request.`,
+		);
+		this.name = "TruncatedImageError";
+	}
+}
+
+/**
+ * Is the file missing its end-of-image marker? Reads the last 12 bytes; never
+ * decodes.
+ *
+ * PNG only, deliberately. Every valid PNG ends with the 12-byte IEND chunk, so
+ * this has no false positives — and PNG is what `screencapture`, Chromium and
+ * our own encoder all produce, which is every path that can write a partial
+ * file. JPEGs arrive from the user's disk already complete, and trailing bytes
+ * after a JPEG's EOI marker are common enough in the wild that checking would
+ * risk refusing valid images. Refusing something valid would be a worse bug
+ * than the one being fixed.
+ */
+function isTruncatedPng(file: string, bytes: number): boolean {
+	if (bytes < 12) return true;
+	const fd = fs.openSync(file, "r");
+	try {
+		const tail = Buffer.alloc(12);
+		fs.readSync(fd, tail, 0, 12, bytes - 12);
+		return tail.subarray(4, 8).toString("latin1") !== "IEND";
+	} finally {
+		fs.closeSync(fd);
+	}
 }
 
 /** Dimensions for a format pngjs cannot decode. Subprocess, ~30ms. */
@@ -255,10 +336,22 @@ export function fitImageFile(file: string, opts: FitOptions = {}): FitResult {
 
 	const sourceBytes = fs.statSync(file).size;
 	const size = imageSize(file);
+	// Refuse before planning. `planView` would report `asis` for 0x0 — zero
+	// tokens is inside every budget — and the fast path below then ships the
+	// source bytes untouched, so this is the only point where it can be caught.
+	if (size.width <= 0 || size.height <= 0) {
+		throw new DegenerateImageError(file, size.width, size.height);
+	}
+	// Same class, different cause: an intact header over unfinished pixel data.
+	// Costs one 12-byte read, so it does not compromise `asis` staying decode-free.
+	if ((MIME_BY_EXT[path.extname(file).toLowerCase()] ?? "image/png") === "image/png") {
+		if (isTruncatedPng(file, sourceBytes)) throw new TruncatedImageError(file, sourceBytes);
+	}
 	const plan = planView(size.width, size.height, {
 		tier,
 		minLongEdge: opts.minLongEdge,
 		overlap: opts.overlap,
+		maxSlices: opts.maxSlices,
 	});
 	const ext = path.extname(file).toLowerCase();
 	const sourceMime = MIME_BY_EXT[ext] ?? "image/png";
@@ -307,14 +400,16 @@ export function fitImageFile(file: string, opts: FitOptions = {}): FitResult {
 			);
 			notes.push(plan.reason);
 			const sliceTokens = outputs.reduce((n, o) => n + o.tokens, 0);
-			// A tall page is the one case where fitting an image honestly costs more
-			// than the budget for a single one — eight readable strips is eight
-			// images. Say so, because the alternative (one illegible strip) is
-			// cheaper and the caller may genuinely prefer it.
-			if (outputs.length > 3) {
+			// The only thing worth saying here is what the caller did NOT get.
+			// Anything about token cost belongs to whoever is paying, not to a tool
+			// deciding how much of a page to hand back.
+			if (plan.truncated) {
+				const { coveredHeight, totalHeight, neededSlices } = plan.truncated;
 				notes.push(
-					`${outputs.length} images ≈ ${sliceTokens} tokens. If you only need part of ` +
-						`this, capture that part directly — with a url, pass a selector.`,
+					`TRUNCATED: captured the top ${coveredHeight.toLocaleString()}px of a ` +
+						`${totalHeight.toLocaleString()}px page (${outputs.length} of ${neededSlices} slices). ` +
+						`The remaining ${(totalHeight - coveredHeight).toLocaleString()}px was NOT captured. ` +
+						`To see a specific section, pass a selector, or capture that region directly.`,
 				);
 			}
 			summary =
@@ -325,16 +420,9 @@ export function fitImageFile(file: string, opts: FitOptions = {}): FitResult {
 			const small = downscale(img, plan.to);
 			resamples = 1;
 			outputs = [applyPayloadLadder(small, outDir, base, cap, notes)];
-			const reduction = size.width / outputs[0]!.width;
 			summary =
 				`${size.width}×${size.height} → ${outputs[0]!.width}×${outputs[0]!.height} ` +
 				`(${outputs[0]!.tokens} tokens, area-average, 1 pass)`;
-			if (reduction > 2) {
-				notes.push(
-					`${reduction.toFixed(1)}× reduction — small text may soften. ` +
-						`Pass tier:"high" to keep more detail at ~3× the token cost.`,
-				);
-			}
 		} else {
 			// asis geometry, but the payload was over the cap (a big lossless image).
 			outputs = [applyPayloadLadder(img, outDir, base, cap, notes)];

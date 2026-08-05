@@ -83,6 +83,30 @@ export const MAX_EDGE_ABSOLUTE = 8000;
 export const MANY_IMAGE_MAX_EDGE = 2000;
 
 /**
+ * The most images ONE tool call may produce.
+ *
+ * This is ours, not Anthropic's. Anthropic's hard wall is 100 images per
+ * request, and a request is the WHOLE conversation resent each turn — so a
+ * single call that emits 52 slices can push a session that was nowhere near the
+ * wall straight through it. Measured, at 1440px wide on the high tier:
+ *
+ *     6,996px page (real docs page)  ->   4 slices
+ *    20,000px page                   ->  11 slices
+ *   100,000px page                   ->  52 slices   <- kills the request
+ *
+ * 12 leaves 8x headroom against the 100 wall, and covers a ~23,000px page —
+ * about 25 screens. Every real page measured needs far less.
+ *
+ * The second reason is context, not legality: 12 high-tier slices is roughly
+ * 44,000 tokens in a single tool result. 20 would be ~74,000, a third of the
+ * window in one call, which forces compaction early and churns the session.
+ *
+ * Exceeding it TRUNCATES rather than fails. A partial answer plus a blunt
+ * statement of what is missing beats a dead turn.
+ */
+export const MAX_IMAGES_PER_CALL = 12;
+
+/**
  * Python's round() is half-to-even, and §6 note 2 says the live API resolves
  * exact .5 ties toward the even neighbour. Math.round rounds halves up, so a
  * port that uses it drifts by a pixel on tie-hitting aspect ratios and every
@@ -168,7 +192,20 @@ export function base64Bytes(rawBytes: number): number {
 export type ViewPlan =
   | { kind: "asis"; tokens: number }
   | { kind: "downscale"; to: Size; scale: number; tokens: number }
-  | { kind: "slice"; slices: Box[]; scaleIfForced: number; reason: string };
+  | {
+      kind: "slice";
+      slices: Box[];
+      scaleIfForced: number;
+      reason: string;
+      /** Present only when the page was too tall for `maxSlices`. */
+      truncated?: {
+        /** Pixels of the source actually covered, from the top. */
+        coveredHeight: number;
+        totalHeight: number;
+        /** How many slices full coverage would have taken. */
+        neededSlices: number;
+      };
+    };
 
 export interface ViewOptions {
   tier?: Tier;
@@ -190,6 +227,11 @@ export interface ViewOptions {
    * its leading.
    */
   overlap?: number;
+  /**
+   * Hard ceiling on how many slices the plan may contain. Defaults to
+   * `MAX_IMAGES_PER_CALL`. See that constant for why a cap exists at all.
+   */
+  maxSlices?: number;
 }
 
 /**
@@ -206,7 +248,13 @@ function maxSliceHeight(width: number, tier: Tier): number {
   return patchRows * PATCH;
 }
 
-function tile(width: number, height: number, sliceHeight: number, overlap: number): Box[] {
+function tile(
+  width: number,
+  height: number,
+  sliceHeight: number,
+  overlap: number,
+  maxSlices: number,
+): { boxes: Box[]; neededSlices: number } {
   // An overlap at or above the slice height means consecutive slices advance by
   // almost nothing: at `overlap = 2000` on a 784px slice the step collapses to 1
   // and a 7698px page produces over 1,800 near-identical crops. Caller error, so
@@ -217,8 +265,18 @@ function tile(width: number, height: number, sliceHeight: number, overlap: numbe
     );
   }
   const step = sliceHeight - overlap;
+  // How many slices FULL coverage would take, computed before any capping so
+  // the caller can be told what it is missing rather than just handed a short
+  // list with no explanation.
+  const neededSlices = Math.max(1, Math.ceil((height - sliceHeight) / step) + 1);
+
   const boxes: Box[] = [];
   for (let y = 0; y < height; y += step) {
+    // Capped: stop cleanly at the limit. Deliberately NOT bottom-aligned here —
+    // that trick exists to cover the tail of a page we are covering entirely,
+    // and jumping to the bottom mid-way would leave an unannounced hole in the
+    // middle of the result.
+    if (boxes.length >= maxSlices) return { boxes, neededSlices };
     // Bottom-align the final slice instead of emitting a sliver: a 30px tall
     // last crop shows nothing, and the extra overlap costs nothing.
     if (y + sliceHeight >= height) {
@@ -232,7 +290,7 @@ function tile(width: number, height: number, sliceHeight: number, overlap: numbe
     }
     boxes.push({ x: 0, y, width, height: sliceHeight });
   }
-  return boxes;
+  return { boxes, neededSlices };
 }
 
 /**
@@ -252,6 +310,7 @@ export function planView(width: number, height: number, opts: ViewOptions = {}):
   const tier = opts.tier ?? TIERS.standard;
   const minLongEdge = opts.minLongEdge ?? 900;
   const overlap = opts.overlap ?? 40;
+  const maxSlices = opts.maxSlices ?? MAX_IMAGES_PER_CALL;
 
   const fitted = resizedSize(width, height, tier);
   if (fitted.width === width && fitted.height === height) {
@@ -266,12 +325,21 @@ export function planView(width: number, height: number, opts: ViewOptions = {}):
 
   if (sliceable && widthOnAFullBudgetCapture < minLongEdge) {
     const sliceHeight = maxSliceHeight(width, tier);
-    const slices = tile(width, height, sliceHeight, overlap);
+    const { boxes: slices, neededSlices } = tile(width, height, sliceHeight, overlap, maxSlices);
     const percent = Math.round(scale * 100);
+
+    const last = slices[slices.length - 1]!;
+    const coveredHeight = last.y + last.height;
+    const truncated =
+      neededSlices > slices.length
+        ? { coveredHeight, totalHeight: height, neededSlices }
+        : undefined;
+
     return {
       kind: "slice",
       slices,
       scaleIfForced: scale,
+      ...(truncated ? { truncated } : {}),
       reason:
         `fitting ${width}×${height} would give ${fitted.width}×${fitted.height} — ` +
         `${percent}% of the width, under the ${minLongEdge}px legibility floor. ` +
@@ -292,6 +360,20 @@ export function planView(width: number, height: number, opts: ViewOptions = {}):
  * The tier a tool should actually use, as opposed to the tier the spec
  * describes.
  *
+ * HIGH IS THE DEFAULT, and it is not a preference — it is a dominance result.
+ * Swept over 851 shapes (`port-harness/tier-dominance.ts`): high produced a
+ * larger image than standard 801 times, an identical one 50 times, and a
+ * smaller one ZERO times. In 54 of the wins the source already fitted the high
+ * tier, so high meant no resampling at all where standard would have shrunk it.
+ * There is no trade-off to weigh, so nothing — not the model, not the tool —
+ * needs to decide. Asking for `standard` is the only way to get it.
+ *
+ * It is also the safer choice for the limits that actually break requests. High
+ * tier slices are 1988px tall instead of 840, so the same tall page needs less
+ * than half the images: a 6,996px page goes from 9 slices to 4, and a 20,000px
+ * page from 25 to 11. Image COUNT is what hits Anthropic's >20 and 100-image
+ * rules, so the richer tier is the one less likely to trip them.
+ *
  * The high-res tier is clamped to `MANY_IMAGE_MAX_EDGE`, costing ~23% of its
  * linear resolution (2576 → 1988 after patch padding) to buy immunity from a
  * failure that takes out the ENTIRE request, not just the image. A 400 loses
@@ -304,11 +386,11 @@ export function planView(width: number, height: number, opts: ViewOptions = {}):
  *
  * `TIERS` itself keeps the spec values, because the spec is what the test
  * vectors and the ClaudeImageResizer cross-check are written against.
- *
- * Unknown / absent names fall back to standard rather than throwing.
  */
 export function resolveTier(name?: TierName | string): Tier {
-  if (name !== "high") return TIERS.standard;
+  // Only an explicit "standard" opts down. Anything else — absent, "high", or a
+  // name a model invented — gets the tier that is never worse.
+  if (name === "standard") return TIERS.standard;
   return {
     maxEdge: Math.min(TIERS.highRes.maxEdge, MANY_IMAGE_MAX_EDGE),
     maxTokens: TIERS.highRes.maxTokens,

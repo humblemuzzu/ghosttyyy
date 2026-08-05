@@ -24,6 +24,22 @@ import path from "node:path";
 export class WebCaptureError extends Error {}
 
 /**
+ * Chromium cannot render a full-page screenshot taller than its maximum texture
+ * size, 16384px (2^14). Past that it does NOT fail — it returns an image of the
+ * requested height whose lower portion is simply BLANK.
+ *
+ * Measured on a 51,320px fixture (`port-harness/tall-page-limit.ts`): sections
+ * 1-13 rendered, sections 14-40 came back empty, with the boundary falling
+ * inside 15,506..16,719 — i.e. straddling 16384. The tool then sliced that
+ * empty space and handed it over as if it were page content, which is worse
+ * than capturing nothing: a caller cannot tell blank-because-empty from
+ * blank-because-broken.
+ *
+ * So we clip to what Chromium can actually draw and say the page was longer.
+ */
+const MAX_RENDERABLE_HEIGHT = 16384;
+
+/**
  * Sticky headers overlap whatever is scrolled under them, and a half-finished
  * transition makes the same page produce two different screenshots. Both are
  * removed before anything is captured, so two runs of the same URL agree.
@@ -90,6 +106,8 @@ export interface WebCaptureResult {
 	/** scrollWidth - clientWidth. Anything but 0 means the page scrolls sideways. */
 	overflow: number;
 	pageErrors: string[];
+	/** Set when the document was taller than Chromium can render in one pass. */
+	clipped?: { capturedHeight: number; documentHeight: number };
 }
 
 export async function captureWebPage(
@@ -148,7 +166,13 @@ export async function captureWebPage(
 			title: document.title,
 			url: location.href,
 			overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+			scrollHeight: Math.max(
+				document.documentElement.scrollHeight,
+				document.body?.scrollHeight ?? 0,
+			),
 		}));
+
+		let clipped: WebCaptureResult["clipped"];
 
 		if (opts.selector) {
 			const locator = page.locator(opts.selector).first();
@@ -161,10 +185,30 @@ export async function captureWebPage(
 			await locator.scrollIntoViewIfNeeded();
 			await locator.screenshot({ path: out });
 		} else {
-			await page.screenshot({ path: out, fullPage: opts.fullPage !== false });
+			const fullPage = opts.fullPage !== false;
+			const tooTall = fullPage && info.scrollHeight > MAX_RENDERABLE_HEIGHT;
+			if (tooTall) {
+				clipped = {
+					capturedHeight: MAX_RENDERABLE_HEIGHT,
+					documentHeight: info.scrollHeight,
+				};
+				await page.screenshot({
+					path: out,
+					fullPage: true,
+					clip: { x: 0, y: 0, width, height: MAX_RENDERABLE_HEIGHT },
+				});
+			} else {
+				await page.screenshot({ path: out, fullPage });
+			}
 		}
 
-		return { title: info.title, finalUrl: info.url, overflow: info.overflow, pageErrors };
+		return {
+			title: info.title,
+			finalUrl: info.url,
+			overflow: info.overflow,
+			pageErrors,
+			...(clipped ? { clipped } : {}),
+		};
 	} finally {
 		await browser.close().catch(() => {});
 	}

@@ -4,9 +4,16 @@ import fs from "node:fs";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fitImageFile, fitResultBlocks, imageSize, pruneOutDir } from "./image-fit";
+import {
+	DegenerateImageError,
+	fitImageFile,
+	fitResultBlocks,
+	imageSize,
+	pruneOutDir,
+	TruncatedImageError,
+} from "./image-fit";
 import { type Image, save } from "./image";
-import { base64Bytes, countImageTokens, TIERS } from "./vision";
+import { base64Bytes, countImageTokens, MAX_IMAGES_PER_CALL, TIERS } from "./vision";
 
 const dir = mkdtempSync(path.join(os.tmpdir(), "pi-fit-test-"));
 const outDir = path.join(dir, "out");
@@ -54,9 +61,11 @@ describe("fitImageFile — the asis fast path", () => {
 });
 
 describe("fitImageFile — downscale", () => {
-	test("a 4K-shaped capture lands on exactly the size planView predicted", () => {
+	test("standard tier lands on exactly the size planView predicted", () => {
+		// Pinned to standard so the numbers are the published ones. The default
+		// tier is covered separately below.
 		const src = write("uhd.png", noise(1920, 1080));
-		const result = fitImageFile(src, { outDir });
+		const result = fitImageFile(src, { outDir, tier: "standard" });
 
 		expect(result.plan).toBe("downscale");
 		expect(result.resamples).toBe(1);
@@ -67,8 +76,26 @@ describe("fitImageFile — downscale", () => {
 		expect(result.summary).toContain("1 pass");
 	});
 
+	test("the DEFAULT tier fits a real 4K grab to 1988x1118", () => {
+		const src = write("uhd-default.png", noise(3840, 2160));
+		const result = fitImageFile(src, { outDir, basename: "uhd-default" });
+		expect(result.plan).toBe("downscale");
+		expect(result.outputs[0]!.width).toBe(1988);
+		expect(result.outputs[0]!.height).toBe(1118);
+		expect(result.outputs[0]!.tokens).toBeLessThanOrEqual(TIERS.highRes.maxTokens);
+	});
+
+	test("the default leaves a 1920x1080 source completely untouched", () => {
+		// It already fits the high tier, so there is no resample at all — strictly
+		// better than what standard would have done to it.
+		const src = write("untouched.png", noise(1920, 1080, 5));
+		const result = fitImageFile(src, { outDir, basename: "untouched" });
+		expect(result.plan).toBe("asis");
+		expect(result.resamples).toBe(0);
+	});
+
 	test("it resamples once — the output is never re-fitted by a second pass", () => {
-		const src = write("once.png", noise(1920, 1080, 7));
+		const src = write("once.png", noise(3840, 2160, 7));
 		const result = fitImageFile(src, { outDir });
 		// Feeding the output back in must be a no-op, which is the definition of
 		// "the API will not resize this again".
@@ -77,10 +104,10 @@ describe("fitImageFile — downscale", () => {
 		expect(again.resamples).toBe(0);
 	});
 
-	test("tier:high keeps more detail", () => {
-		const src = write("hi.png", noise(1920, 1080, 3));
-		const std = fitImageFile(src, { outDir, basename: "std" });
-		const high = fitImageFile(src, { outDir, basename: "high", tier: "high" });
+	test("the default keeps more detail than an explicit standard", () => {
+		const src = write("hi.png", noise(3840, 2160, 3));
+		const std = fitImageFile(src, { outDir, basename: "std", tier: "standard" });
+		const high = fitImageFile(src, { outDir, basename: "high" });
 		expect(high.outputs[0]!.width).toBeGreaterThan(std.outputs[0]!.width);
 		expect(high.outputs[0]!.tokens).toBeGreaterThan(std.outputs[0]!.tokens);
 		expect(high.outputs[0]!.tokens).toBeLessThanOrEqual(TIERS.highRes.maxTokens);
@@ -89,33 +116,35 @@ describe("fitImageFile — downscale", () => {
 	test("a >2x reduction warns that small text may soften", () => {
 		const src = write("big.png", noise(3200, 1800));
 		const result = fitImageFile(src, { outDir });
-		expect(result.notes.join(" ")).toMatch(/reduction/);
-		expect(result.notes.join(" ")).toContain('tier:"high"');
+		// The old "small text may soften, pass tier:high" nag is gone: high is now
+		// the floor, so the advice was both meaningless and fired on every 4K shot.
+		expect(result.notes.join(" ")).not.toMatch(/soften/);
+		expect(result.notes.join(" ")).not.toMatch(/token cost/);
 	});
 
-	test("a mild reduction does not warn", () => {
+	test("no note mentions token cost anywhere", () => {
 		const src = write("mild.png", noise(1500, 900));
 		const result = fitImageFile(src, { outDir });
-		expect(result.plan).toBe("downscale");
-		expect(result.notes.join(" ")).not.toMatch(/reduction/);
+		expect(result.notes.join(" ")).not.toMatch(/cost|cheaper|tokens/i);
 	});
 
 	test("the fitted size preserves the source aspect ratio", () => {
 		// What `snapToPatch` used to trade away, before it was removed as dead
 		// code: patch-aligning each axis independently moved the aspect ratio by
 		// up to 2.7%. The fit must not do that.
-		const src = write("aspect.png", noise(1920, 1080, 11));
+		const src = write("aspect.png", noise(3840, 2160, 11));
 		const out = fitImageFile(src, { outDir, basename: "aspect" }).outputs[0]!;
-		expect(out.width).toBe(1456);
-		expect(out.height).toBe(819);
-		expect(out.width / out.height).toBeCloseTo(1920 / 1080, 2);
+		expect(out.width).toBe(1988);
+		expect(out.height).toBe(1118);
+		expect(out.width / out.height).toBeCloseTo(3840 / 2160, 2);
 	});
 });
 
 describe("fitImageFile — slice", () => {
-	test("a tall page is cropped into readable strips rather than shrunk to a smear", () => {
+	test("standard tier crops a tall page into 784px strips", () => {
+		// Pinned to standard so the slice geometry is the published one.
 		const src = write("tall.png", solid(1568, 5000, 200));
-		const result = fitImageFile(src, { outDir });
+		const result = fitImageFile(src, { outDir, tier: "standard" });
 
 		expect(result.plan).toBe("slice");
 		expect(result.outputs.length).toBeGreaterThan(1);
@@ -127,13 +156,61 @@ describe("fitImageFile — slice", () => {
 		expect(result.summary).toContain("cropped not scaled");
 	});
 
+	test("the DEFAULT tier slices the same page into FEWER, taller strips", () => {
+		// Slice height scales with the tier budget, so the richer tier needs fewer
+		// images for the same page — which is what keeps it away from the >20 and
+		// 100-image request limits.
+		const src = write("tall-default.png", solid(1568, 12000, 200));
+		const std = fitImageFile(src, { outDir, basename: "td-std", tier: "standard" });
+		const def = fitImageFile(src, { outDir, basename: "td-def" });
+
+		expect(def.plan).toBe("slice");
+		expect(def.outputs.length).toBeLessThan(std.outputs.length);
+		for (const out of def.outputs) {
+			expect(out.height).toBe(1988);
+			expect(out.tokens).toBeLessThanOrEqual(TIERS.highRes.maxTokens);
+		}
+	});
+
 	test("slice files are named in reading order", () => {
 		const src = write("tall2.png", solid(1568, 3000, 90));
-		const result = fitImageFile(src, { outDir, basename: "page" });
+		const result = fitImageFile(src, { outDir, basename: "page", tier: "standard" });
 		const names = result.outputs.map((o) => path.basename(o.path));
 		expect(names[0]).toBe("page.slice-1.png");
 		expect(names[1]).toBe("page.slice-2.png");
 	});
+
+	test("an absurdly tall page is truncated to the cap, not returned in full", () => {
+		// 1568 wide keeps it sliceable; 40,000 tall would need far more than the cap.
+		const src = write("endless.png", solid(1568, 40000, 150));
+		const result = fitImageFile(src, { outDir, basename: "endless" });
+
+		expect(result.plan).toBe("slice");
+		expect(result.outputs).toHaveLength(MAX_IMAGES_PER_CALL);
+		// exactly as many files on disk as image blocks returned
+		for (const out of result.outputs) expect(fs.existsSync(out.path)).toBe(true);
+	}, 30_000);
+
+	test("truncation is stated in the notes, in pixels, with a way forward", () => {
+		const src = write("endless2.png", solid(1568, 40000, 150));
+		const notes = fitImageFile(src, { outDir, basename: "endless2" }).notes.join(" ");
+		expect(notes).toContain("TRUNCATED");
+		expect(notes).toContain("40,000px");
+		expect(notes).toContain("NOT captured");
+		expect(notes).toMatch(/selector|region/);
+	}, 30_000);
+
+	test("a page inside the cap says nothing about truncation", () => {
+		const src = write("short.png", solid(1568, 3000, 90));
+		const notes = fitImageFile(src, { outDir, basename: "short" }).notes.join(" ");
+		expect(notes).not.toContain("TRUNCATED");
+	});
+
+	test("the cap can be overridden per call", () => {
+		const src = write("endless3.png", solid(1568, 40000, 150));
+		const result = fitImageFile(src, { outDir, basename: "endless3", maxSlices: 3 });
+		expect(result.outputs).toHaveLength(3);
+	}, 30_000);
 });
 
 describe("fitImageFile — the payload ladder", () => {
@@ -186,16 +263,18 @@ describe("fitImageFile — the payload ladder", () => {
 
 describe("fitImageFile — non-PNG input", () => {
 	test("a JPEG is transcoded, fitted, and reported as transcoded", () => {
-		const pngPath = write("photo-src.png", noise(1920, 1080, 21));
+		// Must be large enough to actually need fitting — 1920x1080 now passes
+		// through untouched on the default tier, which would test nothing.
+		const pngPath = write("photo-src.png", noise(3840, 2160, 21));
 		const jpgPath = path.join(dir, "photo.jpg");
 		execFileSync("sips", ["-s", "format", "jpeg", pngPath, "--out", jpgPath], {
 			stdio: "ignore",
 		});
 
-		expect(imageSize(jpgPath)).toEqual({ width: 1920, height: 1080 });
+		expect(imageSize(jpgPath)).toEqual({ width: 3840, height: 2160 });
 		const result = fitImageFile(jpgPath, { outDir, basename: "photo" });
 		expect(result.plan).toBe("downscale");
-		expect(result.outputs[0]!.width).toBe(1456);
+		expect(result.outputs[0]!.width).toBe(1988);
 		expect(result.notes.join(" ")).toContain("no resize applied");
 	});
 
@@ -214,7 +293,7 @@ describe("fitImageFile — non-PNG input", () => {
 
 describe("fitResultBlocks", () => {
 	test("images come first, then one text block with the audit trail", () => {
-		const src = write("blocks.png", noise(1920, 1080, 4));
+		const src = write("blocks.png", noise(3840, 2160, 4));
 		const blocks = fitResultBlocks(fitImageFile(src, { outDir, basename: "blocks" }));
 		expect(blocks[0]!.type).toBe("image");
 		expect(blocks[blocks.length - 1]!.type).toBe("text");
@@ -232,7 +311,7 @@ describe("fitResultBlocks", () => {
 
 	test("every slice becomes its own image block", () => {
 		const src = write("many.png", solid(1568, 3000, 12));
-		const result = fitImageFile(src, { outDir, basename: "many" });
+		const result = fitImageFile(src, { outDir, basename: "many", tier: "standard" });
 		const blocks = fitResultBlocks(result);
 		expect(blocks.filter((b) => b.type === "image")).toHaveLength(result.outputs.length);
 		expect(String(blocks[blocks.length - 1]!.text)).toContain("in order");
@@ -257,5 +336,87 @@ describe("pruneOutDir", () => {
 
 	test("a missing directory is not an error", () => {
 		expect(() => pruneOutDir(path.join(dir, "nope"))).not.toThrow();
+	});
+});
+
+describe("fitImageFile — input that cannot become an image", () => {
+	/*
+	 * A live 400 — `Could not process image` — traced to a 65-byte PNG whose
+	 * IHDR declared 0x0. A script killed mid-run left several on disk, and
+	 * reading one failed the whole request, not just the call.
+	 *
+	 * It is the only malformed input that reaches the API: everything else fails
+	 * while decoding. A 0x0 PNG parses fine and trivially fits every budget
+	 * (zero tokens is inside any limit), so it takes the untouched `asis` path.
+	 */
+	const zeroByZeroPng = Buffer.from(
+		"89504e470d0a1a0a0000000d49484452000000000000000008060000001f15c4890000000a49444154" +
+			"789c6300010000050001" +
+			"0d0a2db40000000049454e44ae426082",
+		"hex",
+	);
+
+	test("a 0x0 PNG is refused, not forwarded to the API", () => {
+		const p = path.join(dir, "degenerate.png");
+		fs.writeFileSync(p, zeroByZeroPng);
+		// Guard the fixture itself: if it stopped being 0x0 this test would pass
+		// for the wrong reason.
+		expect(imageSize(p)).toEqual({ width: 0, height: 0 });
+		expect(() => fitImageFile(p, { outDir })).toThrow(DegenerateImageError);
+	});
+
+	test("the refusal explains what is wrong and why it matters", () => {
+		const p = path.join(dir, "degenerate2.png");
+		fs.writeFileSync(p, zeroByZeroPng);
+		try {
+			fitImageFile(p, { outDir });
+			throw new Error("should have refused");
+		} catch (e: any) {
+			expect(e).toBeInstanceOf(DegenerateImageError);
+			expect(e.message).toContain("0x0");
+			expect(e.message).toContain("no pixels");
+			expect(e.message).toMatch(/corrupt/i);
+		}
+	});
+
+	test("a truncated PNG is refused — intact header, unfinished pixels", () => {
+		// The nastier sibling of the 0x0 case: the header reports a plausible
+		// 300x200, so every geometry check passes and `asis` ships 100 bytes as
+		// an "image". Caught by the missing IEND marker, without decoding.
+		const good = write("trunc-src.png", noise(300, 200, 3));
+		const p = path.join(dir, "truncated.png");
+		fs.writeFileSync(p, fs.readFileSync(good).subarray(0, 100));
+		expect(imageSize(p)).toEqual({ width: 300, height: 200 }); // header still lies convincingly
+		expect(() => fitImageFile(p, { outDir })).toThrow(TruncatedImageError);
+	});
+
+	test("a complete PNG is never mistaken for a truncated one", () => {
+		// The check must have no false positives: refusing a valid image would be
+		// a worse bug than the one it fixes.
+		for (const [w, h] of [[1, 1], [17, 3], [300, 200], [1024, 768]] as const) {
+			const p = write(`complete-${w}x${h}.png`, noise(w, h, w));
+			expect(() => fitImageFile(p, { outDir, basename: `c-${w}x${h}` })).not.toThrow();
+		}
+	});
+
+	test("genuinely broken files still fail, never silently", () => {
+		const good = write("decode-src.png", noise(300, 200, 3));
+		const cases: [string, Buffer][] = [
+			["empty", Buffer.alloc(0)],
+			["not an image", Buffer.from("this is not a png")],
+			["half a file", fs.readFileSync(good).subarray(0, Math.floor(fs.statSync(good).size / 2))],
+		];
+		for (const [name, bytes] of cases) {
+			const p = path.join(dir, `broken-${name.replace(/\W/g, "")}.png`);
+			fs.writeFileSync(p, bytes);
+			expect(() => fitImageFile(p, { outDir })).toThrow();
+		}
+	});
+
+	test("a 1x1 image is still perfectly legal — only ZERO is refused", () => {
+		const p = write("tiny.png", noise(1, 1, 1));
+		const r = fitImageFile(p, { outDir, basename: "tiny-out" });
+		expect(r.plan).toBe("asis");
+		expect(r.outputs[0]!.width).toBe(1);
 	});
 });
