@@ -698,13 +698,20 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
 | Subagent Inspector | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
-| Tools | `tools/` | 24 custom tools (see below) |
+| Tools | `tools/` | 27 custom tools (see below) |
 
 **Note:** pi auto-discovers every `.ts` file in `extensions/` — there is no "present but disabled" state. To disable an extension, delete it or move it out of `extensions/`. `kimi-code-token.mjs` also lives here but is a helper script (called by the `kimi-code` provider), not a loaded extension. The 2026-07-23 cleanup deleted the former disabled extensions (handoff, brain-loader, opencode-zen, commandcode, pi-vcc-config) and `btw.ts` / `local-model.ts` / `crof.ts` / `import-opencode.ts` entirely — recover from git if ever needed.
 
 ---
 
-## Custom Tools (24)
+## Custom Tools (27)
+
+**Count note (corrected 2026-08-05):** this section said "24" for a long time while
+`index.ts` registered more. `github.ts` alone registers **seven** tools, not one, and
+`agent_message` registers via `setupAgentMessage(pi)` rather than a `registerTool` line.
+The real figure is **27** (26 `pi.registerTool` calls + `agent_message`), of which
+`web_search` is conditional — it is skipped entirely when its config disables it, so a
+given session shows 26 or 27.
 
 All live in `~/.pi/agent/extensions/tools/`, backed up in `pi-setup/extensions/tools/`.
 
@@ -715,9 +722,8 @@ These replace pi's default tool implementations with customized versions:
 | Tool | File | Customization |
 |------|------|---------------|
 | **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing |
-| **read** | `read.ts` | Image viewing support |
-| **edit-file** | `edit-file.ts` | Mutex locking to prevent concurrent edits |
-| **create-file** | `create-file.ts` | Auto parent directory creation |
+| **read** | `read.ts` | Image viewing, fitted to the vision budget via `lib/image-fit.ts` (falls back to raw bytes on any failure) |
+| **apply_patch** | `apply-patch.ts` | The ONLY file-mutation tool. Codex-envelope multi-file atomic patching, mutex locking, undo tracking. Replaced `edit-file.ts` + `create-file.ts` in `6296fef`; pi's native `edit`/`write` are hidden at `session_start` |
 | **format-file** | `format-file.ts` | Prettier/biome formatting |
 | **grep** | `grep.ts` | Custom output formatting |
 | **glob** | `glob.ts` | Custom result handling |
@@ -729,17 +735,22 @@ These replace pi's default tool implementations with customized versions:
 
 | Tool | File | Purpose |
 |------|------|---------|
-| **finder** | `finder.ts` | Concept-based search subagent (haiku) — chain 3+ searches or search by concept |
-| **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (sonnet, read+bash) |
-| **task** | `task.ts` | Spawns full subagent (same model as parent) for parallel independent work |
+| **screenshot** | `screenshot.ts` | macOS capture (display / window / region) that returns an image already inside Claude's vision budget. See "Screenshot & Vision Budget" below |
+| **finder** | `finder.ts` | Concept-based search subagent — chain 3+ searches or search by concept |
+| **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (read+bash+screenshot) |
+| **delegate** | `delegate.ts` | Spawns a resumable subagent (same model as parent) for parallel independent work. Replaced `task.ts` in `e4c8786` — `continueId` makes children resumable, which Task never was |
 | **librarian** | `librarian.ts` | External repository exploration via GitHub API |
+| **agent_message** | `agent-message.ts` | Inter-agent mailbox messaging. Registered via `setupAgentMessage(pi)`, not a plain `registerTool` |
+| **web_search** | `web-search.ts` | Parallel AI Search API. **Conditionally registered** — if its config disables it, nothing is registered rather than advertising a tool that cannot run |
 | **read-web-page** | `read-web-page.ts` | Web page reader using cheerio |
 | **read-session** | `read-session.ts` | Read past pi session history |
 | **search-sessions** | `search-sessions.ts` | Search session history by keyword, file, date |
 | **code-review** | `code-review.ts` | Code review with diff analysis |
-| **github** | `github.ts` | GitHub operations (repos, diffs, commits, search) |
+| **github** | `github.ts` | **Seven** tools, not one: `read_github`, `search_github`, `list_directory_github`, `list_repositories`, `glob_github`, `commit_search`, `diff` |
 
-**Web search:** `pi-web-access` was removed 2026-07-30 (see Packages). As of Phase 1 there is **no `web_search` tool** until Phase 3 lands the Parallel AI port. Page reading is covered by our own `read_web_page` tool. The earlier custom `web-search.ts` (Codex Responses API override) and the unregistered `look-at.ts` were deleted in the 2026-07-23 cleanup — image viewing works directly via the custom `read` tool.
+**Web search:** `pi-web-access` was removed 2026-07-30 (see Packages). Phase 3 landed the
+self-contained Parallel AI `web_search` (`web-search.ts`), so the gap that note used to
+describe is closed. Page reading is covered by our own `read_web_page` tool.
 
 ### Tool Libraries (`tools/lib/`)
 
@@ -749,6 +760,11 @@ Shared code used by multiple tools:
 |---------|---------|
 | `agents-md.ts` | AGENTS.md/CLAUDE.md reading |
 | `box-format.ts` | Box-drawing formatting |
+| `vision.ts` | Claude vision budget arithmetic — token cost, resize target, slice plan. Pure, no I/O |
+| `image.ts` | PNG decode/encode/crop + `readPngSize` (IHDR-only, no decode) |
+| `resample.ts` | Area-average (box filter) downscale |
+| `image-fit.ts` | The single seam: file → vision-safe image + payload ladder |
+| `capture.ts` | macOS `screencapture` + JXA window enumeration |
 | `file-tracker.ts` | File change tracking |
 | `github.ts` | Shared GitHub API helpers |
 | `html-to-md.ts` | HTML to markdown conversion |
@@ -771,6 +787,193 @@ Shared code used by multiple tools:
 ---
 
 ## Skills
+
+---
+
+## Screenshot & Vision Budget (`screenshot` tool + `lib/vision.ts`)
+
+**Added 2026-08-05.** Files: `lib/vision.ts`, `lib/image.ts`, `lib/resample.ts`,
+`lib/image-fit.ts`, `lib/capture.ts`, `lib/web-capture.ts`, `screenshot.ts`
+(+ 6 test files). Harnesses: `pi-setup/port-harness/screenshot-bench.ts`,
+`capture-probe.ts`, `web-capture-probe.ts`.
+
+### Three capture backends, one fit pipeline
+
+| target | mechanism | why |
+|---|---|---|
+| display / window / region | `screencapture` | photographs the glass |
+| `url:` | headless Chrome via `playwright-core` | renders the WHOLE page, including below the fold |
+
+`screencapture` can only ever return what is rendered on screen, so a page taller
+than the display is unreachable by it. The `url:` path renders the full document and
+`planView` slices it into ordered readable strips.
+
+**`playwright-core`, not `playwright`, and `channel: "chrome"`.** Full `playwright`
+bundles a ~150MB Chromium per platform; `playwright-core` is 13MB and ships none,
+driving the Google Chrome already installed. Resolved at call time — if it is missing
+the tool prints the install command instead of a module-resolution stack trace.
+Verified: a 1200×7056 fixture page → 8 slices of 1200×1008, all inside budget.
+
+Slicing a tall page honestly costs more than one image (8 slices ≈ 12,384 tokens), so
+the tool says so and points at `selector:` for capturing one section instead.
+
+### Sub-agent screenshots reach the caller
+
+`collectSubAgentImages` (in `lib/sub-agent-render.ts`) pulls image blocks out of a
+child's tool results and `subAgentResult` puts them **before** the child's text, for
+`oracle`, `delegate` and `code_review`. Previously `getFinalOutput` kept text parts
+only, so the pixels died with the child and the caller had to take its word.
+
+Capped at the **2 most recent** images — images are the most expensive thing that can
+enter a context, and a sub-agent's last look is usually the one that justified its
+conclusion. A child that took no screenshots costs exactly nothing.
+
+Verified live, and it immediately earned its keep: asked to check an oracle's claim,
+the parent read figures out of the image the oracle never mentioned **and corrected it**
+— the oracle said Stripema was the foreground app; the parent could see Finder held the
+menu bar.
+
+### The bug it replaces
+
+Sub-agents were improvising screenshots in bash:
+
+```
+screencapture -x -o -l 12237 /tmp/shot.png && sips -Z 1400 /tmp/shot.png
+```
+
+Both halves are wrong, and the reason is **not** the edge limit everyone quotes:
+
+- Claude's budget is **two** limits — a 1568px padded edge AND **1568 visual tokens**,
+  where `tokens = ceil(w/28) × ceil(h/28)`. **The token limit binds first for almost
+  every screenshot.** `sips -Z 1400` on a 16:10 window gives 1400×900 = `50 × 33` =
+  **1650 tokens**, over budget, so the API resizes it *again* to 1372×882. Text is
+  resampled twice for a 2% size change.
+- On a 2× display the capture was already 2800×1800 when `CGWindowBounds` said
+  1400×900, so that is a 3.2× reduction pushed through two filters.
+
+The tool resamples **once**, to the exact size Anthropic's own resizer would pick, so
+the API's resize is a no-op. Verified live: a window reporting 1400×900 bounds captured
+at 2800×1800 and fitted to `1372×882 (1568 tokens, 1 pass)` — the same target, one pass
+instead of two.
+
+### Where the numbers came from
+
+`lib/vision.ts` is a behaviour-identical port of the `caliper` project's `src/vision.ts`
+(`~/Documents/Code stuff/caliper`), which transcribes Anthropic's published spec and its
+reference resize implementation. The **same algorithm** is implemented independently in
+the `ClaudeImageResizer` macOS app (`~/Documents/Code stuff/macos apps/ClaudeImageResizer`,
+`ImageBudget.swift`). Two independent implementations agreeing on every test vector is
+the only reason to trust either. **If you change a constant, change it in all three and
+re-run `lib/vision.test.ts`.**
+
+Load-bearing details that look like nits and are not:
+
+- **Banker's rounding.** `resizedSize` resolves exact .5 ties to even, matching Python's
+  `round()`. `Math.round` drifts a pixel on tie-hitting aspect ratios — pinned by the
+  2000×1500 test.
+- **The edge limit is tested against the PADDED edge**, `ceil(w/28)*28`.
+- **`snapToPatch` is OFF by default.** It saves ~3% of the budget and distorts the aspect
+  ratio by up to 2.7%. ClaudeImageResizer reached the same conclusion independently.
+- **Area-average, not Lanczos.** Lanczos/bicubic ring on hard edges, and UI is nothing
+  but hard edges (text stems, 1px borders). This is a deliberate divergence from
+  ClaudeImageResizer's CoreGraphics `.high` path, which is the better choice for photos
+  and the worse one here.
+
+### A real bug found in the port — and still live in caliper upstream
+
+`downscale`'s inner loops used `Math.ceil(xEnd)` / `Math.ceil(yEnd)` as bounds. At the
+last row/column `(dx + 1) * xRatio` overshoots the true edge by ~1e-15, so `ceil` yields
+`img.width + 1` and the loop reads one past the buffer. A `Uint8Array` out-of-bounds read
+is `undefined`; `undefined * weight` is `NaN`; assigning `NaN` into a `Uint8Array`
+silently stores **0** — a black pixel, no error anywhere.
+
+Measured before the fix:
+
+| source → target | corrupt bytes |
+|---|---|
+| 21×21 → 19×19 | 57 (the entire bottom row) |
+| **2880×1800 → 1389×868** (MacBook Pro Retina) | 3 (bottom-right pixel black) |
+| 3840×2160 → 1456×819 | 0 — clean by luck |
+| 2800×1800 → 1372×882 | 0 — clean by luck |
+
+The two sizes this machine produces were both clean, which is exactly why 107 tests
+missed it: every resample test asserted an **aggregate** (mean, buffer length, value
+range), and three bad bytes out of 3.6 million move the mean by 0.00002. The fix clamps
+the bounds to the buffer; the regression tests assert **exact pixel values** on a uniform
+image across 7 named sizes plus an 873-combination sweep.
+
+**The bug came from the caliper original** (`~/Documents/Code stuff/caliper/src/resample.ts`)
+— it was ported faithfully. **Fixed there too on 2026-08-05**, with the same clamp and an
+equivalent exact-pixel regression suite (caliper: 97 tests pass). It mattered more there:
+caliper's `edges()` and `bands()` read a black pixel as ink, so a measurement taken from a
+downscaled view could have been wrong with no visible cause.
+
+### macOS facts verified on this machine (do not re-derive)
+
+- `CGWindowListCopyWindowInfo` **is** reachable from JXA, but only through
+  `ObjC.castRefToObject`. Calling it directly returns something that `typeof`s as
+  `"function"` and unwraps to nothing. No compiled helper needed.
+- **Use option `0` (all windows), never `1` (`OnScreenOnly`).** Option 1 omits every
+  window on another Space — measured 17 vs 142, and this session's own terminal was in
+  the missing 125.
+- **Off-Space capture is mixed, not uniformly broken.** Survey: **9 of 10** off-Space
+  windows captured fine; 1 failed with "could not create image from window". So the tool
+  must *try* and explain on failure — pre-refusing would block 9 valid captures.
+- `CGPreflightScreenCaptureAccess` has an **incomplete BridgeSupport entry** (declared
+  with no signature) so JXA cannot call it. Authoritative check is
+  `swift -e 'import CoreGraphics; print(CGPreflightScreenCaptureAccess())'` (~134ms),
+  used only *after* something fails. The free heuristic is that `kCGWindowName` is blank
+  for other processes when permission is denied.
+- **Screen Recording must be granted to the terminal running pi.** Without it macOS
+  returns the desktop with no windows rather than failing — a silently useless image.
+
+### Performance (measured, real 8.3-megapixel Retina grab)
+
+`readPngSize` 0.7ms · decode 118ms · downscale 45ms · encode 73ms · **~236ms total**.
+That settled the "pure TS vs the Swift binary" question — no native helper, nothing for
+`install.sh` to build. A full-screen 4K PNG is 6.8MB on disk = **9.07MB base64, 90.7% of
+the 10MB API cap** before fitting; after fitting, 16.2%.
+
+### Invariants
+
+- **`sips` is a codec, never a resizer.** It transcodes non-PNG input and encodes JPEG at
+  a given quality. Every geometry decision is made by `planView` in TypeScript.
+- **`fitImageFile` is the only path from pixels to a vision model.** `screenshot` and
+  `read` both funnel through it. Nothing else should base64 an image.
+- **The `asis` path never decodes.** Dimensions come from the IHDR; if the image already
+  fits, the original bytes ship untouched.
+- `permissions.json` rejects `screencapture` and `sips -Z/-z` in bash and names the tool
+  in the rejection message. `sips -g` and `sips -s format` stay allowed — the tool uses them.
+- Available to `delegate`, `oracle` and `code_review` sub-agents. **A sub-agent's images do
+  not reach the parent** — `getFinalOutput` keeps text parts only, so you get its prose
+  about the image. To see pixels yourself, call `screenshot` at the top level.
+
+### `read` is covered too
+
+`read.ts` routes images through `fitImageFile` as well, so an image the model *opens* gets
+the same ceiling as one it *takes* — design mockups, downloaded PNGs, earlier screenshots.
+Two deliberate properties:
+
+- **An image that already fits returns exactly what it used to**: a single image block, no
+  extra commentary. Only an image that needed work says so.
+- **Any failure in the fit path falls back to the raw bytes.** `read` becoming more fragile
+  than the five-line version it replaced would be a worse bug than a large payload.
+
+Verified live: `/tmp/p0-display.png` (3840×2160, 6.8MB on disk, **9.07MB base64 = 90.7% of
+the API cap**) now arrives as 1456×819 in one pass, and the model still read four-digit
+figures out of a screenshot nested inside it.
+
+### Not verified
+
+- Multi-display: this machine has one display, so `display: 2` only ever produced
+  `screencapture: Invalid display specified`. The flag is passed straight through.
+- `activate` is implemented and unit-covered but **never run live** — it switches the
+  user's Space, so it was not exercised during development. First real use may surface a
+  macOS Automation (TCC) prompt. Note the tri-state: **unset** means a window that fails
+  to capture because it is on another Space is retried with activation automatically;
+  **true** activates up front; **false** forbids it. The auto-retry only fires for an
+  off-screen window, because an on-screen failure is a permissions problem that stealing
+  focus would not fix.
 
 ### Config-level (`~/.config/agents/skills/`) — 21 skills
 

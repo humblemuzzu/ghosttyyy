@@ -21,6 +21,7 @@ import { formatBoxesWindowed, osc8Link, type BoxSection, type BoxLine, type Exce
 import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
+import { defaultOutDir, fitImageFile, fitResultBlocks, pruneOutDir } from "./lib/image-fit";
 
 // --- limits ---
 
@@ -281,8 +282,34 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			const mime = getImageMime(resolved);
 			if (mime) {
 				try {
-					const base64 = fs.readFileSync(resolved).toString("base64");
-					return { content: [{ type: "image" as const, data: base64, mimeType: mime }] } as any;
+					// fit to the vision budget first. an unfitted 6000x4000 capture is a
+					// ~30MB base64 payload against a 10MB cap, and even when it squeaks
+					// through the API resamples it — so the model reads text that was
+					// resampled by someone whose filter we did not choose.
+					//
+					// falls back to the raw bytes on ANY failure: `read` becoming more
+					// fragile than it was would be a worse bug than a large payload.
+					try {
+						// `screenshot` prunes before every capture; `read` has to as well,
+						// or a session that opens many images grows the scratch dir with
+						// nothing ever sweeping it.
+						pruneOutDir(defaultOutDir());
+						const fit = fitImageFile(resolved, { basename: `read-${Date.now()}` });
+						const blocks = fitResultBlocks(fit);
+						// asis is the common case; saying nothing about it keeps the
+						// result identical to the old behaviour for images that fit.
+						if (fit.plan === "asis" && fit.resamples === 0) {
+							return {
+								content: [
+									{ type: "image" as const, data: fit.outputs[0]!.base64, mimeType: mime },
+								],
+							} as any;
+						}
+						return { content: blocks, details: { header: resolved, plan: fit.plan } } as any;
+					} catch {
+						const base64 = fs.readFileSync(resolved).toString("base64");
+						return { content: [{ type: "image" as const, data: base64, mimeType: mime }] } as any;
+					}
 				} catch (err: any) {
 					return {
 						content: [{ type: "text" as const, text: `failed to read image: ${err.message}` }],

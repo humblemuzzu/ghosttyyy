@@ -18,7 +18,13 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
-import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import {
+	collectSubAgentImages,
+	getFinalOutput,
+	renderAgentTree,
+	subAgentResult,
+	type SingleResult,
+} from "./lib/sub-agent-render";
 import { normalizeForDisplay } from "./lib/box-format";
 import { requireParam } from "./lib/params";
 
@@ -29,7 +35,10 @@ const MODEL = "claude-sonnet-5";
 
 /** sub-agent needs bash (git diff), read/grep/find (context), web tools (docs lookup) */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "web_search", "read_web_page"];
+const EXTENSION_TOOLS = [
+	"read", "grep", "find", "ls", "bash",
+	"web_search", "read_web_page", "screenshot",
+];
 
 const DEFAULT_SYSTEM_PROMPT = `You are an expert code reviewer. Review the provided diff for bugs, security issues, and code quality. Report findings with file locations and severity.
 
@@ -214,7 +223,7 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 				return subAgentResult(result.errorMessage || result.stderr || output, singleResult, true);
 			}
 
-			return subAgentResult(output, singleResult);
+			return subAgentResult(output, singleResult, false, collectSubAgentImages(result.messages));
 		},
 
 		renderCall(args: any, theme: any, context: any) {

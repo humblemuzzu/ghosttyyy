@@ -43,6 +43,17 @@
     "message": "do not launch the amp CLI from bash \u2014 this session's persona is Amp but that binary is a separate program. use the delegate / oracle / finder / code_review / librarian tools, which run inside this pi session with your tools, permissions and visible output"
   },
   {
+    "tool": "Bash",
+    "matches": {
+      "cmd": [
+        "regex:(?:^|(?<!\\\\)[;&|(]\\s*|\\bnohup\\s+|\\bxargs\\s+|-exec\\s+)screencapture\\b",
+        "regex:\\bsips\\b[^|;&]*\\s-[Zz]\\s"
+      ]
+    },
+    "action": "reject",
+    "message": "use the screenshot tool instead. it captures the same thing and fits the image to the vision budget in ONE resample pass; 'sips -Z <n>' picks a long edge that ignores the visual-token limit, so the API resamples a second time and small text stops being readable. windows/regions/displays are all supported \u2014 call screenshot({ list: true }) to see the targets"
+  },
+  {
     "tool": "*",
     "action": "allow"
   }

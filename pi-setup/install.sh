@@ -181,7 +181,6 @@ info "Installing pi packages..."
 # Mirror of settings.json "packages" (source of truth). pi-claude-bridge is NOT
 # here — it's a legacy fallback installed globally above, not an active package.
 packages=(
-    "npm:pi-web-access"
     "npm:pi-context"
     "npm:pi-token-burden"
     "npm:@benvargas/pi-claude-code-use"
@@ -193,6 +192,9 @@ packages=(
 )
 # NOTE: pi-web-access, pi-tasks and @tomooshi/condensed-milk-pi were removed
 # deliberately on 2026-07-30 — do NOT re-add them here. See AGENTS.md.
+# pi-web-access was still listed above until 2026-08-05, directly contradicting
+# this comment: any fresh `install.sh` run silently reinstalled the package the
+# rest of the setup assumes is gone, and its `web_search` collides with ours.
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
     pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"

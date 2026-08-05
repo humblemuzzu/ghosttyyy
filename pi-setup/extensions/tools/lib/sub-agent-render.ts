@@ -73,6 +73,44 @@ export function getFinalOutput(messages: Message[]): string {
 	return "";
 }
 
+export interface ImageBlock {
+	type: "image";
+	data: string;
+	mimeType: string;
+}
+
+/**
+ * The images a sub-agent looked at, most recent last.
+ *
+ * Without this, a sub-agent that screenshots something reports its PROSE about
+ * the picture and the pixels die with the child — you are trusting its word for
+ * what was on screen. Since every image reaching a sub-agent has already been
+ * through `fitImageFile`, these are known to be inside the vision budget.
+ *
+ * Capped, and capped hard: images are the most expensive thing that can enter a
+ * context. `limit` is the number of MOST RECENT images kept, because a
+ * sub-agent's last look is almost always the one that justified its conclusion.
+ * A sub-agent that took no screenshots costs exactly nothing here.
+ */
+export function collectSubAgentImages(messages: Message[], limit = 2): ImageBlock[] {
+	if (limit <= 0) return [];
+	const found: ImageBlock[] = [];
+	// Walk backwards and stop early: a long delegate run can hold dozens of
+	// images and there is no reason to materialise them all to discard them.
+	for (let i = messages.length - 1; i >= 0 && found.length < limit; i--) {
+		const msg = messages[i] as any;
+		if (msg?.role !== "toolResult") continue;
+		const content = Array.isArray(msg.content) ? msg.content : [];
+		for (let j = content.length - 1; j >= 0 && found.length < limit; j--) {
+			const part = content[j];
+			if (part?.type === "image" && typeof part.data === "string" && part.data.length > 0) {
+				found.push({ type: "image", data: part.data, mimeType: part.mimeType ?? "image/png" });
+			}
+		}
+	}
+	return found.reverse();
+}
+
 export function getDisplayItems(messages: Message[]): DisplayItem[] {
 	const errorMap = new Map<string, boolean>();
 	for (const msg of messages) {
@@ -112,9 +150,16 @@ export function subAgentResult(
 	text: string,
 	details: SingleResult,
 	isError = false,
-): { content: { type: "text"; text: string }[]; details: SingleResult & ToolCostDetails; isError?: boolean } {
+	images: ImageBlock[] = [],
+): {
+	content: Array<{ type: "text"; text: string } | ImageBlock>;
+	details: SingleResult & ToolCostDetails;
+	isError?: boolean;
+} {
 	return {
-		content: [{ type: "text" as const, text }],
+		// Images first, then the text: the model should have seen the picture
+		// before it reads the claim the sub-agent made about it.
+		content: [...images, { type: "text" as const, text }],
 		details: { ...details, cost: details.usage.cost },
 		...(isError && { isError: true }),
 	};

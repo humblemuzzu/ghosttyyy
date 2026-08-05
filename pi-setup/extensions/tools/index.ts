@@ -23,6 +23,7 @@ import { createBashTool } from "./bash";
 import { createUndoEditTool } from "./undo-edit";
 import { createFormatFileTool } from "./format-file";
 import { createSkillTool } from "./skill";
+import { createScreenshotTool } from "./screenshot";
 import { createFinderTool } from "./finder";
 import { createOracleTool } from "./oracle";
 import { createDelegateTool } from "./delegate";
@@ -72,6 +73,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createUndoEditTool());
 	pi.registerTool(createFormatFileTool());
 	pi.registerTool(createSkillTool());
+	// screenshot owns the ONLY sanctioned path from screen pixels to a vision
+	// model. permissions.json rejects `screencapture`/`sips -Z` in bash so this
+	// cannot be routed around by hand — see lib/vision.ts for why that matters.
+	pi.registerTool(createScreenshotTool());
 	pi.registerTool(createFinderTool({
 		systemPrompt: readAgentPrompt("agent.amp.finder.md"),
 	}));

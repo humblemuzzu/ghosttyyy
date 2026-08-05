@@ -18,7 +18,13 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { piSpawn, zeroUsage } from "./lib/pi-spawn";
-import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import {
+	collectSubAgentImages,
+	getFinalOutput,
+	renderAgentTree,
+	subAgentResult,
+	type SingleResult,
+} from "./lib/sub-agent-render";
 import { requireParam } from "./lib/params";
 
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
@@ -26,7 +32,13 @@ const ORACLE_PARAM_NAMES = ["task", "query", "prompt", "question", "description"
 
 const MODEL = "claude-opus-4-6";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
-const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash"];
+/*
+ * `screenshot` is here so the oracle can look at a rendering bug rather than
+ * reason about it blind. NOTE: what comes back to the parent is the oracle's
+ * PROSE about the image — `getFinalOutput` keeps text parts only, so the pixels
+ * stay inside the child. To see a screenshot yourself, call the tool directly.
+ */
+const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "screenshot"];
 
 export interface OracleConfig {
 	systemPrompt?: string;
@@ -149,7 +161,9 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 				return subAgentResult(result.errorMessage || result.stderr || output, singleResult, true);
 			}
 
-			return subAgentResult(output, singleResult);
+			// The oracle can screenshot; hand back what it actually looked at so the
+			// caller is not taking its word for what was on screen.
+			return subAgentResult(output, singleResult, false, collectSubAgentImages(result.messages));
 		},
 
 		renderCall(args: any, theme: any, context: any) {

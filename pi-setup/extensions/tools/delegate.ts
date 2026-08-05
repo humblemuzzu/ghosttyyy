@@ -31,6 +31,7 @@ import { requireParam, resolveParam } from "./lib/params";
 import { piSpawn, zeroUsage, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
 import {
 	applySessionMeta,
+	collectSubAgentImages,
 	getFinalOutput,
 	renderAgentTree,
 	subAgentResult,
@@ -46,7 +47,7 @@ const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash", "apply_patch"];
 const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash",
 	"apply_patch", "format_file", "skill", "finder",
-	"web_search",
+	"web_search", "screenshot",
 ];
 
 /** parameter names models actually reach for, canonical first. */
@@ -223,7 +224,12 @@ export function createDelegateTool(): ToolDefinition {
 				);
 			}
 
-			return subAgentResult(withRoutingMetadata(output, singleResult), singleResult);
+			return subAgentResult(
+				withRoutingMetadata(output, singleResult),
+				singleResult,
+				false,
+				collectSubAgentImages(result.messages),
+			);
 		},
 
 		renderCall(args: any, theme: any, context: any) {
