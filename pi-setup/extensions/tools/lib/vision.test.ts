@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   base64Bytes,
   countImageTokens,
+  MANY_IMAGE_MAX_EDGE,
   MAX_BASE64_BYTES,
   MAX_EDGE_ABSOLUTE,
   planView,
@@ -210,11 +211,67 @@ describe("planView", () => {
 
 describe("resolveTier", () => {
   test('"high" selects the high-res tier; everything else is standard', () => {
-    expect(resolveTier("high")).toBe(TIERS.highRes);
+    expect(resolveTier("high").maxTokens).toBe(TIERS.highRes.maxTokens);
     expect(resolveTier("standard")).toBe(TIERS.standard);
     expect(resolveTier(undefined)).toBe(TIERS.standard);
     // A model that invents a tier name gets the safe default, not a throw.
     expect(resolveTier("ultra")).toBe(TIERS.standard);
+  });
+});
+
+/**
+ * Regression for a live 400 on 2026-08-05.
+ *
+ * Anthropic drops the per-image ceiling to 2000px once a request holds more
+ * than 20 images. The high-res tier's spec edge is 2576, so `tier:"high"`
+ * worked early in a session and killed the request later. Measured in the real
+ * session that failed: 21 images, of which two were 2576×1449 — the first
+ * succeeded at index 3, the second 400'd at index 20.
+ */
+describe("the >20-image ceiling (§7)", () => {
+  test("the spec tier really is over the limit — this is why the clamp exists", () => {
+    expect(TIERS.highRes.maxEdge).toBe(2576);
+    expect(TIERS.highRes.maxEdge).toBeGreaterThan(MANY_IMAGE_MAX_EDGE);
+  });
+
+  test("the tier a tool actually gets is clamped to 2000", () => {
+    expect(resolveTier("high").maxEdge).toBe(MANY_IMAGE_MAX_EDGE);
+    // …without touching the token budget, which is what makes `high` useful.
+    expect(resolveTier("high").maxTokens).toBe(4784);
+  });
+
+  test("the exact capture that died: 3840×2160 at high tier is now legal", () => {
+    const fitted = resizedSize(3840, 2160, resolveTier("high"));
+    expect(fitted).toEqual({ width: 1988, height: 1118 });
+    expect(Math.max(fitted.width, fitted.height)).toBeLessThanOrEqual(MANY_IMAGE_MAX_EDGE);
+    // and it is still meaningfully better than standard, which is the point
+    expect(fitted.width).toBeGreaterThan(resizedSize(3840, 2160, TIERS.standard).width);
+  });
+
+  test("NO input can make either shipped tier emit an image over 2000px", () => {
+    const shapes: Array<[number, number]> = [
+      [3840, 2160], [2880, 1800], [2800, 1800], [5120, 2880],
+      [1000, 9000], [9000, 1000], [8000, 8000], [2576, 1449],
+      [1092, 1092], [400, 300], [1, 12000], [12000, 1],
+    ];
+    for (const name of ["standard", "high"] as const) {
+      const tier = resolveTier(name);
+      for (const [w, h] of shapes) {
+        const fitted = resizedSize(w, h, tier);
+        expect({ name, w, h, over: Math.max(fitted.width, fitted.height) > MANY_IMAGE_MAX_EDGE })
+          .toEqual({ name, w, h, over: false });
+      }
+    }
+  });
+
+  test("slices are legal too — they are cropped, not fitted, so they bypass resizedSize", () => {
+    for (const name of ["standard", "high"] as const) {
+      const plan = planView(1440, 6996, { tier: resolveTier(name) });
+      if (plan.kind !== "slice") throw new Error(`expected a slice plan for ${name}`);
+      for (const box of plan.slices) {
+        expect(Math.max(box.width, box.height)).toBeLessThanOrEqual(MANY_IMAGE_MAX_EDGE);
+      }
+    }
   });
 });
 

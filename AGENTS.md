@@ -872,6 +872,8 @@ Load-bearing details that look like nits and are not:
   `round()`. `Math.round` drifts a pixel on tie-hitting aspect ratios — pinned by the
   2000×1500 test.
 - **The edge limit is tested against the PADDED edge**, `ceil(w/28)*28`.
+- **The high-res tier is clamped to 2000px, not the spec's 2576.** See below — this is
+  not a nit, it took out a live request.
 - **Patch-snapping was removed, not merely defaulted off.** Trimming each axis down to a
   multiple of 28 saves ~3% of the budget and distorts the aspect ratio by up to 2.7%;
   ClaudeImageResizer reached the same conclusion independently, so nothing ever enabled
@@ -884,6 +886,60 @@ Load-bearing details that look like nits and are not:
   and the worse one here.
 
 ### A real bug found in the port — and still live in caliper upstream
+
+### The >20-image ceiling — a time bomb that went off
+
+**2026-08-05, live session `019fcf7a`.** A session that had been exercising the tool
+happily died with:
+
+```
+400 invalid_request_error — messages.1.content.20.image.source.base64.data:
+At least one of the image dimensions exceed max allowed size for many-image
+requests: 2000 pixels
+```
+
+Spec §7: once a request carries **more than 20 images**, the per-image ceiling drops
+from 8000px to **2000px per axis**. The high-res tier's spec edge is **2576**.
+
+Parsed straight out of that session's JSONL (`port-harness/analyze-session-images.ts`,
+which reads IHDR headers only and never materialises the base64):
+
+```
+total image blocks: 21
+images with a dimension > 2000px: 2
+
+  #3   2576×1449   high tier — SUCCEEDED
+  #7-15  9 × 1440×840   one 9-slice web capture, in a single call
+  #20  2576×1449   IDENTICAL SIZE — 400'd
+```
+
+**The same image size succeeded at index 3 and failed at index 20.** Nothing was wrong
+with the image; the request had simply crossed 21 images, and the 9-slice page capture
+is what got it there. So `tier:"high"` worked early in a session and killed the request
+later, with no change in the call — the worst possible failure shape, because it looks
+random.
+
+**Fix:** `resolveTier()` clamps the high tier to `MANY_IMAGE_MAX_EDGE = 2000`, so no
+image this tool emits can ever be illegal. Costs ~23% of the tier's linear resolution
+(2576 → 1988 after patch padding) and, incidentally, 40% of its token cost
+(4784 → 2840). 1988 is still 27% above the standard tier, which is the reason to ask
+for `high` at all.
+
+`TIERS` keeps the spec values — they are what the vectors and the ClaudeImageResizer
+cross-check are written against. Only `resolveTier`, the seam every tool goes through,
+applies the clamp.
+
+**There is deliberately no opt-in back to 2576.** A tool cannot see how many images are
+already in the conversation, so it cannot know whether 2576 is safe on this call. An
+option that works early and fails later is worse than no option.
+
+Guarded by a test that sweeps 12 input shapes × both shipped tiers and asserts nothing
+ever exceeds 2000, plus one asserting slice boxes stay legal (slices are cropped, so
+they bypass `resizedSize` entirely and needed checking separately).
+
+**This was a known unknown, not a surprise.** The pre-build research explicitly listed
+"Multi-image stricter limit — 2000×2000 px when >20 images — NOT implemented". It was
+written down and then not built. Check that list before assuming a limit is handled.
 
 `downscale`'s inner loops used `Math.ceil(xEnd)` / `Math.ceil(yEnd)` as bounds. At the
 last row/column `(dx + 1) * xRatio` overshoots the true edge by ~1e-15, so `ceil` yields

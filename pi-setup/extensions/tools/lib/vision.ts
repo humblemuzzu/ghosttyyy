@@ -63,6 +63,26 @@ export const MAX_BASE64_BYTES = { api: 10_000_000, bedrock: 5_000_000 } as const
 export const MAX_EDGE_ABSOLUTE = 8000;
 
 /**
+ * §7: once a request carries MORE THAN 20 images, the per-image ceiling drops
+ * from 8000px to 2000px on each axis.
+ *
+ * This is a TIME BOMB and it went off in a real session on 2026-08-05. The
+ * high-res tier's spec edge is 2576, so a `tier:"high"` capture is legal in a
+ * short conversation and illegal in a long one, with nothing about the call
+ * changing. Measured in that session: image #3 was 2576×1449 and succeeded;
+ * image #20 was 2576×1449 and the whole request died with
+ *
+ *   400 invalid_request_error — messages.1.content.20.image.source.base64.data:
+ *   At least one of the image dimensions exceed max allowed size for
+ *   many-image requests: 2000 pixels
+ *
+ * A tool cannot see how many images are already in the conversation, so it
+ * cannot decide per-call whether 2576 is safe. The only correct move is to
+ * never emit an image that could be illegal — see `resolveTier`.
+ */
+export const MANY_IMAGE_MAX_EDGE = 2000;
+
+/**
  * Python's round() is half-to-even, and §6 note 2 says the live API resolves
  * exact .5 ties toward the even neighbour. Math.round rounds halves up, so a
  * port that uses it drifts by a pixel on tie-hitting aspect ratios and every
@@ -268,7 +288,29 @@ export function planView(width: number, height: number, opts: ViewOptions = {}):
   };
 }
 
-/** Unknown / absent names fall back to standard rather than throwing. */
+/**
+ * The tier a tool should actually use, as opposed to the tier the spec
+ * describes.
+ *
+ * The high-res tier is clamped to `MANY_IMAGE_MAX_EDGE`, costing ~23% of its
+ * linear resolution (2576 → 1988 after patch padding) to buy immunity from a
+ * failure that takes out the ENTIRE request, not just the image. A 400 loses
+ * the whole turn; a slightly smaller screenshot loses almost nothing. 1988 is
+ * still 27% more resolution than the standard tier, which is the reason anyone
+ * asks for `high` in the first place.
+ *
+ * There is deliberately no escape hatch back to 2576. An option that works
+ * early in a session and fails later is worse than no option.
+ *
+ * `TIERS` itself keeps the spec values, because the spec is what the test
+ * vectors and the ClaudeImageResizer cross-check are written against.
+ *
+ * Unknown / absent names fall back to standard rather than throwing.
+ */
 export function resolveTier(name?: TierName | string): Tier {
-  return name === "high" ? TIERS.highRes : TIERS.standard;
+  if (name !== "high") return TIERS.standard;
+  return {
+    maxEdge: Math.min(TIERS.highRes.maxEdge, MANY_IMAGE_MAX_EDGE),
+    maxTokens: TIERS.highRes.maxTokens,
+  };
 }
