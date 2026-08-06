@@ -681,7 +681,7 @@ component knows its screen position (see the research notes in the port log).
 
 ---
 
-## Extensions (12 active)
+## Extensions (13 active)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
@@ -699,6 +699,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Editor | `editor/` | Custom box-drawing editor |
 | Subagent Inspector | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
 | Tools | `tools/` | 27 custom tools (see below) |
+| Local Model | `local-model.ts` | `/local` — start/stop the llama.cpp router; injects local-model rules ONLY for `llama-local` |
 
 **Note:** pi auto-discovers every `.ts` file in `extensions/` — there is no "present but disabled" state. To disable an extension, delete it or move it out of `extensions/`. `kimi-code-token.mjs` also lives here but is a helper script (called by the `kimi-code` provider), not a loaded extension. The 2026-07-23 cleanup deleted the former disabled extensions (handoff, brain-loader, opencode-zen, commandcode, pi-vcc-config) and `btw.ts` / `local-model.ts` / `crof.ts` / `import-opencode.ts` entirely — recover from git if ever needed.
 
@@ -1250,6 +1251,89 @@ Installed packages ship their own skills inside their package dir: `context-mana
 
 ---
 
+## Local Models (llama.cpp + LFM2.5-2.6B)
+
+**Added 2026-08-05.** Files: `pi-setup/extensions/local-model.ts` (the `/local` command),
+`pi-setup/llama-local.sh` (terminal launcher), the `llama-local` provider in `models.json`,
+and its entry in `enabledModels`.
+
+### ⚠️ llama.cpp MUST be >= b10270
+
+Brew shipped **b8680 (commit `15f786e65`, dated 2026-04-06)** for months. That build has
+**two silent tool-call parser bugs for the `lfm2` architecture** — neither raises an error,
+both just hand the agent garbage:
+
+| upstream | merged | symptom before the fix |
+|---|---|---|
+| **#24667** double-escaping | 2026-06-15 | `\n` in a tool argument arrives as **literal backslash-n**, so every multi-line argument is corrupt. Kills `apply_patch`, file writes, multi-line bash. |
+| **#24178** parser unification | 2026-06-05 | `[f(a), f(b)]` parsed as **one mangled call** — the second call's raw text ends up inside the first call's last argument, and the result is still *valid JSON* so nothing rejects it. |
+
+Both were reproduced here and traced by bypassing the parser: the **model emits correct
+Pythonic output** (`[write_file(path='/tmp/x.py', content='import os\nprint(...)')]`) — llama.cpp
+was copying the two characters `\`+`n` into JSON verbatim instead of interpreting the Python
+escape. **Model was never at fault.** Upgrading `8680 → 10270` fixed both, verified.
+
+If tool calling ever goes strange on a local model, check `llama-server --version` FIRST.
+
+### The `/local` command
+
+```
+/local            status; if stopped, offers to start (interactive menu in TUI)
+/local start      start router + load the model
+/local stop       kill the server, release RAM
+/local restart    stop then start
+/local unload     drop the model, keep the server listening
+/local status     quant, context, params, RAM, endpoint
+/local logs       last 40 lines of /tmp/llama-server.log
+```
+
+**No auto-start at login** — deliberate, by user request. Start it when you want it.
+
+### System prompt isolation — do not widen this
+
+`before_agent_start` **returns `undefined` unless `ctx.model?.provider === "llama-local"`**.
+pi chains that hook, and a handler returning nothing leaves the prompt byte-identical. So the
+local-model rules + identity block are appended ONLY for the local model; claude/kimi/codex/
+deepseek/sakana all keep the default prompt untouched.
+
+**Verified with a canary**, not by asking the model (a 2.6B model introspecting its own prompt
+is not evidence — it answered "ABSENT" while the text was demonstrably present). A unique token
+was injected and the local model reproduced it exactly (`ZQ7X-VELVET-4419`); Claude and Kimi hit
+the same hook and returned `NONE`, with instrumentation confirming the injection branch never ran
+for them.
+
+The injected rules exist because of measured failures, not theory: a 9-`apply_patch` loop with
+only 2 verification runs (9m36s), a 10-call patch loop on a one-line fix (507s vs 23s median),
+and bash arguments handed to `apply_patch`. Rules 3 (stop after two failures), 4 (verify each
+edit) and 5 (never hand-compute expected values) target exactly those.
+
+### Gotchas found while wiring this up
+
+- **`ctx.hasUI`, not `ctx.canPrompt`.** There is no `canPrompt` — it reads `undefined`, which is
+  falsy, so every dialog silently degraded to the non-interactive branch *inside a real TUI*.
+- **A model must be in `enabledModels`** or `/model` shows "No matching models" even though
+  `--list-models` and `--model provider/id` both work.
+- **`toLocaleString()` follows the SYSTEM locale** — en-IN here, so 128000 rendered as
+  `1,28,000`. Always pass `"en-US"` explicitly.
+- **pi's built-in `llama.cpp` provider is TUI-only.** Its extension registers exactly one hook —
+  the `/llama` command — and the model catalog is populated nowhere else, so headless `pi -p`
+  can never see those models. That is why we use a `models.json` provider (`llama-local`) instead.
+- **The extension embeds its own server command.** The 2026-07-23 `local-model.ts` shelled out to
+  a `start-local.sh` living outside the repo; that script was later deleted and took the whole
+  extension with it. Nothing here depends on a file that can vanish.
+
+### Measured on this machine (M4 Pro, 48 GB)
+
+decode **81-89 tok/s** · prefill ~1,049 tok/s · cold start → loaded **3.2s** ·
+auto-sleep after 300s idle drops **3.25 GB → 0.18 GB**, wakes in **~1.0s**.
+Our system prompt + 27 tools is **18,546 tokens** ≈ **17.7s prefill on every fresh `pi -p`**.
+
+Reliability: clean, well-specified single-file task **5/5** at 24-25s. Structured JSON extraction
+**3/3 byte-exact** at 35-38s. Self-directed work (write your own tests) **failed** — it does not
+fail fast, it loops for 8-10 minutes and returns nothing. Put a timeout on anything unattended.
+
+---
+
 ## Models
 
 ### Providers (in models.json)
@@ -1259,6 +1343,7 @@ Installed packages ship their own skills inside their package dir: `context-mana
 | `anthropic` | `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6` (1M context override) | Direct Anthropic API + OAuth (Claude Max via pi-claude-code-use) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` | 1M context, thinking mode, OpenAI-compatible API |
 | `kimi-code` | `kimi-for-coding` (K2.7 Code, 262K ctx) | Kimi Code subscription OAuth via `~/.kimi-code/credentials/kimi-code.json`; token helper refreshes through `https://auth.kimi.com/api/oauth/token` |
+| `llama-local` | `LFM2.5-2.6B` (Q6_K, 64K ctx active / 128K max) | Local llama.cpp router at `http://127.0.0.1:8080/v1`. Free, private, offline. Managed with `/local`. Requires llama.cpp >= b10270 — see "Local Models" above. |
 | `sakana` | `fugu`, `fugu-ultra` (both 1M ctx, text+image) | Sakana AI "Fugu" multi-agent orchestration. OpenAI **Responses** API at `https://api.sakana.ai/v1` (`api: openai-responses`), Bearer `$SAKANA_API_KEY`. $20/mo "Standard" subscription. See "Sakana AI (Fugu)" section below. |
 
 ### Sub-agent Models

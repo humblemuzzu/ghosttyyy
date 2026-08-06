@@ -33,7 +33,8 @@
     "deepseek/deepseek-v4-flash",
     "openai-codex/gpt-5.5",
     "sakana/fugu",
-    "sakana/fugu-ultra"
+    "sakana/fugu-ultra",
+    "llama-local/LFM2.5-2.6B"
   ],
   "steeringMode": "all",
   "followUpMode": "all",
@@ -50,6 +51,7 @@
     "npm:pi-mcp-adapter"
   ],
   "terminal": {
-    "clearOnShrink": true
+    "clearOnShrink": false,
+    "showImages": false
   }
 }
