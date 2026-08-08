@@ -1,4 +1,7 @@
 {
+  "settings": {
+    "scriptMode": false
+  },
   "mcpServers": {
     "astro": {
       "url": "http://127.0.0.1:8089/mcp",

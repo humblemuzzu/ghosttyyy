@@ -84,6 +84,20 @@ else
          "cp -R pi-setup/extensions/tools ~/.pi/agent/extensions/"
 fi
 
+# ── sub-agents: provider-qualified --model (pi 0.84.0 #7327) ──
+# A bare model id like "claude-opus-4-6" used to resolve to the first catalog
+# entry; since 0.84.0 it HARD ERRORS when several authenticated providers offer
+# the same id ("ambiguous across providers: anthropic/…, opencode/…"). That
+# takes out oracle, finder, code_review, librarian, read_session and
+# read_web_page at once, with an error that reads like an auth problem.
+# qualifyModel() attaches the provider at the single spawn seam.
+if grep -q "qualifyModel" "$PI_AGENT/extensions/tools/lib/pi-spawn.ts" 2>/dev/null; then
+    pass "sub-agents: --model is provider-qualified (pi-spawn qualifyModel)"
+else
+    fail "sub-agents: pi-spawn.ts has no qualifyModel — every sub-agent will fail with \"ambiguous across providers\"" \
+         "cp pi-setup/extensions/tools/lib/pi-spawn.ts ~/.pi/agent/extensions/tools/lib/pi-spawn.ts"
+fi
+
 # ── shiki-diff: pi-diff render pipeline (edit/write syntax-highlighted diffs) ──
 # The edit/write tools call @heyhuynhgiabuu/pi-diff's __testing render functions.
 # They fall back to the plain box renderer if this breaks, so it's non-fatal —

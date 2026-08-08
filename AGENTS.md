@@ -72,52 +72,6 @@ The system prompt is assembled in layers:
 
 ---
 
-## pi-claude-bridge: Custom Build (inactive)
-
-**Upstream:** https://github.com/elidickinson/pi-claude-bridge (v0.4.0)
-**Our patched version:** `pi-setup/claude-bridge-patches/index.ts`
-**Status:** Installed globally but removed from settings.json packages. Legacy fallback.
-
-### Patch Summary
-
-Two `systemPrompt` modifications — remove `preset: "claude_code"` so Claude Code doesn't load its own system prompt. Search for `preset: "claude_code"` in upstream and replace with our versions:
-
-```typescript
-// Main provider: systemPrompt: systemPromptAppend || ""
-// AskClaude tool: systemPrompt: skillsBlock || undefined
-```
-
-### Re-apply after npm update
-
-```bash
-cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/src/index.ts
-```
-
----
-
-## condensed-milk-pi: REMOVED (2026-07-30)
-
-**Status:** uninstalled entirely. Do not reinstall. `pi-setup/condensed-milk-patches/` deleted.
-
-It compressed bash output and masked stale tool results, but it cost more than it saved:
-
-1. **It silently reported failures as successes.** Its `git-mutations.ts` filter summarises by
-   *shape*, not content — `filterGitAdd()` returns `ok (N files staged)` for ANY input. Compression
-   ran before `isError` was consulted, so a `git add -A` **rejected by our permission rules** was
-   handed to the model as `ok (1 files staged)`. Same data-loss class as the `$`-prefix bug it
-   already needed a patch for.
-2. **Its context masking hampered debugging.** Defaults masked 60% of prior tool results at only
-   **30% context use**, so earlier command output became `[cm-masked bash] …` placeholders and had
-   to be re-run.
-3. **Maintenance cost.** It required three separate local patches (`$`-prefix strip, `cmd` param
-   support, and the `isError` guard), all of which had to be re-applied to *every* installed copy
-   after each npm update.
-
-pi's native compaction (`compaction.enabled: true` in settings.json) covers context management.
-
-**If a copy ever reappears** (stale global install, or someone re-adds it to `packages`),
-`verify-patches.sh` fails loudly — it now asserts the package is *absent*.
-
 ## pi-tool-display: Configuration Required
 
 **Upstream:** https://github.com/MasuRii/pi-tool-display (v0.4.1)
@@ -159,12 +113,23 @@ cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-too
 
 ---
 
-## pi-vcc: Removed
+## pi-mcp-adapter: Configuration Required
 
-**Previously:** `@sting8k/pi-vcc` (v0.3.12) — algorithmic compaction engine.
-**Status:** Uninstalled. Using pi's native LLM-based compaction instead.
+Two upstream defaults are deliberately **turned off**, both added in 2.18–2.19:
 
-**Note:** the old `handoff.ts` extension had a `session_before_compact` hook that returned `{ cancel: true }` for all compaction except VCC, which blocked pi's native compaction entirely. It was first moved to `extensions-disabled/` and has since been **deleted** (2026-07-23 cleanup). Reminder: pi auto-discovers every `.ts` file in `extensions/`, so removing an extension from `settings.json` is NOT enough — the file must be deleted or moved out of `extensions/`.
+| Default | Our setting | Why |
+|---|---|---|
+| `mcpScript` tool registered | `settings.scriptMode: false` in `mcp.json` | It executes arbitrary JavaScript in a worker and adds a second permanent tool — this package was chosen precisely because it costs *one* ~200-token proxy tool, and `permissions.json` does not cover a JS execution surface. |
+| `mcp-scripting` skill shipped | `{ "source": "npm:pi-mcp-adapter", "skills": [] }` in `settings.json` | With `scriptMode: false` the skill would teach a tool that does not exist. |
+
+The object form is load-bearing and was verified against 0.84.1's
+`collectPackageResources`: with `autoload` unset, `skills: []` filters skills to
+none while `extensions` (undefined) still loads from the package's pi manifest —
+so the `mcp` tool still registers. **Do not "simplify" it back to the string
+form**; that silently restores the skill.
+
+Verify after any update: the tool list must contain `mcp` and **not**
+`mcpScript`; the skill list must not contain `mcp-scripting`.
 
 ---
 
@@ -562,63 +527,44 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.83.0 | The pi agent itself (installed via homebrew npm) | No |
+| `@earendil-works/pi-coding-agent` | 0.84.1 | The pi agent itself (installed via homebrew npm) | **3 core patches** |
 | `@benvargas/pi-claude-code-use` | 1.0.5 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-context` | 2.1.2 | Context management: context_log, context_tag, context_checkout | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (**config**: see below) |
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
-| `pi-codex-goal` | 0.1.39 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
-| `pi-mcp-adapter` | 2.15.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect, opt-in `directTools` | No |
+| `pi-codex-goal` | 0.2.0 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
+| `pi-mcp-adapter` | 2.21.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect | No (**config**: see below) |
 
 **Active in settings.json (8):** `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `pi-codex-goal`, `pi-mcp-adapter`
 
-**Removed 2026-07-30 (bdsqqq port, Phase 1):** `pi-web-access` and `pi-tasks` — uninstalled (`pi remove`) and dropped from packages, no backward compatibility kept.
-- `pi-web-access` provided `web_search`, `source_check`, `fetch_content`, `get_search_content`. All four were **removed deliberately**: `web_search` was 100% dead (OpenAI rejected the model for ChatGPT-account Codex auth, Exa hit its free rate limit, Perplexity key invalid) and `source_check` silently degraded to `missing-evidence` because it consumes `web_search`. Replaced in Phase 3 by a self-contained Parallel AI `web_search` tool (ported from bdsqqq). Page reading is covered by our own `read_web_page` tool.
-- `pi-tasks` provided 12 `task_*` tools + `/tasks` + a status widget. Removed because **array parameters were unusable**: its TypeBox schema is correct (`Type.Array`, `dist/src/tools.js:63`) but arrays arrived JSON-stringified and were rejected, so `task_plan` always failed and every tool gated behind it was unreachable.
+**pi-claude-code-use is deliberately held at 1.0.5** (2.1.0 exists). Verified safe
+on 0.84.1: it touches exactly one registry API (`isUsingOAuth`, unchanged), and
+2.x's only new ≥0.84 feature needs registered MCP aliases, which we never have.
+See `pi-setup/pi-migrations.md`.
 
-**Removed 2026-07-23 cleanup:** `pi-gpt-config` (+ its patch), `pi-ask`, `pi-grok-cli` — uninstalled and dropped from packages. Custom Codex `web_search` tool removed (pi-web-access's native `web_search` restored).
+**Removed packages — do not reinstall.** Reasons in `pi-setup/pi-migrations.md`
+and the bdsqqq port log; the short version:
+
+| Package | Removed | Why |
+|---|---|---|
+| `pi-web-access` | 2026-07-30 | `web_search` was 100% dead (every provider key rejected/rate-limited) and `source_check` silently degraded because it consumes it. Replaced by our self-contained Parallel AI `web_search`. |
+| `pi-tasks` | 2026-07-30 | Array parameters arrived JSON-stringified and were rejected, so `task_plan` always failed and every tool gated behind it was unreachable. |
+| `@tomooshi/condensed-milk-pi` | 2026-07-30 | Reported **failed** git commands as successes (a permission-rejected `git add -A` became `ok (1 files staged)`) and masked 60% of prior tool results at 30% context use. Needed three local patches to stay usable. `verify-patches.sh` fails loudly if a copy reappears. |
+| `@sting8k/pi-vcc` | — | Algorithmic compaction; replaced by pi's native `compaction.enabled`. |
+| `pi-computer-use` | 2026-07-23 | Installed-but-inactive, so its `computer-use` skill loaded while its GUI tools never registered — a dead skill in the list. |
+| `pi-gpt-config`, `pi-ask`, `pi-grok-cli` | 2026-07-23 | Unused. |
 
 **Kimi Code usage:** `/model kimi-code/kimi-for-coding:high`. Uses `~/.kimi-code/credentials/kimi-code.json` and `pi-setup/extensions/kimi-code-token.mjs` to refresh Kimi Code subscription OAuth tokens.
 
-**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-4-8`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
+**Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-5`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
 **Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
 
-**Removed 2026-07-23:** `pi-computer-use` — uninstalled entirely (git clone + `helpers/` copy). It was installed-but-inactive, so its `computer-use` skill loaded but its GUI tools (`screenshot`/`click`/`type_text`) never registered — a dead skill. Removed to stop it surfacing in the skill list.
-
-### pi 0.83.0 migration (2026-07-30) — live update off 0.82.1 + pi-context 2.1.2 + pi-codex-goal 0.1.39
-
-Updated `pi update` → **0.83.0** and the two flagged packages (`pi-context` 2.1.1→2.1.2, `pi-codex-goal` 0.1.38→0.1.39). **Audited against the real tarballs before updating** (`npm pack` + diff, no install). pi 0.83.0 is mostly additive but carries **one Breaking Change** (TypeBox 1.3.7); our source is clean of it. One patched core file (`resource-loader.js`) had real upstream drift and was **re-derived, not blind-copied**.
-
-- **0.83.0 Breaking Change — TypeBox → 1.3.7:** removes `Type.Base/Awaited/Promise/AsyncIterator/Iterator/Options` and `Value.Mutate`, and fixes compiled validation of nullable array tool args (#7243). **Verified our 24 tools + all extensions are CLEAN** — grep of our `.ts` source for those APIs returned zero (the only matches were inside vendored `node_modules/@sinclair/typebox` internals/readme). No migration needed.
-- **0.83.0 additive:** `pi auth print-api-key`/`print-bearer-token` credential export with OAuth refresh (#7168), headless OpenRouter login via pasted redirect URL/code, Claude Opus 5 on GitHub Copilot, `ctx.scopedModels` exposed to extensions (#7191), per-request `fetch` injection, `"pending"` stop reason, raw provider stop reasons surfacing unmapped terminal reasons as errors (#7272). OAuth now refreshes tokens with <5 min validity remaining (#7168).
-- **pi-core patches — precise per-file handling (verified stock 0.82.1 vs stock 0.83.0):**
-  - `resource-loader.js` — **RE-DERIVED**, not blind-copied. 0.83.0 added a new `findShadowedContextFile()` worktree-shadowing function (~lines 52-80, imports `basename` + `findGitPaths` from `footer-data-provider.js`) — **outside** our patch region. Our conflict-suppression edit is at the `addExtensionConflictDiagnostics` method (~line 458, `for (const conflict of conflicts) errors.push()` loop, anchor still present). Copied fresh stock 0.83.0 live → repo as new canonical, applied our suppression edit onto it (removed the loop, kept `findShadowedContextFile`), deployed repo → live. Verified live: `findShadowedContextFile` ×2 (feature preserved), conflict-push loop ×0, `LOCAL PATCH` marker ×1, node parse OK. Blind-copying the 0.82.1 repo patch would have **reverted the worktree-shadowing feature**.
-  - `keybindings.js` + `session-selector.js` — **0 upstream drift** 0.82.1→0.83.0 (stock byte-identical, `diff` confirmed). Repo patches deployed as-is; verified live `app.session.pin` ×2, session-selector 7 `LOCAL PATCH`.
-  - pi-tui width patch — `pi update` brought a fresh **v0.83.0** pi-tui copy (into pi's own `node_modules`); `apply-pi-tui-width-patch.mjs` patched it cleanly (anchors unchanged), all other copies already-patched, exit 0.
-- **Packages (targeted `pi update npm:<pkg>`):**
-  - **pi-context 2.1.1 → 2.1.2** — single refinement in `src/index.ts`: adds `didConversationAdvance()` so passive session entries (`custom`/`label`/`session_info`/`model_change`/`thinking_level_change`) no longer cancel a requested compaction (only real conversation advance does) + a `test` npm script. No tool/command rename, no API surface change.
-  - **pi-codex-goal 0.1.38 → 0.1.39** — pauses an active goal when a hidden continuation run only calls `get_goal`/`*__get_goal` with no actionable progress (stops blocked status-inspection loops, surfaces `/goal resume`) + a token-budget doc note (#47). Goal-runtime internals only; `get_goal`/`create_goal`/`update_goal` unchanged.
-- **Smoke-tested:** `pi --version` = 0.83.0; `verify-patches.sh` ALL PASS (8/8); `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply (`UPDATE_OK`), zero load/tool/provider/conflict errors. Rollback backup: `~/pi-update-backup-20260730_235801` (auth.json + patched 0.82.1 dist files + VERSION).
-
-### pi 0.82.1 migration (2026-07-27) — live update off 0.82.0 + pi-web-access 0.14.0 + pi-mcp-adapter 2.15.0
-
-Updated `pi update` → **0.82.1** and the two flagged packages. **Audited against the real 0.82.1/0.14.0/2.15.0 tarballs before updating** (`npm pack`, no install). pi itself is **purely additive** (no `Breaking Changes`/`Removed` section); one patched core file (`resource-loader.js`) had real upstream drift and was **re-derived, not blind-copied**.
-
-- **0.82.1 upstream changes are additive:** **Claude Opus 5** on Anthropic + Bedrock (adaptive thinking incl `xhigh`, inference profiles, prompt caching — new model available, we still default `claude-opus-4-8`), `ANTHROPIC_AUTH_TOKEN` bearer auth for Anthropic-compatible gateways (incl compaction/branch-summaries), `If-None-Match` catalog revalidation (unchanged providers answer `304`), `outputPad` exposed to custom message renderers (#7045). Fixes that help us: **startup context-file discovery now skips directories named like `AGENTS.md`** (#7106 — the `statSync().isFile()` EISDIR guard; we have an `AGENTS.md`), unavailable scoped models hidden from `/models` (#7032), llama.cpp catalog persistence.
-- **Compat surface intact (verified in the 0.82.1 dist):** `@mariozechner/*` loader aliases (`pi-tui`, `pi-ai` + `/compat` + `/oauth` + `/providers`, `pi-coding-agent`, `pi-agent-core`) all present → all ~46 extension imports resolve. `ctx.modelRegistry` shim still exposes `isUsingOAuth`/`getApiKeyAndHeaders`/`getApiKeyForProvider`/`registerProvider`/`getAvailable`/`find`/`refresh` → **pi-claude-code-use Claude path safe**.
-- **Caution carried forward (future release):** the `/compat` entrypoint and `@mariozechner/*` aliases are slated for removal "in a future release" (no version announced). When it lands, the ~48 extension files must be renamed `@mariozechner/*` → `@earendil-works/*` and runtime pi-ai imports moved to `/compat` or the new `createModels()` API. Re-audit the compat surface at that point.
-- **pi-core patches — precise per-file handling (verified stock 0.82.0 vs stock 0.82.1):**
-  - `resource-loader.js` — **RE-DERIVED**, not blind-copied. 0.82.1 added a new `if (!statSync(filePath).isFile()) continue;` block (~line 36, the #7106 EISDIR/`AGENTS.md` fix) in the directory-walk method — **outside** our patch region. Our conflict-suppression edit is at the `addExtensionConflictDiagnostics`/`detectExtensionConflicts` loop (~line 407, anchor still present). Applied our suppression edit onto fresh stock 0.82.1 in place (removed the `for (const conflict of conflicts) errors.push()` loop, kept the new statSync line), then copied live → repo as new canonical. Blind-copying the 0.82.0 repo patch would have **reverted the EISDIR fix**.
-  - `keybindings.js` + `session-selector.js` — **0 upstream drift** 0.82.0→0.82.1 (stock byte-identical). Repo patches deployed as-is; verified live `app.session.pin` ×2, session-selector 7 `LOCAL PATCH`.
-  - pi-tui width patch — `pi update` brought a fresh **v0.82.1** pi-tui copy; `apply-pi-tui-width-patch.mjs` patched it cleanly (anchors unchanged), all other copies already-patched, `--check` exit 0 (re-run after pi update AND after the package updates).
-- **Packages (targeted `pi update npm:<pkg>`, NOT `--extensions` — that clobbers condensed-milk):**
-  - **pi-web-access 0.13.0 → 0.14.0** — mostly additive (new search providers: AnySearch/SERPdive/SearXNG/self-hosted Firecrawl; `source_check` research artifacts; `$ENV`/`!command` credential sources; `typebox` now a real runtime dep). Default public tool names **unchanged** (`web_search`/`fetch_content`/`get_search_content`/`source_check`) — no collision with our 24 custom tools (verified). **`### Removed`: the bundled `librarian` skill is dropped** — confirmed gone from `~/.pi/agent/npm/node_modules/pi-web-access/skills/`. Our custom **`librarian` tool** (`extensions/tools/librarian.ts`) is separate and unaffected; only the package skill disappears (skill count 28 → 27).
-  - **pi-mcp-adapter 2.11.0 → 2.15.0** (4 minor bumps) — all additive/fixes. `get_<resource>`→`read_<resource>` rename (2.13.0) affects only *generated MCP resource tools*, not the `mcp` proxy tool; OAuth creds moved to OS credential store (2.13.0) — we use `auth:false` (localhost astro/paper), no OAuth creds, no impact. Single `mcp` proxy tool name unchanged; `mcp.json` servers intact.
-- **condensed-milk untouched** by the targeted updates (separate package) — `$`-prefix strip intact.
-- **Smoke-tested:** `pi --version` = 0.82.1; `verify-patches.sh` ALL PASS (8/8); `apply-pi-tui-width-patch.mjs --check` exit 0; clean `pi -p` boot with real Claude reply (`MIGRATION_OK`), zero load/tool/provider/conflict errors. Rollback backup: `~/pi-update-backup-20260727_152216` (auth.json + patched 0.82.0 dist files + VERSION).
+**Per-version migration record:** `pi-setup/pi-migrations.md` — one entry per pi
+update, recording which patched core file drifted and how the patch was
+re-derived. Read it before running `pi update`.
 
 ---
 
@@ -789,6 +735,51 @@ Shared code used by multiple tools:
 
 ## Skills
 
+**29 loadable by name** (verified live 2026-08-08): 23 config-level +
+`find-skills` + `userinterface-wiki` + `context-management` (pi-context) +
+3 `autoresearch-*` (pi-autoresearch). The `mcp-scripting` skill that
+pi-mcp-adapter 2.19+ ships is deliberately suppressed — see the
+pi-mcp-adapter config section.
+
+### Config-level (`~/.config/agents/skills/`) — 23 skills
+
+`amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`,
+`dig`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`,
+`remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`,
+`spawn`, `tmux`, `write`
+
+Five of those are external skills adapted for pi, with author prefixes —
+**`s-` shadcn, `c-` cursor, `mat-` matt pocock**:
+
+| Skill | What it is | Subagents it spawns |
+|-------|------------|---------------------|
+| `s-improve` | read-only codebase auditor → writes self-contained handoff plans in `plans/`; never edits source | ≤4 read-only (standard) / ≤8 (deep), only during an audit |
+| `c-sqr` | strict structural quality review of a branch diff | none |
+| `mat-cr2axis` | two-axis diff review: standards (fowler smells) + spec, side by side | 2 read-only, parallel |
+| `mat-design` | deep-modules vocabulary (module/interface/seam/adapter/depth) | 3–4, only in the DESIGN-IT-TWICE path |
+| `mat-tdd` | test-driven development discipline (red→green, seams, anti-patterns) | none |
+
+**Adapted for pi:** Claude-Code/Cursor machinery mapped to pi tools or cut
+(shadcn's `execute`/`reconcile` worktree flow removed — pi sub-agents have no
+worktree isolation). `code-review` was renamed `mat-cr2axis` to avoid clashing
+with the `code_review` **tool**. As adapted, **none of the five ever edits code
+via a subagent — every subagent they spawn is read-only.**
+
+### Package-provided skills — why `skill.ts` had to change
+
+Packages ship skills inside their own package dir. pi's native listing showed
+them, but our custom `skill` tool only scanned the settings/agent/project skill
+roots, so `skill({ name })` failed with "skill not found" on a skill the model
+could plainly see. `skill.ts` now also discovers
+`~/.pi/agent/npm/node_modules/<pkg>/skills/` (incl. `@scope/name`) and
+`~/.pi/agent/git/<host>/<org>/<repo>/skills/`. An `isDirLike()` helper makes
+symlinked skill dirs list correctly — `Dirent.isDirectory()` is **false** for a
+symlink, which is why `find-skills` and `userinterface-wiki` were invisible.
+User/config skills win over package skills of the same name.
+
+`pi-skills/` in the repo is empty; `find-skills` and `userinterface-wiki` are
+package-managed symlinks created on install.
+
 ---
 
 ## Screenshot & Vision Budget (`screenshot` tool + `lib/vision.ts`)
@@ -834,62 +825,56 @@ the parent read figures out of the image the oracle never mentioned **and correc
 — the oracle said Stripema was the foreground app; the parent could see Finder held the
 menu bar.
 
-### The bug it replaces
+### The budget: two limits, and why one pass matters
 
-Sub-agents were improvising screenshots in bash:
-
-```
-screencapture -x -o -l 12237 /tmp/shot.png && sips -Z 1400 /tmp/shot.png
-```
-
-Both halves are wrong, and the reason is **not** the edge limit everyone quotes:
-
-- Claude's budget is **two** limits — a 1568px padded edge AND **1568 visual tokens**,
-  where `tokens = ceil(w/28) × ceil(h/28)`. **The token limit binds first for almost
-  every screenshot.** `sips -Z 1400` on a 16:10 window gives 1400×900 = `50 × 33` =
-  **1650 tokens**, over budget, so the API resizes it *again* to 1372×882. Text is
-  resampled twice for a 2% size change.
-- On a 2× display the capture was already 2800×1800 when `CGWindowBounds` said
-  1400×900, so that is a 3.2× reduction pushed through two filters.
-
-The tool resamples **once**, to the exact size Anthropic's own resizer would pick, so
-the API's resize is a no-op. Verified live: a window reporting 1400×900 bounds captured
-at 2800×1800 and fitted to `1372×882 (1568 tokens, 1 pass)` — the same target, one pass
-instead of two.
+Claude's budget is **two** limits — a 1568px padded edge AND **1568 visual
+tokens**, where `tokens = ceil(w/28) × ceil(h/28)`. **The token limit binds first
+for almost every screenshot**, which is why the obvious hand-rolled version is
+wrong: `screencapture … && sips -Z 1400` on a 16:10 window gives 1400×900 =
+50×33 = **1650 tokens**, over budget, so the API resizes it *again* to 1372×882 —
+text resampled twice for a 2% size change, on top of a 3.2× reduction because a 2×
+display had already captured 2800×1800. The tool resamples **once**, to the exact
+size Anthropic's own resizer would pick, so the API's resize is a no-op. Verified
+live: 2800×1800 → `1372×882 (1568 tokens, 1 pass)`.
 
 ### Where the numbers came from
 
-`lib/vision.ts` is a behaviour-identical port of the `caliper` project's `src/vision.ts`
-(`~/Documents/Code stuff/caliper`), which transcribes Anthropic's published spec and its
-reference resize implementation. The **same algorithm** is implemented independently in
-the `ClaudeImageResizer` macOS app (`~/Documents/Code stuff/macos apps/ClaudeImageResizer`,
-`ImageBudget.swift`). Two independent implementations agreeing on every test vector is
-the only reason to trust either. **If you change a constant, change it in all three and
-re-run `lib/vision.test.ts`.**
+`lib/vision.ts` is a behaviour-identical port of the `caliper` project's
+`src/vision.ts` (`~/Documents/Code stuff/caliper`), which transcribes Anthropic's
+published spec and reference resize implementation. The **same algorithm** is
+implemented independently in the `ClaudeImageResizer` macOS app
+(`ImageBudget.swift`). Two independent implementations agreeing on every test
+vector is the only reason to trust either. **If you change a constant, change it
+in all three and re-run `lib/vision.test.ts`.**
 
-Load-bearing details that look like nits and are not:
+Details that look like nits and are not:
 
-- **Banker's rounding.** `resizedSize` resolves exact .5 ties to even, matching Python's
-  `round()`. `Math.round` drifts a pixel on tie-hitting aspect ratios — pinned by the
-  2000×1500 test.
+- **Banker's rounding.** `resizedSize` resolves exact .5 ties to even, matching
+  Python's `round()`. `Math.round` drifts a pixel on tie-hitting aspect ratios —
+  pinned by the 2000×1500 test.
 - **The edge limit is tested against the PADDED edge**, `ceil(w/28)*28`.
-- **The high-res tier is clamped to 2000px, not the spec's 2576.** See below — this is
-  not a nit, it took out a live request.
 - **High is the DEFAULT tier, and nothing decides it.** Swept 851 shapes
-  (`port-harness/tier-dominance.ts`): high was larger 801 times, identical 50 times, and
-  smaller **zero** times. It is not a trade-off, so there is nothing for a model to
-  weigh. Only an explicit `tier:"standard"` opts down; an absent or invented tier name
-  gets high. In 54 of the wins the source already fitted, so high meant **no resample at
-  all** where standard would have shrunk it.
-- **High tier is also the safer choice for image COUNT.** Its slices are 1988px tall vs
-  840, so the same page needs less than half the images — a 6,996px page goes 9 → 4, a
-  20,000px page 25 → 11. Image count is what hits the >20 and 100-image rules, so the
-  richer tier trips them less.
-- **No cost language anywhere in the tool surface.** A `screenshot.test.ts` case greps
-  the description and every parameter for `token cost|cheaper|Nx the cost|expensive` and
-  fails if any appears. Cost is the caller's business; the tool's business is not
-  returning a degraded picture. The old `"~3x the token cost"` note actively pushed
-  models to the weaker tier.
+  (`port-harness/tier-dominance.ts`): high was larger 801 times, identical 50, and
+  smaller **zero** times. It is not a trade-off, so there is nothing to weigh.
+  Only an explicit `tier:"standard"` opts down; an absent or invented tier name
+  gets high. In 54 wins the source already fitted, so high meant **no resample at
+  all**. High is also safer for image *count* — 1988px slices vs 840 means a
+  20,000px page needs 11 images instead of 25, and image count is what trips the
+  >20 and 100-image rules.
+- **No cost language anywhere in the tool surface.** A `screenshot.test.ts` case
+  greps the description and every parameter for
+  `token cost|cheaper|Nx the cost|expensive` and fails if any appears. Cost is the
+  caller's business; the tool's business is not returning a degraded picture. The
+  old `"~3x the token cost"` note actively pushed models to the weaker tier.
+- **Patch-snapping was removed, not defaulted off.** Trimming each axis to a
+  multiple of 28 saves ~3% of the budget and distorts the aspect ratio by up to
+  2.7%; ClaudeImageResizer reached the same conclusion independently. It lives on
+  in caliper if a measurement use ever wants it. `paddedSize` went the same way —
+  the padding rule it reported is already inside `fits()`, which is what decides.
+- **Area-average, not Lanczos.** Lanczos/bicubic ring on hard edges, and UI is
+  nothing but hard edges (text stems, 1px borders). A deliberate divergence from
+  ClaudeImageResizer's CoreGraphics `.high` path, which is the better choice for
+  photos and the worse one here.
 
 ### Two caps that are ours, not Anthropic's
 
@@ -905,10 +890,10 @@ hole in the middle.
 
 ### Chromium silently returns BLANK past 16384px
 
-Found by a model **reading our own slices** and reporting that a 51,320px capture
-repeated and blanked out. Chromium cannot render a full-page screenshot taller than its
-maximum texture size (2^14). Past that it does **not** fail — it returns an image of the
-requested height whose lower portion is empty.
+Chromium cannot render a full-page screenshot taller than its maximum texture size
+(2^14). Past that it does **not** fail — it returns an image of the requested
+height whose lower portion is empty. Found by a model **reading our own slices**
+and reporting that a 51,320px capture repeated and blanked out.
 
 Measured (`port-harness/tall-page-limit.ts`) on a 40-section fixture: sections 1–13
 rendered, **sections 14–40 came back blank**, boundary inside 15,506..16,719. The tool
@@ -919,11 +904,9 @@ because a caller cannot tell blank-because-empty from blank-because-broken.
 documentHeight }`, which `screenshot.ts` surfaces as a loud note. After the fix the same
 fixture yields 13 distinct headings and **0 blank bands**.
 
-**Two probe bugs on the way to this, both mine, both worth remembering:** the first
-sampled at 1200px per section (the CSS `height`) when content-box sizing makes them
-1283px, so it sampled blank body areas and "found" a repeat that did not exist. The
-second asserted the bottom 300px of the capture had ink, when that fixture's sections
-are mostly whitespace by design. **Derive geometry from the artifact; do not assume it.**
+Two probe bugs on the way there — one sampled at the CSS `height` when content-box
+sizing made sections taller, the other assumed a mostly-whitespace fixture had ink
+at the bottom. Lesson: **derive geometry from the artifact; do not assume it.**
 
 ### Two files that look like images and kill the request
 
@@ -955,110 +938,58 @@ an unusable image re-sends the exact payload the API rejects. It now catches
 `UnusableImageError` and reports it instead. Verified live: a fresh session read both
 corrupt shapes, got clean errors, and kept working.
 
-### Window targeting: disclose the choice, and only give advice that can work
+### Window targeting — the rules, and why each exists
 
-Three findings from a live test run, all about the tool being *silent* rather than wrong:
+**Every macOS tab is its own `NSWindow`, and the tab bar is a further separate
+window.** Measured: 4 visible Ghostty terminals reported as 16 windows (two real
+windows of 7 and 8 tabs, plus tab-bar windows at y=0 filtered by the height
+floor). So a raw window count is accurate and useless. `groupLikelyTabs()` keys
+on identical app+size+position; `renderWindowTable` folds siblings into one entry
+with the capturable id first and the rest as `other tabs: …` (singletons stay
+flat — a "1 tab(s)" header is noise).
 
-- **Auto-picking was invisible.** `app:"ghostty"` matched 12 windows and captured one
-  with no signal, while `app` + `window_title` matched 5 and refused. Both behaviours
-  are defensible; being unable to tell which happened is not. `resolveWindow` now
-  returns a `WindowChoice` carrying `autoPicked`, and the tool emits a note naming the
-  match count and the chosen id.
-- **The refusal gave impossible advice.** It said *"Narrow it with window_title"* to a
-  caller that had just supplied one, when all five candidates had byte-identical titles
-  — no value could ever have worked. The advice is now conditional on
-  `new Set(titles).size > 1`; when titles are identical it says so and asks for
-  `window_id`, which is the only thing that can separate them.
-- **Left-truncated titles hide the distinguishing part.** Ghostty renders
-  `…/Documents/Code stuff/stripema` itself, so the prefix is gone before we see it.
-  `describeWindow` now includes `@x,y`, which is the only remaining discriminator.
+This also explains a capture that looks 80px too tall: `screencapture -l` returns
+the whole **tab group**, so a window whose `CGWindowBounds` says 1920×1040 @y=40
+(the *content area*) captures as 1920×1080 from y=0 — the difference is exactly
+the 40pt tab bar, verified by cropping and reading it. Nothing extra is captured
+and nothing is lost. The tool notes any captured-pixels ≠ bounds×scale mismatch,
+and suppresses that note when a region was applied (after a deliberate crop,
+"the full window was captured" would be untrue).
 
-`resolveWindow` takes an injectable `pool` because these branches depend on which Space
-is active — the ambiguous case stops being ambiguous the moment a window moves, so it
-cannot be tested against the live desktop.
+Rules the tool follows, each from a live failure:
 
-### `CGWindowBounds` under-reports windows with a native tab bar (not a bug)
+- **Disclose the choice.** Auto-picking used to be invisible: `app:"ghostty"`
+  matched 12 windows and captured one silently. `resolveWindow` returns a
+  `WindowChoice` carrying `autoPicked`; the tool names the match count and chosen
+  id. Exactly one on-screen candidate → capture it and say so, never a second call.
+- **Only give advice that can work.** The refusal used to say *"narrow it with
+  window_title"* to a caller that had supplied one, when all candidates had
+  byte-identical titles. That advice is now conditional on
+  `new Set(titles).size > 1`; otherwise it says so and asks for `window_id`,
+  the only thing that can separate them. `describeWindow` includes `@x,y` because
+  terminals left-truncate their own titles, hiding the distinguishing prefix.
+- **A dead end becomes a next step.** On failure, `displayedSibling()` names the
+  on-screen member of the same tab group. It does **not** auto-capture it — the
+  group renders whichever tab is active, so substituting would be the silent
+  auto-pick bug again: right pixels, wrong subject.
+- **`region` is window-relative** when combined with `window_id`/`app`, cropped
+  from the window's own pixels after capture. Screen coordinates go stale the
+  moment a window moves and cannot express the tab-bar offset `CGWindowBounds`
+  omits. Over-large regions clamp and say so. Measured: a `[0,0,700,120]` crop
+  costs **450 tokens instead of 2840**.
 
-A window capture reported a `3840×2160` source for a window `list` called `1920×1040` —
-an 80px discrepancy that looks like capturing the wrong thing. Measured, it is not:
+`resolveWindow` takes an injectable `pool` because these branches depend on which
+Space is active — the ambiguous case stops being ambiguous the moment a window
+moves, so it cannot be tested against the live desktop.
 
-| | value |
-|---|---|
-| `CGWindowBounds` | 1920×1040 at y=40 — the **content area** |
-| `screencapture -l` | 1920×1080 from y=0 — the **true window frame** |
-| difference | exactly the 40pt native tab bar |
-
-Confirmed by cropping the top 90px of the capture and reading it: it is Ghostty's tab
-bar (`π - stripema ⌘1 …`), **not** the menu bar. Nothing extra was captured and nothing
-was lost. A control window in the same run (Stripema, 1624×941) captured at exactly
-3248×1882 — so the general path is correct and only chrome-bearing windows differ.
-
-The tool now emits a note when captured pixels ≠ bounds × scale, because a silent
-mismatch costs a reviewer an investigation every time.
-
-### Every TAB is a window — why "4 terminals" reports 16
-
-Measured on this machine with 4 visible Ghostty terminals:
-
-```
-24 Ghostty windows raw → 16 after the layer-0 / ≥100px filter
-  1920×1040 @0,40   ×7    terminal surfaces   ┐ two real windows,
-  1916×1040 @4,40   ×8    terminal surfaces   ┘ 7 and 8 tabs
-  500×500   @0,580  ×1    helper
-  1920×40   @0,0    ×3  ┐ TAB BARS — filtered out by the height floor
-  1920×30   @0,0    ×4  ┘
-```
-
-Under macOS native tabbing **each tab is its own `NSWindow`**, and the tab bar is a
-*further* separate window at y=0. So the raw count is accurate and useless. Tabs of one
-window share an app, size and position exactly, which is what `groupLikelyTabs()` keys
-on; the ambiguity message now reports distinct frames alongside the raw count.
-
-**This also explains the +80px capture** precisely: `id 15883` (terminal, 1920×1040
-@0,40) and `id 15884` (its tab bar, 1920×40 @0,0) are siblings, and `screencapture -l`
-returns the whole **tab group** — 1920×1080 from y=0. Not padding, not the display: the
-group.
-
-**`[other Space]` was a false claim and is now `[not on screen]`.** All macOS reports is
-`kCGWindowIsOnscreen: false`, which is equally true of another Space, a minimised
-window, a hidden app, and — most often by far — a background tab. 15 of these 16 were
-"not on screen" and almost none were on another Space. Naming an unchecked cause sends
-people hunting a Spaces problem that is not there.
-
-### Four refinements from a reviewer, and the false claim one of them exposed
-
-- **(a) one call, not two.** The rule is "exactly one candidate on screen → capture it
-  and disclose the choice". Verified it was already one-shot; it only refuses when the
-  *on-screen* set is genuinely ambiguous, which is the one case nothing can decide.
-- **(b) the list folds by frame.** `renderWindowTable` groups tab siblings into one
-  entry with the capturable id first and the rest as `other tabs: …`. 28 flat rows
-  became 13 entries. Singletons deliberately stay flat — folding one window into a
-  "1 tab(s)" header is pure noise.
-- **(c) a dead end becomes a next step.** On capture failure, `displayedSibling()` finds
-  the on-screen member of the same tab group and names it. It does **not** auto-capture
-  it: the group renders whichever tab is active, so substituting silently would be the
-  silent auto-pick bug again — right pixels, wrong subject.
-- **(d) `region` is now window-relative.** With `window_id`/`app`, `region` means
-  coordinates *inside that window*, cropped from the window's own pixels after capture.
-  Screen coordinates go stale the moment a window moves and cannot express the tab-bar
-  offset `CGWindowBounds` omits; cropping the window's pixels is correct by
-  construction. Over-large regions clamp to the window and say so. Measured: a
-  `[0,0,700,120]` crop costs **450 tokens instead of 2840**.
-
-**The false claim:** the first draft of the rescue message said *"a background tab can
-never be captured on its own"*. One live test disproved it — `window_id 13861`, a
-background tab, captured fine at **3840×2080** (exactly bounds×2, without the group's
-tab bar). The message now describes what will work rather than asserting what cannot,
-and a test greps it for `never|impossible|cannot be captured`.
-
-**Pattern worth internalising: every absolute claim made about macOS window behaviour in
-this file has been wrong.** `[other Space]`, "cannot be captured while off screen", "a
-background tab can never be captured" — three for three. State the observation, offer
-the next step, and let the capture attempt be the authority.
-
-Also fixed while verifying (d): the chrome-mismatch note fired on cropped captures and
-ended with "The full window was captured", which after a deliberate crop is simply
-untrue. It is now suppressed whenever a region was applied.
+**Guardrail: every absolute claim made about macOS window behaviour here has been
+wrong.** `[other Space]` (macOS only reports `kCGWindowIsOnscreen: false`, which
+is equally true of a minimised window, a hidden app and — most often — a
+background tab, so it is now `[not on screen]`); "cannot be captured while off
+screen"; "a background tab can never be captured" (disproved by `window_id 13861`
+capturing fine at 3840×2080). Three for three. State the observation, offer the
+next step, and let the capture attempt be the authority. A test greps the rescue
+message for `never|impossible|cannot be captured`.
 - **Patch-snapping was removed, not merely defaulted off.** Trimming each axis down to a
   multiple of 28 saves ~3% of the budget and distorts the aspect ratio by up to 2.7%;
   ClaudeImageResizer reached the same conclusion independently, so nothing ever enabled
@@ -1070,88 +1001,53 @@ untrue. It is now suppressed whenever a region was applied.
   ClaudeImageResizer's CoreGraphics `.high` path, which is the better choice for photos
   and the worse one here.
 
-### A real bug found in the port — and still live in caliper upstream
+### The >20-image ceiling — why `high` is clamped to 2000px
 
-### The >20-image ceiling — a time bomb that went off
+Spec §7: once a request carries **more than 20 images**, the per-image ceiling
+drops from 8000px to **2000px per axis**. The high-res tier's spec edge is 2576.
 
-**2026-08-05, live session `019fcf7a`.** A session that had been exercising the tool
-happily died with:
+This went off live (session `019fcf7a`): a 2576×1449 image **succeeded at image
+index 3 and 400'd at index 20 of the same session**, identical size, nothing wrong
+with it — a 9-slice web capture had pushed the request past 21 images. Worst
+possible failure shape, because it looks random.
 
-```
-400 invalid_request_error — messages.1.content.20.image.source.base64.data:
-At least one of the image dimensions exceed max allowed size for many-image
-requests: 2000 pixels
-```
+**Fix:** `resolveTier()` clamps high to `MANY_IMAGE_MAX_EDGE = 2000`, so no image
+this tool emits can ever be illegal. Costs ~23% of linear resolution (2576 → 1988
+after padding) and 40% of token cost (4784 → 2840); 1988 is still 27% above the
+standard tier, which is the reason to ask for `high`. `TIERS` keeps the **spec**
+values — the test vectors and the ClaudeImageResizer cross-check are written
+against those; only `resolveTier`, the seam every tool goes through, clamps.
 
-Spec §7: once a request carries **more than 20 images**, the per-image ceiling drops
-from 8000px to **2000px per axis**. The high-res tier's spec edge is **2576**.
+**There is deliberately no opt-in back to 2576.** A tool cannot see how many
+images are already in the conversation, so it cannot know whether 2576 is safe on
+this call. An option that works early and fails later is worse than no option.
 
-Parsed straight out of that session's JSONL (`port-harness/analyze-session-images.ts`,
-which reads IHDR headers only and never materialises the base64):
+Guarded by a sweep of 12 shapes × both tiers asserting nothing exceeds 2000, plus
+a separate one for slice boxes (slices are cropped, so they bypass `resizedSize`
+entirely). **It was a known unknown:** the pre-build research listed this limit as
+"NOT implemented" and it was then not built. Check that list before assuming a
+limit is handled.
 
-```
-total image blocks: 21
-images with a dimension > 2000px: 2
+### The resample out-of-bounds bug (also fixed upstream in caliper)
 
-  #3   2576×1449   high tier — SUCCEEDED
-  #7-15  9 × 1440×840   one 9-slice web capture, in a single call
-  #20  2576×1449   IDENTICAL SIZE — 400'd
-```
-
-**The same image size succeeded at index 3 and failed at index 20.** Nothing was wrong
-with the image; the request had simply crossed 21 images, and the 9-slice page capture
-is what got it there. So `tier:"high"` worked early in a session and killed the request
-later, with no change in the call — the worst possible failure shape, because it looks
-random.
-
-**Fix:** `resolveTier()` clamps the high tier to `MANY_IMAGE_MAX_EDGE = 2000`, so no
-image this tool emits can ever be illegal. Costs ~23% of the tier's linear resolution
-(2576 → 1988 after patch padding) and, incidentally, 40% of its token cost
-(4784 → 2840). 1988 is still 27% above the standard tier, which is the reason to ask
-for `high` at all.
-
-`TIERS` keeps the spec values — they are what the vectors and the ClaudeImageResizer
-cross-check are written against. Only `resolveTier`, the seam every tool goes through,
-applies the clamp.
-
-**There is deliberately no opt-in back to 2576.** A tool cannot see how many images are
-already in the conversation, so it cannot know whether 2576 is safe on this call. An
-option that works early and fails later is worse than no option.
-
-Guarded by a test that sweeps 12 input shapes × both shipped tiers and asserts nothing
-ever exceeds 2000, plus one asserting slice boxes stay legal (slices are cropped, so
-they bypass `resizedSize` entirely and needed checking separately).
-
-**This was a known unknown, not a surprise.** The pre-build research explicitly listed
-"Multi-image stricter limit — 2000×2000 px when >20 images — NOT implemented". It was
-written down and then not built. Check that list before assuming a limit is handled.
-
-`downscale`'s inner loops used `Math.ceil(xEnd)` / `Math.ceil(yEnd)` as bounds. At the
-last row/column `(dx + 1) * xRatio` overshoots the true edge by ~1e-15, so `ceil` yields
-`img.width + 1` and the loop reads one past the buffer. A `Uint8Array` out-of-bounds read
-is `undefined`; `undefined * weight` is `NaN`; assigning `NaN` into a `Uint8Array`
-silently stores **0** — a black pixel, no error anywhere.
-
-Measured before the fix:
+`downscale`'s inner loops used `Math.ceil(xEnd)`/`Math.ceil(yEnd)` as bounds. At
+the last row/column `(dx + 1) * xRatio` overshoots by ~1e-15, so `ceil` yields
+`width + 1` and the loop reads one past the buffer. An out-of-bounds `Uint8Array`
+read is `undefined` → `undefined * weight` is `NaN` → assigning `NaN` into a
+`Uint8Array` silently stores **0**. A black pixel, no error anywhere.
 
 | source → target | corrupt bytes |
 |---|---|
 | 21×21 → 19×19 | 57 (the entire bottom row) |
-| **2880×1800 → 1389×868** (MacBook Pro Retina) | 3 (bottom-right pixel black) |
+| **2880×1800 → 1389×868** (MBP Retina) | 3 (bottom-right pixel black) |
 | 3840×2160 → 1456×819 | 0 — clean by luck |
-| 2800×1800 → 1372×882 | 0 — clean by luck |
 
-The two sizes this machine produces were both clean, which is exactly why 107 tests
-missed it: every resample test asserted an **aggregate** (mean, buffer length, value
-range), and three bad bytes out of 3.6 million move the mean by 0.00002. The fix clamps
-the bounds to the buffer; the regression tests assert **exact pixel values** on a uniform
-image across 7 named sizes plus an 873-combination sweep.
-
-**The bug came from the caliper original** (`~/Documents/Code stuff/caliper/src/resample.ts`)
-— it was ported faithfully. **Fixed there too on 2026-08-05**, with the same clamp and an
-equivalent exact-pixel regression suite (caliper: 97 tests pass). It mattered more there:
-caliper's `edges()` and `bands()` read a black pixel as ink, so a measurement taken from a
-downscaled view could have been wrong with no visible cause.
+**Why 107 tests missed it:** every resample test asserted an *aggregate* (mean,
+buffer length, value range), and 3 bad bytes in 3.6 million move the mean by
+0.00002. The fix clamps bounds to the buffer; regression tests now assert **exact
+pixel values** across 7 named sizes plus an 873-combination sweep. Ported
+faithfully from caliper and **fixed there too** — it mattered more there, since
+caliper's `edges()`/`bands()` read a black pixel as ink.
 
 ### macOS facts verified on this machine (do not re-derive)
 
@@ -1224,30 +1120,6 @@ figures out of a screenshot nested inside it.
   **true** activates up front; **false** forbids it. The auto-retry only fires for an
   off-screen window, because an on-screen failure is a permissions problem that stealing
   focus would not fix.
-
-### Config-level (`~/.config/agents/skills/`) — 21 skills
-
-`amp-voice`, `chrome-cdp`, `coordinate`, `dig`, `document`, `git`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write`
-
-**Added 2026-07-23 (5 external skills, adapted for pi — author-prefixed names):**
-
-| Skill | Author (prefix) | What it is | Subagents it spawns |
-|-------|-----------------|------------|---------------------|
-| `s-improve` | shadcn (`s-`) | read-only codebase auditor → writes self-contained handoff plans in `plans/`; never edits source | ≤4 read-only `Task` (standard) / ≤8 (deep), only during an audit |
-| `c-sqr` | cursor (`c-`) | strict quality review — harsh structural critique of a branch diff (was "thermo-nuclear") | none |
-| `mat-cr2axis` | matt pocock (`mat-`) | two-axis diff review: standards (fowler smells) + spec, side by side | 2 read-only `Task` (parallel) |
-| `mat-design` | matt pocock (`mat-`) | deep-modules vocabulary (module/interface/seam/adapter/depth) | 3–4 `Task` only in the DESIGN-IT-TWICE path |
-| `mat-tdd` | matt pocock (`mat-`) | test-driven development discipline (red→green, seams, anti-patterns) | none |
-
-Mnemonic: **`s-` shadcn, `c-` cursor, `mat-` matt**. Sources: shadcn/improve, cursor/plugins (cursor-team-kit), mattpocock/skills. **Adapted for pi:** all Claude-Code/Cursor machinery mapped to pi tools (Explore/`Agent`→`Task`, issue-tracker→`github` tool) or cut (shadcn's `execute`/`reconcile` worktree flow + `closing-the-loop.md` removed — pi `Task` has no worktree isolation or bidirectional messaging). `code-review` renamed `mat-cr2axis` to avoid clashing with the `code_review` tool; `disable-model-invocation` frontmatter dropped (unused by `skill.ts`). Descriptions cross-reference each other to prevent the model confusing them. As adapted, **none of the five ever edits code via a subagent — every subagent they spawn is read-only.**
-
-### Pi-level (`~/.pi/agent/skills/`)
-
-No repo-stored pi-level skills (`pi-skills/` is empty). `find-skills` and `userinterface-wiki` are pi-package-managed symlinks, auto-created on install.
-
-### Package-provided skills (discovered by the `skill` tool as of 2026-07-23)
-
-Installed packages ship their own skills inside their package dir: `context-management` (pi-context), `autoresearch-create/finalize/hooks` (pi-autoresearch). pi's native listing shows these in the `/` menu, but our custom `skill` tool (`tools/skill.ts`) originally only scanned the settings/agent/project skill roots — so `skill({ name: "..." })` failed with "skill not found" even though the skill was visible. **Fix:** `skill.ts` now also discovers `~/.pi/agent/npm/node_modules/<pkg>/skills/` (incl `@scope/name`) and `~/.pi/agent/git/<host>/<org>/<repo>/skills/`, and an `isDirLike()` helper makes symlinked skill dirs (find-skills, userinterface-wiki) list correctly (`Dirent.isDirectory()` is false for symlinks). User/config skills still win over package skills of the same name. **27 skills** loadable by name (21 config + find-skills + userinterface-wiki + context-management + 3 autoresearch). *(The `librarian` skill shipped by pi-web-access until **0.14.0 removed it** 2026-07-27 — our custom `librarian` **tool** is separate and unaffected. The `computer-use` skill from pi-computer-use was here until that package was removed 2026-07-23 — its tools were never active.)*
 
 ---
 
@@ -1499,10 +1371,25 @@ bash pi-setup/verify-patches.sh
 Read-only audit of every patch and config this setup depends on: resource-loader
 conflict suppression, session pinning, **pi-tui width patch in ALL installed
 copies** (TUI smears without it), condensed-milk absence,
-pi-tool-display config, editor label guards, box-format normalization. Each
+pi-tool-display config, editor label guards, box-format normalization,
+provider-qualified sub-agent `--model`. Each
 FAIL prints the exact fix command. Exit 0 = everything in place. Run it after
 `pi update`, any `pi install`, any npm package update — or whenever something
 feels off. `pi-setup/install.sh` also runs it as its final step.
+
+**An import-level audit is not enough — also grep our own CLI call sites.**
+`verify-patches.sh` and the usual API-compat sweep both check what our
+extensions *import*. They cannot see a change in how pi interprets the
+**command-line arguments we pass it**, and `lib/pi-spawn.ts` shells out to a
+real `pi` process with `--model`, `--provider`, `--tools`, `--mode`. pi 0.84.0
+#7327 changed bare `--model` resolution from "take the first catalog entry" to
+"hard error if several authenticated providers match", which silently took out
+**every sub-agent** — oracle, finder, code_review, librarian, read_session,
+read_web_page — with an error that reads like an auth failure. The changelog
+line had been read and filed as a *free win*. So: whenever a release mentions
+model resolution, provider selection, tool filtering or CLI arguments, open
+`lib/pi-spawn.ts` and check the flags it builds, then actually call one
+sub-agent before declaring the update clean.
 
 When pi or any package gets updated:
 

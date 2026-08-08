@@ -29,7 +29,7 @@ function resolvePromptInput(input, description) {
     return input;
 }
 function loadContextFileFromDir(dir) {
-    const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
+    const candidates = ["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
     for (const filename of candidates) {
         const filePath = join(dir, filename);
         if (existsSync(filePath)) {
@@ -51,7 +51,7 @@ function loadContextFileFromDir(dir) {
 }
 /**
  * The main repo's context file that a nested linked worktree's own copy shadows: both
- * are the same tracked AGENTS.md/CLAUDE.md, so loading both loads it twice. Returns
+ * occupy the same logical repository scope, so loading both applies that context twice. Returns
  * undefined when nothing is shadowed, leaving normal ancestor inheritance alone.
  *
  * Returned canonicalized (realpath), because `git worktree add` writes the `.git`

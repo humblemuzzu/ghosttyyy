@@ -48,7 +48,7 @@
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",
     "npm:pi-codex-goal",
-    "npm:pi-mcp-adapter"
+    { "source": "npm:pi-mcp-adapter", "skills": [] }
   ],
   "terminal": {
     "clearOnShrink": false,

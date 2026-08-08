@@ -56,6 +56,34 @@ interface PastedImage {
 const pastedImages = new Map<string, PastedImage>();
 let pasteCounter = 0;
 
+// ---------------------------------------------------------------------------
+// Escape gate — a running agent takes THREE escapes, not one
+//
+// pi's default onEscape aborts a streaming turn on the FIRST press, which makes
+// a stray Esc destroy an in-flight session. This requires three presses inside
+// a 5s window; miss the window and the count resets to zero (so a partial
+// double-tap can never leave the gate "primed" for a later accidental press).
+//
+// Deliberately scoped to the ABORT case only. When the agent is idle the press
+// is forwarded untouched, so bash-mode exit, autocomplete cancel and the
+// double-Escape /tree action all keep their normal single/double-press feel.
+// ---------------------------------------------------------------------------
+
+/** how many escapes are needed to abort a running agent */
+const ESCAPE_HITS_REQUIRED = 3;
+/** all required presses must land inside this window, measured from the first */
+const ESCAPE_WINDOW_MS = 5000;
+/** label slot used for the "esc 2/3" countdown hint */
+const ESCAPE_LABEL_KEY = "esc-gate";
+
+/**
+ * True while a turn is in flight — the only state in which Escape would abort.
+ * Maintained by the agent_start/agent_end hooks below; module-scoped because
+ * the editor class and the extension factory live in this same module (they
+ * would NOT share state across pi's per-file jiti instances otherwise).
+ */
+let agentRunning = false;
+
 type ClipboardModule = {
 	hasImage?: () => boolean;
 	/**
@@ -149,6 +177,88 @@ class LabeledEditor extends CustomEditor {
 		this.appTheme = appTheme;
 		this.tuiRef = tui;
 		this.setupImagePaste();
+		this.setupEscapeGate();
+	}
+
+	// --- escape gate ------------------------------------------------------
+
+	/** whatever pi core assigned to onEscape — the real abort/tree handler */
+	private coreEscape?: () => void;
+	private escapeHits = 0;
+	private escapeTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/**
+	 * Interpose on `onEscape` so a running agent needs THREE presses.
+	 *
+	 * `CustomEditor` declares `onEscape` as a bare class field, so `super()`
+	 * has already installed an OWN data property by the time we get here — a
+	 * prototype accessor would be shadowed by it. Redefining the own property
+	 * as an accessor is what actually works.
+	 *
+	 * The getter reports `undefined` until core has assigned, because core
+	 * wires its default with `if (!customEditor.onEscape)`. Returning our gate
+	 * too early would make core skip the assignment and leave us with nothing
+	 * to delegate to — Escape would then do nothing at all.
+	 */
+	private setupEscapeGate(): void {
+		Object.defineProperty(this, "onEscape", {
+			configurable: true,
+			enumerable: true,
+			get: () => (this.coreEscape ? this.escapeGate : undefined),
+			set: (fn: (() => void) | undefined) => {
+				this.coreEscape = fn;
+			},
+		});
+	}
+
+	private escapeGate = (): void => {
+		// Idle: nothing to abort — forward untouched so double-Escape /tree,
+		// bash-mode exit and friends keep their normal behaviour.
+		if (!agentRunning) {
+			this.resetEscapeGate();
+			this.coreEscape?.();
+			return;
+		}
+
+		this.escapeHits += 1;
+
+		if (this.escapeHits === 1) {
+			// Window runs from the FIRST press and is never extended: "press
+			// all three within 5s" rather than "keep tapping to stay alive".
+			this.escapeTimer = setTimeout(() => {
+				this.escapeHits = 0;
+				this.escapeTimer = undefined;
+				this.removeLabel(ESCAPE_LABEL_KEY);
+				this.tuiRef.requestRender();
+			}, ESCAPE_WINDOW_MS);
+		}
+
+		if (this.escapeHits >= ESCAPE_HITS_REQUIRED) {
+			this.resetEscapeGate();
+			this.coreEscape?.();
+			return;
+		}
+
+		const left = ESCAPE_HITS_REQUIRED - this.escapeHits;
+		this.setLabel(
+			ESCAPE_LABEL_KEY,
+			this.appTheme.fg("warning", `esc ×${left} more to stop`),
+			"bottom",
+			"left",
+		);
+		this.tuiRef.requestRender();
+	};
+
+	/** drop any in-progress escape count and its hint (also called on agent_end) */
+	resetEscapeGate(): void {
+		if (this.escapeTimer) {
+			clearTimeout(this.escapeTimer);
+			this.escapeTimer = undefined;
+		}
+		if (this.escapeHits > 0) {
+			this.escapeHits = 0;
+			this.removeLabel(ESCAPE_LABEL_KEY);
+		}
 	}
 
 	/**
@@ -694,6 +804,10 @@ export default function (pi: ExtensionAPI) {
 		// suppress native spinner text — we render our own below the editor
 		ctx.ui.setWorkingMessage(" ");
 
+		// Escape now aborts — arm the 3-press gate.
+		agentRunning = true;
+		editor?.resetEscapeGate();
+
 		activity.phase = "thinking";
 		activity.turnIndex = 0;
 		activity.activeTools.clear();
@@ -731,6 +845,11 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		stopSpinner();
+		// Nothing left to abort — disarm, and clear any half-finished count so
+		// a stale "esc ×2 more to stop" hint can't linger over an idle editor.
+		agentRunning = false;
+		editor?.resetEscapeGate();
+
 		activity.phase = "idle";
 		activity.activeTools.clear();
 		statusRow?.remove(ACTIVITY_SEGMENT);

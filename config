@@ -120,7 +120,14 @@ scrollback-limit = 10000000
 clipboard-paste-bracketed-safe = true
 bold-is-bright = false
 minimum-contrast = 1.1
-confirm-close-surface = false
+
+# ── never lose a running pi/claude session to a stray ⌘W or ⌘Q ──
+# `always` = confirm on EVERY close/quit, even when shell integration thinks
+# nothing is running. `true` = confirm only when a process is detected as
+# running (less nagging, but depends on that detection being right).
+# ⌘Q quit confirmation is governed by this same setting — there is no
+# separate confirm-quit option in Ghostty.
+confirm-close-surface = always
 
 # ══════════════════════════════════════════════════════════════════
 # 📜 SCROLLBACK — fixes for long AI chat sessions (pi, claude code)

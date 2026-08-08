@@ -258,6 +258,27 @@ export function readAgentPrompt(filename: string): string {
 
 // --- spawn ---
 
+/**
+ * Attach a provider prefix to a bare model id so `--model` can never be
+ * ambiguous.
+ *
+ * pi 0.84.0 (#7327) stopped resolving a bare id to "the first catalog entry"
+ * and now errors when more than one AUTHENTICATED provider offers that id.
+ * With anthropic + cloudflare-ai-gateway + opencode + github-copilot all
+ * authenticated here, `claude-sonnet-5` matches four providers and every
+ * sub-agent spawn fails before it starts.
+ *
+ * Already-qualified ids ("anthropic/claude-opus-4-6") are returned untouched,
+ * so a caller that knows better always wins.
+ */
+function qualifyModel(modelId: string, preferredProvider: string): string {
+	if (modelId.includes("/")) return modelId;
+	const provider = preferredProvider.trim();
+	// an empty or nonsense prefix would produce "/model", which resolves to
+	// nothing — anthropic is the only provider our designated models live on.
+	return `${provider.length > 0 ? provider : "anthropic"}/${modelId}`;
+}
+
 export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 	const useRpc = !!config.followUp;
 	const routing = resolveSessionArgs(config.session);
@@ -289,7 +310,22 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			// parent model so subagents don't need separate Claude API access
 			if (!isAnthropicParent) {
 				resolvedModel = config.parentModel;
+			} else {
+				// PROVIDER-QUALIFY the designated model. pi 0.84.0 (#7327) turned a
+				// bare model id shared by several AUTHENTICATED providers into a hard
+				// error instead of silently taking the first catalog entry — so
+				// `--model claude-opus-4-6` now dies with "ambiguous across providers:
+				// anthropic/…, cloudflare-ai-gateway/…, opencode/…" and every
+				// sub-agent fails to launch. The tool constants stay bare model names;
+				// the provider is attached here, at the single seam they all pass
+				// through. Prefer the parent's own provider (it is the one proven to
+				// serve Claude in this session); fall back to plain anthropic when the
+				// parent carries no usable prefix.
+				resolvedModel = qualifyModel(resolvedModel, parentProvider);
 			}
+		} else {
+			// no parent context at all — still must not emit a bare, ambiguous id
+			resolvedModel = qualifyModel(resolvedModel, "");
 		}
 
 		args.push("--model", resolvedModel);
