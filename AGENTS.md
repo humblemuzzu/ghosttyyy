@@ -689,7 +689,7 @@ These replace pi's default tool implementations with customized versions:
 |------|------|---------|
 | **screenshot** | `screenshot.ts` | macOS capture (display / window / region) that returns an image already inside Claude's vision budget. See "Screenshot & Vision Budget" below |
 | **finder** | `finder.ts` | Concept-based search subagent — chain 3+ searches or search by concept |
-| **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (read+bash+screenshot) |
+| **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (read+bash+screenshot, web_search, read_web_page) |
 | **delegate** | `delegate.ts` | Spawns a resumable subagent (same model as parent) for parallel independent work. Replaced `task.ts` in `e4c8786` — `continueId` makes children resumable, which Task never was |
 | **librarian** | `librarian.ts` | External repository exploration via GitHub API |
 | **agent_message** | `agent-message.ts` | Inter-agent mailbox messaging. Registered via `setupAgentMessage(pi)`, not a plain `registerTool` |

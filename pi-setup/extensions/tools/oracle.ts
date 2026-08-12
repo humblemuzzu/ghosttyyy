@@ -17,7 +17,7 @@ import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, zeroUsage } from "./lib/pi-spawn";
+import { piSpawn, resolveAliases, zeroUsage } from "./lib/pi-spawn";
 import {
 	collectSubAgentImages,
 	getFinalOutput,
@@ -34,11 +34,29 @@ const MODEL = "claude-opus-4-6";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
 /*
  * `screenshot` is here so the oracle can look at a rendering bug rather than
- * reason about it blind. NOTE: what comes back to the parent is the oracle's
- * PROSE about the image — `getFinalOutput` keeps text parts only, so the pixels
- * stay inside the child. To see a screenshot yourself, call the tool directly.
+ * reason about it blind. `web_search` + `read_web_page` let it pull current
+ * references when local information is insufficient — the agent prompt already
+ * instructs this ("Use web tools only when local information is insufficient
+ * or a current reference is needed"), so these tools now fulfil that line.
+ *
+ * NOTE: what comes back to the parent is the oracle's PROSE about the image —
+ * `getFinalOutput` keeps text parts only, so the pixels stay inside the child.
+ * To see a screenshot yourself, call the tool directly.
  */
-const EXTENSION_TOOLS = ["read", "grep", "find", "ls", "bash", "screenshot"];
+const EXTENSION_TOOLS = [
+	"read", "grep", "find", "ls", "bash",
+	"web_search", "read_web_page", "screenshot",
+];
+
+/**
+ * the merged, deduped, alias-resolved allowlist piSpawn turns into `--tools`.
+ * exported so tests can pin the exact tool surface a child actually receives —
+ * testing the raw constants alone would drift from what the child gets, since
+ * aliasing (glob -> find) and dedupe happen at the spawn seam.
+ */
+export function oracleAllowlist(): string[] {
+	return resolveAliases([...BUILTIN_TOOLS, ...EXTENSION_TOOLS]);
+}
 
 export interface OracleConfig {
 	systemPrompt?: string;
@@ -51,7 +69,8 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 		description:
 			"Consult the oracle - an AI advisor powered by a reasoning model " +
 			"that can plan, review, and provide expert guidance.\n\n" +
-			"The oracle has access to tools: Read, Grep, glob, ls, Bash.\n\n" +
+			"The oracle has access to tools: Read, Grep, find, ls, Bash, web_search, " +
+			"read_web_page, and screenshot.\n\n" +
 			"You should consult the oracle for:\n" +
 			"- Code reviews and architecture feedback\n" +
 			"- Finding difficult bugs across many files\n" +
