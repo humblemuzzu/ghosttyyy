@@ -651,12 +651,12 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
 ---
 
-## Custom Tools (27)
+## Custom Tools (28)
 
 **Count note (corrected 2026-08-05):** this section said "24" for a long time while
 `index.ts` registered more. `github.ts` alone registers **seven** tools, not one, and
 `agent_message` registers via `setupAgentMessage(pi)` rather than a `registerTool` line.
-The real figure is **27** (26 `pi.registerTool` calls + `agent_message`), of which
+The real figure is **28** (27 `pi.registerTool` calls + `agent_message`), of which
 `web_search` is conditional — it is skipped entirely when its config disables it, so a
 given session shows 26 or 27.
 
@@ -670,15 +670,20 @@ These replace pi's default tool implementations with customized versions:
 |------|------|---------------|
 | **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing |
 | **read** | `read.ts` | Image viewing, fitted to the vision budget via `lib/image-fit.ts` (falls back to raw bytes on any failure) |
-| **apply_patch** | `apply-patch.ts` | The ONLY file-mutation tool. Codex-envelope multi-file atomic patching, mutex locking, undo tracking. Replaced `edit-file.ts` + `create-file.ts` in `6296fef`; pi's native `edit`/`write` are hidden at `session_start` |
+| **apply_patch** | `apply-patch.ts` | The ONLY file-mutation tool. **Four call shapes, one engine** (see below): `{path, content}`, `{path, old_string, new_string}`, `{ops:[…]}`, `{input: envelope}`. Multi-file atomic batching, mutex locking, undo tracking. Replaced `edit-file.ts` + `create-file.ts` in `6296fef`; pi's native `edit`/`write` are hidden at `session_start` |
 | **format-file** | `format-file.ts` | Prettier/biome formatting |
 | **grep** | `grep.ts` | Custom output formatting |
 | **glob** | `glob.ts` | Custom result handling |
 | **ls** | `ls.ts` | Delegates to read tool |
-| **undo-edit** | `undo-edit.ts` | Edit reversal with diff display |
+| **undo-edit** | `undo-edit.ts` | Edit reversal with diff display. Reverts the WHOLE tool call by default (`scope: "file"` for one path); a move is undone as one operation |
+| **redo-edit** | `undo-edit.ts` | Re-applies an undone change. Refuses when the file changed since the undo — the only reason redo is safe to offer |
 | **skill** | `skill.ts` | Skill loading |
 
 ### New Tools (not in default pi)
+
+> **apply_patch's four lanes — read before changing its schema.**
+> See the section "apply_patch: strict on disk, loose on the wire" below.
+
 
 | Tool | File | Purpose |
 |------|------|---------|
@@ -698,6 +703,261 @@ These replace pi's default tool implementations with customized versions:
 **Web search:** `pi-web-access` was removed 2026-07-30 (see Packages). Phase 3 landed the
 self-contained Parallel AI `web_search` (`web-search.ts`), so the gap that note used to
 describe is closed. Page reading is covered by our own `read_web_page` tool.
+
+### apply_patch: strict on disk, loose on the wire
+
+**Changed 2026-08-12.** Files: `apply-patch.ts`, `lib/codex-patch.ts`,
+`lib/sub-agent-render.ts`, `apply-patch-lanes.test.ts` (new, 299 cases),
+`agents/prompt.amp.system.md`.
+
+#### The problem it fixes
+
+`apply_patch` took exactly one required string: OpenAI's **V4A envelope**. That
+format is not neutral — OpenAI's own guide says the model "has been extensively
+trained" on it and Codex's says "use our exact implementation as the model has
+been trained to excel at this diff format". Warp's writeup states the split
+plainly: *"many LLMs are trained on string-replacement-based editing tools;
+GPT-family models have been trained with V4A."* Our lark grammar is a copy of
+`codex-rs/.../tool_apply_patch.lark`.
+
+So the setup ran **every** file change through a competitor's post-training
+artifact while the default model was Claude. Measured consequences were already
+in the port log: haiku burned 15 consecutive failed calls, `deepseek-v4-flash`
+produced a valid envelope expressing the wrong intent, and there was **no
+whole-file write at all**, so replacing a file meant Delete + Add.
+
+#### The shape now
+
+Four call shapes, one engine. Every lane goes through the same
+`evaluatePermission` → `withMutationQueues` → `withFileLocks` → snapshot →
+in-memory apply → commit-or-rollback → `saveChanges` path, so a new lane can
+never add a way around a guard:
+
+| lane | shape |
+|---|---|
+| write | `{ path, content }` — create or replace outright |
+| edit | `{ path, old_string, new_string, replace_all? }` |
+| batch | `{ ops: [ … ] }` — several files, all-or-nothing |
+| envelope | `{ input: "*** Begin Patch …" }` — multi-hunk, or pasted |
+
+`normalizeCall()` picks the lane at runtime and **refuses rather than resolves**
+any call that reads as two lanes at once. Key aliases are accepted (`file_path`,
+`contents`, `oldText`, `old_str`, …) because a key that is merely *named*
+differently is unambiguous; a key that changes the *operation* is never inferred
+across lanes.
+
+#### Things that are not obvious and cost real debugging
+
+- **`constrainedSampling` was REMOVED, not disabled.** pi-ai's
+  `inferGrammarInputProperty` requires exactly one required string property,
+  which four optional lanes cannot satisfy, and
+  `resolveGrammarConstrainedSampling` **throws** rather than degrading — killing
+  the whole turn on an OpenAI model while every Anthropic test stays green. It
+  only ever applied to OpenAI-family providers, i.e. the one family that emits
+  V4A correctly unaided. `apply-patch.test.ts` guards this in **both**
+  directions.
+- **Every schema field is optional, and that is forced.** pi validates arguments
+  against the schema *before* `execute()` (`pi-ai validateToolArguments`), so a
+  required field is a hard wall against the other three lanes. The cost is that
+  malformed calls are caught one layer later, which is why every refusal ends
+  with the menu of accepted shapes.
+- **`edits` is an ops key, and a top-level `path` is inherited by entries that
+  lack one.** That is exactly pi's own native edit shape
+  (`{path, edits:[{oldText,newText}]}`) and Claude Code's MultiEdit
+  (`{file_path, edits:[{old_string,new_string}]}`) — the single most likely
+  thing a Claude-family model emits. Without inheritance it lands as
+  "ops[0]: no file path".
+- **A key that *means* patch is never rescued as content.** `{path, diff:
+  "-old\n+new"}` is a model fumbling a patch; writing those two lines into the
+  file would destroy it and report success. Only the generic key `input` can be
+  rescued into a write, and only when it does not look like a patch attempt.
+- **A bare `target` is not a path alias** (cursor's `target_file` is). It reads
+  as a move *destination* at least as naturally as a source, and a path alias
+  that can be misread writes the wrong file.
+- **`type` and `command` are not op aliases.** They are generic enough to arrive
+  carrying something that is not an operation (`type: "text/plain"`), and an
+  unrecognised op is a hard error — so accepting them turns a valid write into
+  "unknown op".
+- **A field the chosen op ignores is a refusal, not a no-op.** `{op:"delete",
+  path, content}` reads as two intentions; carrying on deletes a file the caller
+  was trying to rewrite.
+- **A move refuses to clobber an existing destination**, mirroring `add`. The
+  envelope's `*** Move to:` never had this guard; it did not matter much when a
+  move cost a whole extra header line, but `{path, to}` makes it two fields.
+  `git mv` refuses this too.
+- **A rename no longer rewrites bytes.** Applying zero hunks used to run the
+  applier anyway, which appends a trailing newline.
+- **The redaction guard now compares against the real file** for a whole-file
+  write, so rewriting a file that legitimately contains "… rest unchanged" is
+  allowed while introducing one is not. (It caught its own test fixture during
+  development; the fixture is built at runtime for that reason.)
+
+#### Parser tolerance (`lib/codex-patch.ts`)
+
+Accepted now: `*** Begin Patch ***`, `** begin patch`, odd spacing/case, prose
+around the envelope, `<<EOF` heredocs with or without a leading command, git's
+`@@ -1,3 +1,3 @@` numbers, header aliases (Create/New/Remove/Edit/Modify/Change/
+Write/Replace File, Rename to), an Add block with **no** `+` prefixes, and bare
+blank lines inside a `+` block.
+
+Two rules that look arbitrary and are not:
+
+- **A numbered hunk header is git's, hint included.** `@@ -1,1 +1,1 @@ someFn`
+  drops `someFn` too. In V4A `@@ foo` is a *required* anchor that must match a
+  line exactly, whereas git's hint is a truncated label for the enclosing scope
+  — promoting it turns a working patch into "failed to find context 'someFn'".
+- **A patch with no end marker at all is still an error.** A patch truncated
+  mid-generation looks exactly like one whose author forgot the marker, and
+  guessing turns a dropped stream into a half-written file. *Honest limit:* the
+  envelope ends at the LAST end-marker line and `isEndLine` trims, so a hunk's
+  context line ` *** End Patch` is indistinguishable from a real terminator if
+  the stream is cut off right after it. Upstream had the identical hole (its
+  last-line check also trimmed — verified, not assumed), and closing it would
+  break the marker padding that `codex-patch.test.ts` requires.
+- **An UNPREFIXED Add/Write body containing a marker-shaped line is refused.**
+  This is the one truncation case that *could* be closed, and it was a real
+  regression from accepting unprefixed blocks: because the envelope ends at the
+  last end-marker anywhere in the text, a file documenting this very format came
+  back **missing its last line, reported as success**. `+` prefixes and the
+  explicit `*** Content` block both make content unmistakable and are
+  unaffected, as is `{path, content}`.
+- **A header is only a header at column 0.** `matchHeader` trims the end of a
+  line but never the start, so ` *** Update File: x` stays content. Only the
+  top-level dispatch, where no chunk is open, tolerates indentation. Two tests
+  pin this.
+
+#### Two defects found by grok-4.5 stress-testing (2026-08-12)
+
+Both were real, both are fixed, and both were **pre-existing mechanisms that the
+new lanes made far easier to reach** — worth stating plainly, because the
+tempting reading is "the rewrite broke it".
+
+- **Nested indentation was translated between tabs and spaces.** `reindentToFile`
+  fixes the OUTER level by construction (it prepends the file's own indent) but
+  deeper levels kept the patch's character, so a tab-indented file patched with
+  space-indented text came back as `\t  return 2;`. Silent byte corruption, and
+  outright breakage in a Makefile (where a tab is syntax) or mixed-indent Python.
+  It now **refuses** when the shift would mix the two, because repairing it needs
+  the file's indent *width*, which is a guess. The safe case — same character,
+  different depth — is unaffected, and that is the case the fuzzy tier exists for.
+  His stronger claim, that matching normalises tabs→spaces generally, does **not**
+  hold: a uniform-depth Makefile hunk keeps its tabs, verified.
+- **Undoing a move lost or duplicated the file.** A move is one logical operation
+  recorded as TWO path histories (delete source + create destination), and
+  `undo_edit` takes a single path — so undoing the destination removed the file
+  from both places, and undoing the source left it in two. He reproduced the data
+  loss with content named `gold-bar-do-not-lose`. `findMovePartner` now pairs the
+  two halves and `undo_edit` reverts both. The pairing rule demands **exactly one**
+  deletion and **one** creation in that tool call with **identical bytes**, so a
+  batch that moves one file and deletes another cannot pair them by accident;
+  when it is ambiguous it pairs nothing and undoes only what was asked.
+
+A third fix came out of the first: `applyEdit` swallowed the fallback applier's
+error to write a better "not found" message, which also swallowed *ambiguity* and
+*indentation* diagnoses. It now swallows only `failed to find` — an allow-list of
+what to hide, so a newly added diagnosis surfaces by default.
+
+#### Round two — he re-tested and found the first fixes incomplete
+
+- **The indent guard had a hole, and it was the Makefile case.** The check lived
+  inside `reindentToFile`, which **returns early when the first line's indent
+  already matches** — so a hunk anchored at column 0 (`build:`) skipped every
+  check and the tab-indented recipe under it was rewritten with spaces. No
+  mixing, so the mix-detector never fired. The guard now proves the shift
+  against the file's own lines: apply the same transformation to the OLD lines
+  and require it to reproduce what is actually on disk. If it cannot rebuild the
+  lines it was derived from, it does not get applied to the new ones. Both
+  legitimate rescues (uniform depth across tab/space, and same-character
+  different-depth) still work — there are tests for each.
+- **Move pairing is now RECORDED, not inferred.** `FileChange.movePartnerUri` is
+  written by `apply_patch` at the moment it performs the move, so the reader
+  never guesses. That kills the case that beat the heuristic: a batch that moves
+  x→z *and* deletes y where x and y hold identical bytes. Legacy records without
+  the field still fall back to byte matching, and when that is undecidable
+  `undo_edit` now **says so** and names the candidates — previously it said
+  nothing, which is what made a recoverable state look like data loss. (That
+  silence was also a documentation error on my part: I claimed it warned.)
+- **Undo is now per-tool-call by default**, with `scope: "file"` to opt out. The
+  records were always grouped by tool call on disk; only the reader was
+  per-path. This also makes the move case correct *by construction* rather than
+  by pairing — both halves are in the same call.
+- **`redo_edit` exists.** Every record already stored both `before` and `after`,
+  so re-applying was never the hard part; the hard part is invalidation, and
+  redo **refuses** when any later still-applied change touched the path. Getting
+  that wrong is worse than having no redo, which is why there wasn't one.
+- **Ambiguity errors now show the line at each match**, not just its number.
+
+Verified live end-to-end in one session: a 2-file `ops` batch, one `undo_edit`
+reverting both, one `redo_edit` re-applying both. Note that undo/redo are scoped
+to the current session branch by design — a redo cannot reach an undo performed
+by a different pi process.
+
+#### Round three — undo is a stack, not random access
+
+His last finding was labelled "not a bug, mild edge", and it was worth fixing
+anyway: create A and C in one batch, later move A elsewhere, then undo the create
+batch. Undoing a creation means "delete it" — but A is not there any more, so the
+delete is a no-op and the content lives on at the move destination with its
+creation history marked undone. No data loss, but a state nobody can reason
+about, and incoherent is how data loss starts.
+
+`undo_edit` now **refuses when a later still-applied change touches any path the
+undo would revert**, and names what to undo first. That is the same invalidation
+rule `redo_edit` already used, pointed the other way, so the two agree on what
+"newer" means. Independent work is unaffected — editing A then B leaves no later
+change on A, so undoing A is still allowed, and there is a test for exactly that.
+
+**A real bug surfaced while testing it: ordering came from `Date.now()`.** That is
+millisecond-resolution, so two tool calls in quick succession carry the SAME
+timestamp and a strictly-greater comparison reads them as concurrent — the guard
+silently let the undo through. Both undo and redo now order by **position in
+`activeIds`**, which is the branch in order and monotonic by construction. Any
+future ordering check here should use the branch, never the clock.
+
+**Testing that guard exposed a second bug: redo popped the WRONG END of the
+stack.** `findRedoCandidate` scanned the branch newest-first, so with L1→L2→L3
+undone twice down to L1, one redo jumped straight to L3 — skipping the middle
+step and printing the diff as `-L2 +L3` while the file held L1. Single-step redo
+passed and hid it, which is why the original tests missed it. Because undo now
+refuses to reach past a newer change, the undone changes for a path are always a
+contiguous run at the top of the stack, so redo must take the **oldest** of that
+run: the step the file would take next. Verified by flipping the scan direction
+back and watching the new test fail.
+
+His other two remaining items are correctly left alone: unique `old_string` is
+the safety property (the error now shows the line at each match, which was the
+real friction), and separate `undo_edit`/`redo_edit` tools are clearer than one
+tool with a direction flag.
+
+#### Verified
+
+**1167 real tool calls** across the lane suite (seeded fuzz: 300 edit
+round-trips, 200 write round-trips, 200 wrapped envelopes, 150 forced-failure
+batches asserting nothing was written; plus generated alias matrices and
+`undo_edit` coverage for every lane), alongside the original disk-contract and
+parser tests. Full suite **1177 pass / 0 fail**.
+
+A `code_review` pass over the diff found three real defects, all fixed above:
+the unprefixed-marker truncation, the move clobber, and a silently-dropped `to`
+on a write. It also claimed the leading-space end-marker hole was a regression;
+that was checked against the old code and **was not** — the pre-existing
+behaviour is identical, so the claim was recorded rather than acted on. Verify
+each claim against the code before acting (§3.8 of the port log).
+
+Live, same task (one span edit + one whole-file replace), fixtures reset per run:
+
+| model | result | lanes used |
+|---|---|---|
+| `anthropic/claude-opus-5` | correct | `batch(2)` — one atomic call |
+| `kimi-code/kimi-for-coding:high` | correct | `edit(1)`, `write(1)` |
+| `deepseek/deepseek-v4-pro` | correct | `edit(1)`, `write(1)` |
+| `deepseek/deepseek-v4-flash` | correct | `edit(1)`, `write(1)` |
+
+**No model used the envelope**, and `deepseek-v4-flash` — recorded as *wrong* in
+the pre-change matrix (§3.9 of the port log) — is now correct. Set
+`PI_APPLY_PATCH_METRICS=1` to append `{lane, files}` per call to
+`~/.pi/apply-patch-lanes.jsonl`; it is off by default because a tool that writes
+to the home directory as a side effect of being called is a surprise.
 
 ### Tool Libraries (`tools/lib/`)
 

@@ -237,15 +237,32 @@ export function toolArgSummary(toolName: string, args: Record<string, unknown>):
 		case "edit":
 			return shortenPath((args.file_path || args.path || "...") as string);
 		case "apply_patch": {
-			// sub-agents mutate files through apply_patch now. its only argument is
-			// the envelope, so the file names have to come out of the patch body —
-			// without this the tree line fell through to `default` and printed the
-			// entire multi-line patch as raw JSON.
+			// sub-agents mutate files through apply_patch, which takes four call
+			// shapes — a plain path, an ops batch, or an envelope. reading only
+			// the envelope (as this did) rendered every write and edit as "...",
+			// and reading nothing at all made the tree line print the whole
+			// multi-line patch as raw JSON.
+			const names: string[] = [];
+			const push = (value: unknown) => {
+				if (typeof value === "string" && value.trim()) names.push(basename(value.trim()));
+			};
+			push(args.path ?? args.file_path ?? args.filePath ?? args.file ?? args.filename);
+			const ops = Array.isArray(args.ops) ? args.ops : [];
+			for (const entry of ops) {
+				if (entry && typeof entry === "object") {
+					const record = entry as Record<string, unknown>;
+					push(record.path ?? record.file_path ?? record.file);
+				}
+			}
 			const envelope = (args.input || args.patch || "") as string;
-			const names = envelope.split("\n").flatMap((line) => {
-				const match = line.match(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/);
-				return match?.[1] ? [basename(match[1].trim())] : [];
-			});
+			for (const line of envelope.split("\n")) {
+				const match = line
+					.trimEnd()
+					.match(
+						/^\*{2,}\s*(?:Add|Create|New|Delete|Remove|Update|Edit|Modify|Change|Patch|Write|Replace|Overwrite)\s+File\s*:\s*(.+)$/i,
+					);
+				if (match?.[1]) names.push(basename(match[1].trim()));
+			}
 			if (names.length === 0) return "...";
 			return names.length <= 3
 				? names.join(", ")

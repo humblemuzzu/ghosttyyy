@@ -24,6 +24,7 @@ His pi lives at `/tmp/dots/user/pi/packages/{core,extensions}/`.
 | 4a | `apply_patch` ported | done |
 | **4b** | **cutover: `edit`/`write` deleted and natives hidden** | **done** |
 | **4c** | **`delegate` replaces `Task` (resumable sub-agents)** | **done** |
+| **4d** | **four call lanes; grammar sampling dropped (2026-08-12)** | **done** |
 | 5 | `workflow` + `workflow-api` (strip `lookAt`) | pending |
 | 6 | optional: `emil-design-eng` skill | pending |
 
@@ -237,6 +238,17 @@ tests stayed green.
    forces a syntactically valid envelope at the token level.
 3. Guarded by `apply-patch.test.ts` → "schema satisfies pi-ai's
    grammar-sampling contract".
+
+> **SUPERSEDED 2026-08-12 — read this before acting on the three rules above.**
+> `apply_patch` now takes four call shapes and `constrainedSampling` has been
+> REMOVED from it, so rule 2's tradeoff was taken the other way: the schema
+> serves every model instead of the one family with grammar support. Rule 1
+> still holds and matters more, not less. Rule 3's test was inverted — it now
+> asserts the schema and `constrainedSampling` can never *disagree*, in both
+> directions, so re-adding grammar with an incompatible schema fails loudly
+> instead of at runtime on OpenAI only. Full rationale and the live
+> cross-model matrix: AGENTS.md → "apply_patch: strict on disk, loose on the
+> wire".
 
 **Cross-provider matrix** (same task: one-line edit via apply_patch, exact file
 comparison). Run this after any change to the tool's schema, description or

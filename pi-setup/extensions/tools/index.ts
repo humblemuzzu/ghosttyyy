@@ -20,7 +20,7 @@ import { createApplyPatchTool } from "./apply-patch";
 import { createGrepTool } from "./grep";
 import { createGlobTool } from "./glob";
 import { createBashTool } from "./bash";
-import { createUndoEditTool } from "./undo-edit";
+import { createRedoEditTool, createUndoEditTool } from "./undo-edit";
 import { createFormatFileTool } from "./format-file";
 import { createSkillTool } from "./skill";
 import { createScreenshotTool } from "./screenshot";
@@ -71,6 +71,9 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createGlobTool());
 	pi.registerTool(createBashTool());
 	pi.registerTool(createUndoEditTool());
+	// redo is only safe because it refuses when the file moved on since the
+	// undo; see the invalidation check in undo-edit.ts.
+	pi.registerTool(createRedoEditTool());
 	pi.registerTool(createFormatFileTool());
 	pi.registerTool(createSkillTool());
 	// screenshot owns the ONLY sanctioned path from screen pixels to a vision

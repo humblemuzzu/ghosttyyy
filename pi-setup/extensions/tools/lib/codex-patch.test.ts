@@ -64,9 +64,19 @@ describe("parseCodexPatch", () => {
     expect(() => parseCodexPatch(`${BEGIN}\n${END}`)).toThrow(
       "no file operations",
     );
-    expect(() => parseCodexPatch(`${BEGIN}\n${ADD}x\nplain\n${END}`)).toThrow(
-      "must start with '+'",
-    );
+    // a PARTIALLY prefixed block is a slip, not a style — still rejected.
+    expect(() =>
+      parseCodexPatch(`${BEGIN}\n${ADD}x\n+kept\nplain\n${END}`),
+    ).toThrow("must start with '+'");
+  });
+
+  it("takes an unprefixed Add block verbatim", () => {
+    // upstream rejected this outright. a model that omits every '+' has made a
+    // style choice with exactly one sane reading; one that omits SOME has made
+    // a typo, which is the case above.
+    expect(parseCodexPatch(`${BEGIN}\n${ADD}x\nplain\n${END}`)).toEqual([
+      { type: "add", path: "x", content: "plain\n" },
+    ]);
   });
 
   it("treats marker-like lines with a context prefix as file content", () => {

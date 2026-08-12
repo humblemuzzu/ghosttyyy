@@ -50,8 +50,13 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { withFileMutationQueue, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
-import { applyPatchChunks, parseCodexPatch, type PatchOperation } from "./lib/codex-patch";
-import { requireParam } from "./lib/params";
+import {
+	applyPatchChunks,
+	isBeginLine,
+	parseCodexPatch,
+	stripHeredoc,
+	type PatchChunk,
+} from "./lib/codex-patch";
 import { resolveToAbsolute } from "./lib/fs";
 import { saveChanges, simpleDiff } from "./lib/file-tracker";
 import { withFileLocks } from "./lib/mutex";
@@ -62,34 +67,9 @@ import { computeDiffStats, formatStats, sumStats } from "./lib/diff-stats";
 import { getContainer, getText } from "./lib/tui";
 
 /**
- * lark grammar for providers that support constrained sampling (OpenAI).
- * harmless elsewhere — pi only forwards it when the provider asks for it.
- */
-const APPLY_PATCH_GRAMMAR = String.raw`start: begin_patch hunk+ end_patch
-begin_patch: "*** Begin Patch" LF
-end_patch: "*** End Patch" LF?
-
-hunk: add_hunk | delete_hunk | update_hunk
-add_hunk: "*** Add File: " filename LF add_line+
-delete_hunk: "*** Delete File: " filename LF
-update_hunk: "*** Update File: " filename LF change_move? change?
-
-filename: /(.+)/
-add_line: "+" /(.*)/ LF -> line
-
-change_move: "*** Move to: " filename LF
-change: (change_context | change_line)+ eof_line?
-change_context: ("@@" | "@@ " /(.+)/) LF
-change_line: ("+" | "-" | " ") /(.*)/ LF
-eof_line: "*** End of File" LF
-
-%import common.LF
-`;
-
-/**
- * the envelope format, shown to the model in the schema AND repeated in every
- * format error. models do not reliably infer it from prose — measured: haiku
- * burned 15 consecutive failed calls against a description with no example.
+ * the envelope format, repeated in every format error. models do not reliably
+ * infer it from prose — measured: haiku burned 15 consecutive failed calls
+ * against a description with no example.
  */
 const ENVELOPE_EXAMPLE = `*** Begin Patch
 *** Update File: src/app.ts
@@ -100,39 +80,141 @@ const ENVELOPE_EXAMPLE = `*** Begin Patch
 *** End Patch`;
 
 /*
- * SCHEMA SHAPE IS CONSTRAINED BY GRAMMAR SAMPLING — do not "improve" it.
+ * FOUR WAYS TO SAY THE SAME THING — and why the schema looks like this.
  *
- * `constrainedSampling` below requires the schema to have EXACTLY ONE required
- * string property (pi-ai `inferGrammarInputProperty`, constrained-sampling.js
- * line 38). Adding optional alias properties is fine; making `input` optional
- * is NOT — `required` becomes [] and every request on an OpenAI-family model
- * dies with "cannot use grammar constrained sampling".
+ * This tool used to take exactly one required string: the V4A envelope. That
+ * is OpenAI's format, which their models were trained on and no other model
+ * was, so every non-OpenAI model paid a translation tax on every edit and the
+ * weak ones simply failed (see 2026-07-30-bdsqqq-port.md §3.6/§3.9).
  *
- * That failure is invisible on Anthropic: pi-ai returns early when the provider
- * has no grammar support (same file, line 68), so the schema is never checked.
- * It surfaced only on `openai-codex/gpt-5.6-sol`.
+ * So the wire is now loose and the disk stays brutal. Four lanes, all landing
+ * in the same engine — same permission check, same locks, same snapshot,
+ * same all-or-nothing commit, same undo records:
  *
- * `additionalProperties` is deliberately NOT false, so a model that adds a
- * stray key reaches execute() (where normalizeEnvelope can explain itself)
- * instead of being rejected by the validator with a generic message.
+ *   write     { path, content }
+ *   edit      { path, old_string, new_string }
+ *   batch     { ops: [ ... ] }
+ *   envelope  { input: "*** Begin Patch ..." }
+ *
+ * EVERY FIELD IS OPTIONAL, and that is forced, not sloppy: the lanes are
+ * mutually exclusive, so no single field can be required without blocking the
+ * other three. pi validates arguments against this schema BEFORE execute()
+ * runs (pi-ai `validateToolArguments`), so a required field is a hard wall,
+ * not a hint. The cost is that a malformed call is caught one layer later, in
+ * `normalizeCall`, which is why its errors are written to be actionable.
+ *
+ * WHY `constrainedSampling` IS GONE (deliberate, do not re-add without reading
+ * this). Grammar sampling forces OpenAI models to emit a syntactically valid
+ * envelope at the token level, and it is genuinely good — but pi-ai's
+ * `inferGrammarInputProperty` requires the schema to have EXACTLY ONE required
+ * string property. That is mutually exclusive with the four lanes above. It
+ * only ever applied to OpenAI-family providers (`resolveGrammarConstrainedSampling`
+ * returns early elsewhere), i.e. to the one family that emits this format
+ * correctly unaided. Declaring it with a schema it cannot satisfy does not
+ * degrade — it THROWS and kills the whole turn — so it is removed, not left in.
  */
-const ApplyPatchParameters = Type.Object({
-	input: Type.String({
-		description: [
-			"The ENTIRE patch envelope as ONE string. This is the only parameter:",
-			"do not pass a file path — every path lives inside the envelope on a",
-			"'*** Add File:' / '*** Update File:' / '*** Delete File:' line.",
-			"",
-			"Must begin with '*** Begin Patch' and end with '*** End Patch'.",
-			"NOT a unified diff: no ---/+++ headers, and '@@' carries no line numbers.",
-			"",
-			ENVELOPE_EXAMPLE,
-		].join("\n"),
-	}),
+const OpParameters = Type.Object({
+	op: Type.Optional(
+		Type.String({
+			description:
+				"write | edit | delete | move | add. Optional: inferred from the fields present.",
+		}),
+	),
+	path: Type.Optional(Type.String({ description: "File to change." })),
+	content: Type.Optional(
+		Type.String({ description: "write: the file's complete new contents." }),
+	),
+	old_string: Type.Optional(
+		Type.String({ description: "edit: exact text to replace. Must be unique in the file." }),
+	),
+	new_string: Type.Optional(
+		Type.String({ description: "edit: replacement text. Use \"\" to delete the old text." }),
+	),
+	replace_all: Type.Optional(
+		Type.Boolean({ description: "edit: replace every occurrence instead of refusing when ambiguous." }),
+	),
+	to: Type.Optional(Type.String({ description: "move: destination path." })),
 });
 
-/** parameter names models actually reach for, canonical first. */
-const INPUT_PARAMS = ["input", "patch", "envelope", "diff", "content"] as const;
+const ApplyPatchParameters = Type.Object({
+	path: Type.Optional(
+		Type.String({ description: "The file to write or edit. Pair with content, or with old_string + new_string." }),
+	),
+	content: Type.Optional(
+		Type.String({ description: "Complete new contents for `path`. Creates the file or replaces it wholesale." }),
+	),
+	old_string: Type.Optional(
+		Type.String({ description: "Exact text to find in `path`. Must appear exactly once unless replace_all is set." }),
+	),
+	new_string: Type.Optional(
+		Type.String({ description: "Text to put in place of old_string. Pass \"\" to delete it." }),
+	),
+	replace_all: Type.Optional(
+		Type.Boolean({ description: "Replace every occurrence of old_string instead of refusing when it is ambiguous." }),
+	),
+	op: Type.Optional(
+		Type.String({ description: "Force a single operation: write | edit | delete | move | add. Rarely needed." }),
+	),
+	to: Type.Optional(Type.String({ description: "Destination path when op is move." })),
+	ops: Type.Optional(
+		Type.Array(OpParameters, {
+			description:
+				"Several operations applied as ONE all-or-nothing batch. Use this to change multiple files at once.",
+		}),
+	),
+	input: Type.Optional(
+		Type.String({
+			description: [
+				"A whole Codex/V4A patch envelope as one string, for multi-hunk edits",
+				"or a patch pasted from elsewhere. Paths live inside it, on the",
+				"'*** Add File:' / '*** Update File:' / '*** Delete File:' lines.",
+				"NOT a unified diff: no ---/+++ headers, and '@@' needs no line numbers.",
+				"",
+				ENVELOPE_EXAMPLE,
+			].join("\n"),
+		}),
+	),
+});
+
+/*
+ * Key spellings models actually reach for. Canonical first.
+ *
+ * This is the `lib/params.ts` idea widened: the point is never to guess what
+ * an argument MEANS, only to accept what it is CALLED. A key that changes the
+ * operation (content vs old_string) is never inferred across lanes — a call
+ * that names two lanes is rejected, not reconciled.
+ */
+const INPUT_KEYS = ["input", "patch", "envelope", "diff", "patch_text", "patchText"] as const;
+/*
+ * `target_file` is cursor's spelling and is unambiguous. a bare `target` is
+ * NOT accepted, deliberately: it reads as a move DESTINATION at least as
+ * naturally as a source, and a path alias that can be misread is worse than a
+ * missing one — the miss produces an error, the misread produces a wrong file.
+ */
+const PATH_KEYS = [
+	"path",
+	"file_path",
+	"filePath",
+	"file",
+	"filename",
+	"fileName",
+	"target_file",
+] as const;
+const CONTENT_KEYS = [
+	"content",
+	"contents",
+	"new_content",
+	"new_contents",
+	"newContent",
+	"file_text",
+	"text",
+	"body",
+] as const;
+const OLD_KEYS = ["old_string", "old_str", "oldText", "old_text", "old", "search", "before"] as const;
+const NEW_KEYS = ["new_string", "new_str", "newText", "new_text", "new", "replace", "after"] as const;
+const OPS_KEYS = ["ops", "operations", "edits", "changes"] as const;
+const TO_KEYS = ["to", "move_to", "moveTo", "new_path", "newPath", "destination", "dest"] as const;
+const REPLACE_ALL_KEYS = ["replace_all", "replaceAll", "all", "global"] as const;
 
 interface Snapshot {
 	path: string;
@@ -154,6 +236,353 @@ interface PlannedChange extends ApplyPatchChange {
 
 export interface ApplyPatchDetails {
 	changes: ApplyPatchChange[];
+	lane?: Lane;
+}
+
+// --- what the caller meant ---
+
+/** which of the four call shapes was used; reported in details, and logged. */
+export type Lane = "write" | "edit" | "delete" | "move" | "batch" | "envelope";
+
+/**
+ * the single internal vocabulary. every lane is translated into this before
+ * anything touches disk, so there is exactly ONE apply loop, ONE rollback path
+ * and ONE set of safety guards — adding a lane can never add a way to bypass
+ * them.
+ *
+ * `add` and `write` are deliberately different operations, not a flag: `add`
+ * refuses to overwrite (it is the envelope's create-a-new-file op, and a model
+ * that thinks a file is new must not destroy it), while `write` means replace
+ * and says so in its name.
+ */
+type Intent =
+	| { type: "add"; path: string; content: string }
+	| { type: "write"; path: string; content: string }
+	| { type: "delete"; path: string }
+	| { type: "edit"; path: string; old: string; new: string; replaceAll: boolean }
+	| { type: "update"; path: string; movePath?: string; chunks: PatchChunk[] };
+
+/*
+ * `type` and `command` are NOT here. they are generic enough to arrive with a
+ * value that is not an operation at all (`type: "text/plain"`), and an
+ * unrecognised op is a hard error — so accepting them would turn a valid write
+ * into "unknown op". a missing op is inferred from the fields instead.
+ */
+const OP_KEYS = ["op", "operation", "action", "kind"] as const;
+
+/**
+ * what a single record can ask for. deliberately NOT `Intent["type"]`: there is
+ * no `update` here, because multi-hunk updates only ever arrive through the
+ * envelope. keeping the two vocabularies separate is what makes the switch
+ * below exhaustive, so adding an intent cannot silently fall through it.
+ */
+type FieldOpKind = "write" | "add" | "edit" | "delete" | "move";
+
+/** explicit `op` spellings -> our vocabulary. */
+const OP_SYNONYMS: Record<string, FieldOpKind> = {
+	write: "write", replace: "write", overwrite: "write", set: "write", put: "write",
+	save: "write", create_file: "write", write_file: "write",
+	add: "add", create: "add", new: "add",
+	edit: "edit", str_replace: "edit", replace_string: "edit", substitute: "edit",
+	modify: "edit", change: "edit", update: "edit", patch: "edit",
+	delete: "delete", remove: "delete", rm: "delete", del: "delete", unlink: "delete",
+	move: "move", rename: "move", mv: "move",
+};
+
+/**
+ * read a string field under any of its spellings.
+ *
+ * `""` counts as PRESENT — this is the whole reason `lib/params.ts`'s
+ * `resolveParam` cannot be reused here. Emptiness is meaningful in both lanes
+ * that carry text: `new_string: ""` deletes the matched text, and
+ * `content: ""` truncates a file. Treating empty as absent would silently turn
+ * both into "you forgot an argument".
+ */
+function pickString(
+	params: Record<string, unknown>,
+	keys: readonly string[],
+): { key: string; value: string } | undefined {
+	for (const key of keys) {
+		const value = params[key];
+		if (typeof value === "string") return { key, value };
+	}
+	return undefined;
+}
+
+function pickBoolean(params: Record<string, unknown>, keys: readonly string[]): boolean {
+	for (const key of keys) {
+		const value = params[key];
+		if (typeof value === "boolean") return value;
+		// some providers stringify booleans on the way out
+		if (value === "true") return true;
+		if (value === "false") return false;
+	}
+	return false;
+}
+
+/**
+ * read the ops array, tolerating the two shapes providers mangle it into.
+ *
+ * A JSON-STRINGIFIED ARRAY IS NOT HYPOTHETICAL: `pi-tasks` was removed from
+ * this setup (2026-07-30) precisely because array parameters arrived as
+ * strings and every call it gated failed. Accepting that here costs four
+ * lines; refusing it costs the model a turn it cannot debug.
+ */
+function pickOps(params: Record<string, unknown>): unknown[] | undefined {
+	for (const key of OPS_KEYS) {
+		const value = params[key];
+		if (Array.isArray(value)) return value;
+		if (value && typeof value === "object") return [value];
+		// the length bound matters because `renderCall` reaches this on every
+		// frame while a call streams in: an unbounded parse attempt per frame
+		// would make a large patch render slowly.
+		if (typeof value === "string" && value.length < 1_000_000 && value.trim().startsWith("[")) {
+			try {
+				const parsed = JSON.parse(value);
+				if (Array.isArray(parsed)) return parsed;
+			} catch {
+				// not JSON after all; fall through so the shape error can explain
+			}
+		}
+	}
+	return undefined;
+}
+
+/** does this text look like SOMEONE'S attempt at a patch, rather than file content? */
+function looksLikePatchAttempt(text: string): boolean {
+	return /^\s*(?:\*{2,}\s*(?:Begin|End|Add|Update|Delete|Write|Create|Remove|Edit)\b|---\s|\+\+\+\s|diff --git|@@)/m.test(
+		text,
+	);
+}
+
+function quoteKeys(params: Record<string, unknown>): string {
+	return JSON.stringify(Object.keys(params));
+}
+
+/** the menu. every rejection ends with this, so one failed call is enough. */
+const SHAPES = [
+	'  write     { "path": "f.ts", "content": "<the whole file>" }',
+	'  edit      { "path": "f.ts", "old_string": "<exact text>", "new_string": "<replacement>" }',
+	'  delete    { "path": "f.ts", "op": "delete" }',
+	'  move      { "path": "old.ts", "to": "new.ts" }',
+	'  batch     { "ops": [ { ... }, { ... } ] }   // one atomic all-or-nothing change',
+	'  envelope  { "input": "*** Begin Patch\\n*** Update File: f.ts\\n@@\\n-old\\n+new\\n*** End Patch" }',
+].join("\n");
+
+function shapeError(message: string, params: Record<string, unknown>): Error {
+	return new Error(
+		`${message}\n\nyou sent keys: ${quoteKeys(params)}\n\naccepted shapes:\n${SHAPES}`,
+	);
+}
+
+/**
+ * one entry of the ops array, or the whole call when it names a single file.
+ *
+ * NEVER infers across lanes. `content` means write, `old_string` means edit,
+ * and a record naming both is an error rather than a preference — silently
+ * picking one is how a targeted edit becomes a whole-file overwrite.
+ */
+function intentFromFields(
+	record: Record<string, unknown>,
+	where: string,
+	inheritedPath?: string,
+): Intent {
+	const explicit = pickString(record, OP_KEYS)?.value.trim().toLowerCase() ?? "";
+	const filePath = pickString(record, PATH_KEYS)?.value.trim() || inheritedPath;
+	const content = pickString(record, CONTENT_KEYS)?.value;
+	const old = pickString(record, OLD_KEYS)?.value;
+	const replacement = pickString(record, NEW_KEYS)?.value;
+	const destination = pickString(record, TO_KEYS)?.value.trim();
+	const replaceAll = pickBoolean(record, REPLACE_ALL_KEYS);
+
+	if (content !== undefined && (old !== undefined || replacement !== undefined)) {
+		throw shapeError(
+			`${where}: this names two different operations — "content" replaces the whole file, "old_string" replaces part of it. Send one.`,
+			record,
+		);
+	}
+	if (!filePath) throw shapeError(`${where}: no file path.`, record);
+
+	let kind: FieldOpKind | undefined;
+	if (explicit) {
+		kind = OP_SYNONYMS[explicit.replace(/[\s-]+/g, "_")];
+		if (!kind) {
+			throw shapeError(
+				`${where}: unknown op ${JSON.stringify(explicit)}. Use write, edit, delete, move or add.`,
+				record,
+			);
+		}
+	} else if (old !== undefined || replacement !== undefined) {
+		kind = "edit";
+	} else if (content !== undefined) {
+		kind = "write";
+	} else if (destination) {
+		kind = "move";
+	} else {
+		throw shapeError(
+			`${where}: a path on its own says nothing about what to change.`,
+			record,
+		);
+	}
+
+	switch (kind) {
+		case "write":
+		case "add":
+			if (content === undefined) {
+				throw shapeError(
+					`${where}: op "${kind}" needs "content" (the file's complete new text).`,
+					record,
+				);
+			}
+			if (destination) {
+				throw shapeError(
+					`${where}: a write cannot also rename — it replaces the file at "path". Send the move as a separate op.`,
+					record,
+				);
+			}
+			return { type: kind, path: filePath, content };
+		case "edit": {
+			if (old === undefined) {
+				throw shapeError(
+					`${where}: an edit needs "old_string" — the exact text to find. To replace the whole file, send "content" instead.`,
+					record,
+				);
+			}
+			if (old === "") {
+				throw shapeError(`${where}: "old_string" is empty, so there is nothing to find.`, record);
+			}
+			if (replacement === undefined) {
+				throw shapeError(
+					`${where}: an edit needs "new_string". To delete the matched text, pass an empty string.`,
+					record,
+				);
+			}
+			if (destination) {
+				throw shapeError(
+					`${where}: an edit cannot also rename. Send two ops, or use a '*** Move to:' envelope.`,
+					record,
+				);
+			}
+			return { type: "edit", path: filePath, old, new: replacement, replaceAll };
+		}
+		case "delete":
+			// a field the chosen op ignores is not harmless: it is evidence that
+			// the caller meant something else, and carrying on would delete a
+			// file they were trying to rewrite.
+			if (content !== undefined || old !== undefined || destination) {
+				throw shapeError(
+					`${where}: a delete takes only a path, but this also carries content/old_string/to. Say what you actually want.`,
+					record,
+				);
+			}
+			return { type: "delete", path: filePath };
+		case "move":
+			if (!destination) {
+				throw shapeError(`${where}: a move needs "to" (the destination path).`, record);
+			}
+			if (content !== undefined || old !== undefined) {
+				throw shapeError(
+					`${where}: a move cannot also change the file's contents. Send the move and the edit as two ops.`,
+					record,
+				);
+			}
+			// a rename is an update with no hunks; the apply loop carries the
+			// bytes across untouched.
+			return { type: "update", path: filePath, movePath: destination, chunks: [] };
+	}
+}
+
+/**
+ * work out which of the four lanes this call is, and translate it.
+ *
+ * ORDER IS THE CONTRACT: a call that reads as two lanes at once is refused
+ * rather than resolved by precedence, because both readings mutate a file and
+ * only one of them is what the caller meant.
+ */
+function normalizeCall(params: Record<string, unknown>): { intents: Intent[]; lane: Lane } {
+	const ops = pickOps(params);
+	// an empty envelope carries no information, so it is absent rather than a
+	// second lane — models routinely emit every field they can see, and
+	// `{ path, content, input: "" }` must not read as a conflict. `content: ""`
+	// is NOT treated this way: truncating a file is a real request.
+	const inputField = pickString(params, INPUT_KEYS);
+	const input = inputField && inputField.value.trim().length > 0 ? inputField : undefined;
+	const content = pickString(params, CONTENT_KEYS);
+	const old = pickString(params, OLD_KEYS);
+	const replacement = pickString(params, NEW_KEYS);
+	const filePath = pickString(params, PATH_KEYS)?.value.trim();
+
+	const named: string[] = [];
+	if (ops) named.push("ops");
+	if (input) named.push(`"${input.key}"`);
+	if (content !== undefined) named.push(`"${content.key}"`);
+	if (old !== undefined || replacement !== undefined) named.push("old_string/new_string");
+	if (named.length > 1) {
+		throw shapeError(
+			`this call names more than one kind of change at once (${named.join(" and ")}), and they mean different things. Send one.`,
+			params,
+		);
+	}
+
+	if (ops) {
+		if (ops.length === 0) throw shapeError("ops is empty — nothing to do.", params);
+		/*
+		 * A TOP-LEVEL PATH IS INHERITED BY ENTRIES THAT LACK ONE.
+		 *
+		 * this is not a nicety — it is the exact shape of pi's OWN native edit
+		 * tool (`{ path, edits: [{ oldText, newText }] }`) and of Claude Code's
+		 * MultiEdit (`{ file_path, edits: [{ old_string, new_string }] }`).
+		 * `edits` is one of the OPS_KEYS, so without this the single most
+		 * likely thing a Claude-family model emits lands as
+		 * "ops[0]: no file path".
+		 */
+		const intents = ops.map((entry, index) => {
+			if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+				throw shapeError(
+					`ops[${index}] must be an object like { "op": "write", "path": "...", "content": "..." }.`,
+					params,
+				);
+			}
+			return intentFromFields(entry as Record<string, unknown>, `ops[${index}]`, filePath);
+		});
+		return { intents, lane: "batch" };
+	}
+
+	if (input) {
+		/*
+		 * a path next to a plain blob under the GENERIC key `input` is a write
+		 * whose author reached for the wrong key name, and rescuing it is free.
+		 *
+		 * two gates, and both are load-bearing:
+		 *   - the key must be `input`. `patch`, `diff`, `envelope` and
+		 *     `patch_text` all say "this is a patch" in the name, so a malformed
+		 *     one is an error — never file content. without this,
+		 *     `{ path, diff: "-old\n+new" }` writes the DIFF into the file.
+		 *   - it must not look like a patch attempt either way, which catches
+		 *     the same mistake made under the generic key.
+		 */
+		if (filePath && input.key === "input" && !looksLikePatchAttempt(input.value)) {
+			return { intents: [{ type: "write", path: filePath, content: input.value }], lane: "write" };
+		}
+		return { intents: parseCodexPatch(normalizeEnvelope(input.value)), lane: "envelope" };
+	}
+
+	// an envelope posted under a content-ish key, with no path to write it to.
+	if (!filePath && content !== undefined && looksLikePatchAttempt(content.value)) {
+		return { intents: parseCodexPatch(normalizeEnvelope(content.value)), lane: "envelope" };
+	}
+
+	if (content === undefined && old === undefined && replacement === undefined && !filePath) {
+		throw shapeError("no file change was described.", params);
+	}
+
+	const intent = intentFromFields(params, "apply_patch");
+	// `update` can only be a rename here (a multi-hunk update needs the
+	// envelope), and `add` is a write that refuses to clobber. reporting the
+	// operation rather than a catch-all keeps the telemetry worth reading.
+	const lane: Lane =
+		intent.type === "update" ? "move" : intent.type === "add" ? "write" : intent.type;
+	return { intents: [intent], lane };
 }
 
 // --- anti-laziness guard ---
@@ -176,16 +605,27 @@ const REDACTION_PATTERNS = [
  * counts before vs after rather than matching outright: a file may legitimately
  * already contain such a line (this very file does), and only a NEW one — i.e.
  * the model substituting a placeholder for real content — is an error.
+ *
+ * `before` is the file's current text, which is why this runs inside the apply
+ * loop rather than up front: a whole-file `write` has no old/new lines of its
+ * own, so without the real file to compare against, every rewrite of a file
+ * that legitimately contains such a phrase would be refused.
  */
-function assertNoRedaction(operation: PatchOperation): void {
+function assertNoRedaction(intent: Intent, before: string | undefined): void {
 	const beforeLines =
-		operation.type === "update" ? operation.chunks.flatMap((chunk) => chunk.oldLines) : [];
+		intent.type === "update"
+			? intent.chunks.flatMap((chunk) => chunk.oldLines)
+			: intent.type === "edit"
+				? intent.old.split("\n")
+				: (before ?? "").split("\n");
 	const afterLines =
-		operation.type === "add"
-			? operation.content.split("\n")
-			: operation.type === "update"
-				? operation.chunks.flatMap((chunk) => chunk.newLines)
-				: [];
+		intent.type === "add" || intent.type === "write"
+			? intent.content.split("\n")
+			: intent.type === "edit"
+				? intent.new.split("\n")
+				: intent.type === "update"
+					? intent.chunks.flatMap((chunk) => chunk.newLines)
+					: [];
 	for (const pattern of REDACTION_PATTERNS) {
 		const beforeCount = beforeLines.filter((line) => pattern.test(line)).length;
 		const matches = afterLines.filter((line) => pattern.test(line));
@@ -215,6 +655,10 @@ const END_MARKER = "*** End Patch";
  * hunk headers may be invented, and quietly reinterpreting a patch is exactly
  * the kind of "helpful" behaviour that corrupts files. it is rejected with an
  * explicit explanation of the difference instead.
+ *
+ * fences and heredocs are stripped silently, and the marker match itself is
+ * tolerant (see codex-patch's TOLERANCE note) — so everything this function
+ * still rejects is a genuine format mismatch rather than punctuation.
  */
 function normalizeEnvelope(raw: string): string {
 	let text = raw.trim();
@@ -223,7 +667,13 @@ function normalizeEnvelope(raw: string): string {
 	const fenced = text.match(/^```[^\n]*\n([\s\S]*?)\n?```$/);
 	if (fenced?.[1]) text = fenced[1].trim();
 
-	if (text.startsWith(BEGIN_MARKER)) return text;
+	// before the marker check, not after: a heredoc-wrapped envelope reached
+	// the parser (which has always understood them) only if it got past here.
+	text = stripHeredoc(text).trim();
+
+	// the parser slices between the markers, so a begin line ANYWHERE means
+	// this is an envelope with narration around it.
+	if (text.split("\n").some(isBeginLine)) return text;
 
 	const looksUnified = /^(---|\+\+\+|diff --git|@@ -\d)/m.test(text);
 	if (looksUnified) {
@@ -272,7 +722,7 @@ function snapshot(file: string): Snapshot {
 }
 
 function operationPaths(
-	operation: PatchOperation,
+	operation: Intent,
 	cwd: string,
 ): { source: string; destination?: string } {
 	const source = path.resolve(resolveToAbsolute(operation.path, cwd));
@@ -284,6 +734,176 @@ function operationPaths(
 		throw new Error(`patch move source and destination are identical: ${source}`);
 	}
 	return { source, destination };
+}
+
+// --- the edit lane ---
+
+/**
+ * how many non-overlapping times `needle` occurs, and where the first few are.
+ *
+ * the COUNT is exact while the position list is bounded: an error message that
+ * says "matches 65 places" when it means "at least 65" is a lie, and a list of
+ * 300k offsets is a memory problem. counting is a scan either way.
+ */
+function countOccurrences(
+	haystack: string,
+	needle: string,
+): { total: number; positions: number[] } {
+	const positions: number[] = [];
+	let total = 0;
+	if (needle.length === 0) return { total, positions };
+	for (let from = 0; ; ) {
+		const at = haystack.indexOf(needle, from);
+		if (at < 0) break;
+		total++;
+		if (positions.length < 8) positions.push(at);
+		from = at + needle.length;
+	}
+	return { total, positions };
+}
+
+function lineNumberAt(text: string, index: number): number {
+	let line = 1;
+	for (let i = 0; i < index; i++) if (text.charCodeAt(i) === 10) line++;
+	return line;
+}
+
+/**
+ * cheap 0..1 likeness, used only to point at the line the caller probably meant.
+ *
+ * shared prefix + shared suffix over the longer length. deliberately NOT edit
+ * distance: this runs over every line of a file on a path that has already
+ * failed, and a quadratic algorithm there would turn a helpful message into a
+ * hang on a large file. it is exact where it matters (near-identical lines).
+ */
+function similarity(a: string, b: string): number {
+	if (a === b) return 1;
+	const longest = Math.max(a.length, b.length);
+	if (longest === 0) return 1;
+	let prefix = 0;
+	while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;
+	let suffix = 0;
+	while (
+		suffix < a.length - prefix &&
+		suffix < b.length - prefix &&
+		a[a.length - 1 - suffix] === b[b.length - 1 - suffix]
+	) {
+		suffix++;
+	}
+	return (prefix + suffix) / longest;
+}
+
+const collapseWhitespace = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * turn "not found" into "here is what the file actually says".
+ *
+ * a bare failure costs a re-read of the whole file; a five-line window costs
+ * nothing and is usually enough to fix the call on the next turn.
+ */
+function nearestLinesHint(content: string, needle: string): string {
+	// this allocates two copies of the file, so it is skipped on very large
+	// ones: a helpful message must not become the reason a call falls over.
+	const AFFORDABLE = 4_000_000;
+	if (
+		content.length < AFFORDABLE &&
+		collapseWhitespace(content).includes(collapseWhitespace(needle))
+	) {
+		return "\n\nthe text IS in the file, but its whitespace differs. copy it from a fresh read, or match fewer lines.";
+	}
+	const wanted = needle.split("\n").find((line) => line.trim().length > 0)?.trim();
+	if (!wanted) return "";
+	const lines = content.split("\n");
+	let best = -1;
+	let bestScore = 0;
+	for (let index = 0; index < lines.length; index++) {
+		const score = similarity(wanted, lines[index]!.trim());
+		if (score > bestScore) {
+			bestScore = score;
+			best = index;
+		}
+	}
+	if (best < 0 || bestScore < 0.5) return "";
+	const from = Math.max(0, best - 2);
+	const to = Math.min(lines.length, best + 3);
+	const gutter = String(to).length;
+	const window = lines
+		.slice(from, to)
+		.map((line, offset) => `  ${String(from + offset + 1).padStart(gutter)} | ${line}`)
+		.join("\n");
+	return `\n\nclosest match:\n${window}\n\n  you sent: ${JSON.stringify(wanted)}\n  file has: ${JSON.stringify(lines[best]!.trim())}`;
+}
+
+/**
+ * replace an exact span, with the same refusals the envelope lane has.
+ *
+ * three tiers, in order:
+ *   1. exact substring — one hit replaces, several refuse (unless replace_all)
+ *   2. whole-line fallback through `applyPatchChunks`, which brings the tested
+ *      unicode/whitespace fuzz and the re-indent-to-the-file rule with it. this
+ *      is what rescues a hunk copied out of a grep result with the wrong
+ *      indentation.
+ *   3. a message that shows the file
+ *
+ * an ambiguity refusal from tier 2 is re-thrown rather than swallowed: "this
+ * matches three places" must never degrade into "not found", which would send
+ * the caller looking for the wrong problem.
+ */
+function applyEdit(content: string, intent: Extract<Intent, { type: "edit" }>): string {
+	const { total, positions } = countOccurrences(content, intent.old);
+
+	if (total > 1 && !intent.replaceAll) {
+		// show the LINE at each match, not just its number: picking the right
+		// occurrence is the whole task, and a bare list of numbers makes the
+		// caller re-read the file to do it.
+		const lines = content.split("\n");
+		const shown = positions.slice(0, 5).map((at) => {
+			const number = lineNumberAt(content, at);
+			return `  line ${number}: ${(lines[number - 1] ?? "").trim()}`;
+		});
+		const more = total > shown.length ? `\n  … and ${total - shown.length} more` : "";
+		throw new Error(
+			`old_string matches ${total} places in ${intent.path}:\n${shown.join("\n")}${more}\n` +
+				`include more surrounding text so exactly one match remains, or pass replace_all: true.`,
+		);
+	}
+	// split/join, never replace(): a replacement containing $& or $1 would be
+	// expanded by String.replace's substitution rules and silently corrupted.
+	if (total > 1) return content.split(intent.old).join(intent.new);
+	if (total === 1) {
+		const at = positions[0]!;
+		return content.slice(0, at) + intent.new + content.slice(at + intent.old.length);
+	}
+
+	try {
+		return applyPatchChunks(
+			content,
+			[
+				{
+					oldLines: intent.old.split("\n"),
+					// "" means delete the matched lines outright rather than
+					// leaving a blank one behind.
+					newLines: intent.new === "" ? [] : intent.new.split("\n"),
+					endOfFile: false,
+				},
+			],
+			intent.path,
+		);
+	} catch (error) {
+		/*
+		 * swallow ONLY "I could not locate this text", because the message
+		 * built below says that better. everything else the applier raises is a
+		 * DIFFERENT diagnosis — an ambiguous hunk, an indentation mismatch —
+		 * and degrading it into "not found" sends the caller hunting for the
+		 * wrong problem. an allow-list of what to swallow, not of what to
+		 * re-throw, so a newly added diagnosis surfaces by default.
+		 */
+		if (!/^failed to find/i.test((error as Error).message)) throw error;
+	}
+
+	throw new Error(
+		`old_string was not found in ${intent.path}.${nearestLinesHint(content, intent.old)}`,
+	);
 }
 
 /**
@@ -472,21 +1092,59 @@ function commitChanges(
 
 // --- display helpers ---
 
+const ENVELOPE_HEADER_RE =
+	/^\*{2,}\s*(?:Add|Create|New|Delete|Remove|Update|Edit|Modify|Change|Patch|Write|Replace|Overwrite)\s+File\s*:\s*(.+)$/i;
+
 /**
- * the collapsed call line: which files this patch touches.
+ * the collapsed call line: which files this call touches.
  *
  * shows basenames, and elides past the third — a 25-file batch rendered as 25
  * absolute paths wraps over several lines and pushes everything else off
  * screen. the full list is always in the result below it.
+ *
+ * reads the same alias tables `normalizeCall` does, so the header cannot drift
+ * out of step with the lane that actually ran.
  */
-function describeCall(input: string): string {
-	const paths = input.split("\n").flatMap((line) => {
-		const match = line.match(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/);
-		return match?.[1] ? [path.basename(match[1].trim())] : [];
-	});
-	if (paths.length === 0) return "...";
-	if (paths.length <= 3) return paths.join(", ");
-	return `${paths.slice(0, 3).join(", ")} +${paths.length - 3} more`;
+function describeCall(args: Record<string, unknown> | undefined): string {
+	if (!args) return "...";
+	const names: string[] = [];
+	const push = (value: string | undefined) => {
+		if (value && value.trim()) names.push(path.basename(value.trim()));
+	};
+
+	push(pickString(args, PATH_KEYS)?.value);
+	for (const entry of pickOps(args) ?? []) {
+		if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+			push(pickString(entry as Record<string, unknown>, PATH_KEYS)?.value);
+		}
+	}
+	for (const line of (pickString(args, INPUT_KEYS)?.value ?? "").split("\n")) {
+		const match = ENVELOPE_HEADER_RE.exec(line.trimEnd());
+		if (match?.[1]) names.push(path.basename(match[1].trim()));
+	}
+
+	if (names.length === 0) return "...";
+	if (names.length <= 3) return names.join(", ");
+	return `${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+}
+
+/**
+ * opt-in lane telemetry, so "did the new shapes actually get used?" can be
+ * answered with data instead of impressions. off unless PI_APPLY_PATCH_METRICS=1,
+ * because a tool that writes to the home directory on every call as a side
+ * effect of being called is a surprise, and surprises in a mutation tool are
+ * exactly what we are trying to remove.
+ */
+function recordLane(lane: Lane, fileCount: number): void {
+	if (process.env.PI_APPLY_PATCH_METRICS !== "1") return;
+	try {
+		fs.appendFileSync(
+			path.join(os.homedir(), ".pi", "apply-patch-lanes.jsonl"),
+			`${JSON.stringify({ at: new Date().toISOString(), lane, files: fileCount })}\n`,
+		);
+	} catch {
+		// telemetry must never be able to fail a real edit
+	}
 }
 
 /** compact model-facing summary; the human-facing diff is rendered from details. */
@@ -580,36 +1238,45 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 	return {
 		name: "apply_patch",
 		label: "Apply Patch",
-		description:
-			"Apply a Codex-format patch as a validated batch. Supports Add File, Update File, Delete File, Move to, multiple files, and multiple hunks. Every update must match before commit; ordinary write or tracking failures are rolled back. Process termination during commit is not crash-safe.",
-		promptSnippet: "Apply precise Codex-format patches to one or more files",
+		description: [
+			"Create, change, delete or move files. One call is one all-or-nothing batch:",
+			"if any part fails, nothing is written.",
+			"",
+			"Four ways to call it — use whichever fits the change:",
+			'  whole file      { "path": "src/icon.svg", "content": "<svg>…</svg>" }',
+			'  part of a file  { "path": "src/app.ts", "old_string": "size = 28", "new_string": "size = 32" }',
+			'  many files      { "ops": [ { "op": "write", "path": "a.ts", "content": "…" }, { "op": "edit", "path": "b.ts", "old_string": "…", "new_string": "…" } ] }',
+			'  patch envelope  { "input": "*** Begin Patch\\n*** Update File: f.ts\\n@@\\n-old\\n+new\\n*** End Patch" }',
+			"",
+			"old_string must appear exactly once in the file — include a little surrounding",
+			"text if it does not, or pass replace_all: true to change every occurrence.",
+			"Never replace real code with a placeholder such as \"… rest unchanged\".",
+		].join("\n"),
+		promptSnippet: "Create, edit, delete or move files as one atomic batch",
 		/*
-		 * these reach EVERY model. grammar-constrained sampling only exists on
-		 * OpenAI-family providers, so on Anthropic / Kimi / DeepSeek / Sakana this
-		 * wording is the only thing keeping call syntax correct. the first line
-		 * targets the one mistake actually observed in testing: passing a separate
-		 * file-path argument instead of putting paths inside the envelope.
+		 * these reach EVERY model, and since `constrainedSampling` was removed
+		 * they are now the ONLY thing shaping call syntax — there is no longer a
+		 * token-level backstop on any provider. Lead with the two simple lanes:
+		 * an earlier version led with the envelope and trained the hard path.
 		 */
 		promptGuidelines: [
-			"apply_patch takes exactly one argument, `input`: the whole '*** Begin Patch' … '*** End Patch' envelope as a single string. It has no path argument — file paths belong on the '*** Update File:' / '*** Add File:' / '*** Delete File:' lines inside it.",
-			"Use apply_patch for all text file creation, modification, deletion, and moves instead of edit, write, or shell redirection.",
-			"Keep apply_patch hunks small and include enough unchanged context for an unambiguous match.",
-			"Split unrelated or very large apply_patch changes into consecutive calls.",
+			"Use apply_patch for every file creation, change, delete and move. Never modify a file with bash (no `sed -i`, no `>`/`>>` redirection, no `tee`, no heredoc) — that bypasses undo tracking, permission rules and secret scrubbing.",
+			"apply_patch takes whichever shape fits: `{ path, content }` writes a whole file, `{ path, old_string, new_string }` changes part of one, `{ ops: [...] }` changes several files in one atomic batch, and `{ input }` takes a Codex `*** Begin Patch` envelope for multi-hunk edits.",
+			"For an apply_patch edit, `old_string` must match the file exactly and appear exactly once — copy it from a fresh read rather than from memory, and use `replace_all` only when you really mean every occurrence.",
+			"Prefer `{ path, content }` over delete-then-add when replacing a whole file, and put unrelated changes in separate calls.",
 		],
 		parameters: ApplyPatchParameters,
-		constrainedSampling: {
-			type: "grammar",
-			variants: { openai_lark: APPLY_PATCH_GRAMMAR },
-		},
 		executionMode: "sequential",
 
 		renderCall(args: any, theme: any, context: any) {
 			const Text = getText();
 			const Container = getContainer();
-			const raw = args?.input ?? args?.patch ?? args?.envelope ?? "";
+			const record = (args ?? {}) as Record<string, unknown>;
+			const raw =
+				pickString(record, INPUT_KEYS)?.value ?? pickString(record, CONTENT_KEYS)?.value ?? "";
 			const header =
 				theme.fg("toolTitle", theme.bold("apply_patch ")) +
-				theme.fg("dim", describeCall(raw));
+				theme.fg("dim", describeCall(record));
 
 			// while streaming, show the envelope as it arrives so a long patch
 			// is visible in flight rather than as a frozen header.
@@ -627,13 +1294,9 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 		async execute(toolCallId, params: any, signal, _onUpdate, ctx) {
 			if (signal?.aborted) throw new Error("apply_patch aborted");
 
-			const resolvedInput = requireParam(params, INPUT_PARAMS, "apply_patch");
-			if ("error" in resolvedInput) return resolvedInput.error as any;
+			const { intents, lane } = normalizeCall((params ?? {}) as Record<string, unknown>);
 
-			const operations = parseCodexPatch(normalizeEnvelope(resolvedInput.value));
-			operations.forEach(assertNoRedaction);
-
-			const resolved = operations.map((operation) => ({
+			const resolved = intents.map((operation) => ({
 				operation,
 				...operationPaths(operation, ctx.cwd),
 			}));
@@ -683,12 +1346,22 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 					const finalModes = new Map<string, number | undefined>(
 						snapshots.map((item) => [item.path, item.mode]),
 					);
+					/*
+					 * which paths are the two halves of one move.
+					 *
+					 * recorded HERE, where it is known for certain, so `undo_edit`
+					 * never has to infer it from matching bytes — an inference that
+					 * is unanswerable when a batch moves one file and deletes
+					 * another holding identical content.
+					 */
+					const movePartners = new Map<string, string>();
 
 					// apply every operation IN MEMORY first — nothing touches disk
 					// until all of them have succeeded.
 					for (const { operation, source, destination } of resolved) {
 						if (signal?.aborted) throw new Error("apply_patch aborted");
 						const current = finalContents.get(source);
+						assertNoRedaction(operation, current);
 						if (operation.type === "add") {
 							// UPSTREAM BUG FIX (bdsqqq's version omits this guard).
 							//
@@ -707,14 +1380,44 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 								);
 							}
 							finalContents.set(source, operation.content);
+						} else if (operation.type === "write") {
+							// unlike `add`, this is ALLOWED to replace an existing file:
+							// that is what the caller asked for and what the word means.
+							// the snapshot above is what makes it undoable, and `add`
+							// still exists for "create, and fail if it is already there".
+							finalContents.set(source, operation.content);
+						} else if (operation.type === "edit") {
+							if (current === undefined) throw new Error(`file not found: ${source}`);
+							finalContents.set(source, applyEdit(current, { ...operation, path: source }));
 						} else if (operation.type === "delete") {
 							if (current === undefined) throw new Error(`file not found: ${source}`);
 							finalContents.set(source, undefined);
 							finalModes.set(source, undefined);
 						} else {
 							if (current === undefined) throw new Error(`file not found: ${source}`);
-							const updated = applyPatchChunks(current, operation.chunks, source);
+							// a rename carries the bytes across untouched. running the
+							// applier over zero chunks would rewrite the file's trailing
+							// newline, which is a content change nobody asked for.
+							const updated =
+								operation.chunks.length === 0
+									? current
+									: applyPatchChunks(current, operation.chunks, source);
 							if (destination) {
+								// A MOVE MUST NOT CLOBBER.
+								//
+								// `add` refuses to overwrite; the move branch did not, so a
+								// rename onto an occupied path replaced that file's real
+								// content and reported success. harmless-looking in the
+								// envelope, where a move costs a whole `*** Move to:` line,
+								// but `{ path, to }` now makes it two fields — so the guard
+								// has to exist. `git mv` refuses this too.
+								if (finalContents.get(destination) !== undefined) {
+									throw new Error(
+										`move destination already exists: ${destination}; delete it first, or send { path, content } if you meant to overwrite it`,
+									);
+								}
+								movePartners.set(source, destination);
+								movePartners.set(destination, source);
 								// a move is modelled as delete(source) + add(destination),
 								// carrying the original mode across.
 								const sourceMode = finalModes.get(source);
@@ -775,6 +1478,9 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 									finalContents.get(change.path) === undefined
 										? undefined
 										: fs.statSync(change.path).mode,
+								movePartnerUri: movePartners.has(change.path)
+									? `file://${movePartners.get(change.path)}`
+									: undefined,
 								timestamp: Date.now(),
 							})),
 						);
@@ -793,9 +1499,10 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 					const resultChanges = changes.map(
 						({ before: _before, after: _after, ...change }) => change,
 					);
+					recordLane(lane, resultChanges.length);
 					return {
 						content: [{ type: "text" as const, text: formatResult(resultChanges) }],
-						details: { changes: resultChanges },
+						details: { changes: resultChanges, lane },
 					};
 				});
 			});

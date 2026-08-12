@@ -305,32 +305,45 @@ test("Delete File then Add File replaces a file wholesale", async () => {
 
 // --- schema contract (guards a real outage) ---
 
-test("schema satisfies pi-ai's grammar-sampling contract", () => {
+test("the schema and constrainedSampling can never disagree", () => {
 	// pi-ai `inferGrammarInputProperty` (constrained-sampling.js:38) demands
 	// EXACTLY ONE required string property whenever a tool declares
-	// `constrainedSampling`. violating it makes every request on an
-	// OpenAI-family model fail with "cannot use grammar constrained sampling"
-	// — while Anthropic passes, because pi-ai returns early for providers
-	// without grammar support (same file, line 68).
+	// `constrainedSampling`, and `resolveGrammarConstrainedSampling` THROWS
+	// rather than degrading when that fails — killing the whole turn on an
+	// OpenAI-family model while every Anthropic test stays green, because
+	// pi-ai returns early for providers without grammar support (line 68).
 	//
-	// this actually shipped: making `input` optional to accept aliases broke
-	// every gpt-5.6 session while all Claude tests stayed green.
+	// that outage has already shipped once here. this test is the guard, and
+	// it is written to hold in BOTH directions: today there is no grammar (the
+	// four call lanes mean no field can be required), and if anyone re-adds it
+	// the schema must be able to satisfy it.
 	const schema = tool.parameters as any;
-	expect(tool.constrainedSampling).toBeDefined();
 	expect(schema.type).toBe("object");
-	expect(Array.isArray(schema.required)).toBe(true);
-	expect(schema.required.length).toBe(1);
-	expect(typeof schema.required[0]).toBe("string");
-	expect(schema.properties[schema.required[0]].type).toBe("string");
+	const required: string[] = Array.isArray(schema.required) ? schema.required : [];
+
+	if (tool.constrainedSampling) {
+		expect(required).toHaveLength(1);
+		expect(schema.properties[required[0]!]?.type).toBe("string");
+		const variants = (tool.constrainedSampling as any).variants ?? {};
+		const grammar = variants.openai_lark ?? variants.openai_regex ?? "";
+		expect(typeof grammar).toBe("string");
+		expect(grammar.trim().length > 0).toBe(true);
+	} else {
+		expect(required).toHaveLength(0);
+	}
 });
 
-test("a grammar variant is present and non-empty", () => {
-	// resolveGrammarConstrainedSampling also throws when every variant is
-	// blank, which would be the same class of OpenAI-only outage.
-	const variants = (tool.constrainedSampling as any).variants;
-	const lark = variants?.openai_lark;
-	expect(typeof lark).toBe("string");
-	expect(lark.trim().length > 0).toBe(true);
+test("every documented call shape is actually reachable", () => {
+	// the description is the whole teaching surface now that there is no
+	// token-level backstop, so a shape that is advertised and not accepted is
+	// worse than one that was never mentioned.
+	const properties = Object.keys((tool.parameters as any).properties ?? {});
+	for (const key of ["path", "content", "old_string", "new_string", "replace_all", "ops", "input", "op", "to"]) {
+		expect(properties).toContain(key);
+	}
+	for (const shape of ["path", "content", "old_string", "new_string", "ops", "input"]) {
+		expect(tool.description).toContain(shape);
+	}
 });
 
 // --- ambiguity (the reason apply_patch can replace `edit`) ---

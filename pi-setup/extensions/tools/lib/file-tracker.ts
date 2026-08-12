@@ -57,6 +57,21 @@ export interface FileChange {
 	beforeMode?: number;
 	/** file mode after the change */
 	afterMode?: number;
+
+	/**
+	 * the OTHER path of a move, when this record is one half of one.
+	 *
+	 * a move is one logical operation stored as TWO records — a deletion at the
+	 * source and a creation at the destination — so undoing one alone is
+	 * destructive either way (the file vanishes from both places, or exists in
+	 * two). The writer knows they belong together; recording it here means the
+	 * reader never has to GUESS from matching bytes, which is unanswerable when
+	 * a batch moves one file and deletes another with identical content.
+	 *
+	 * Optional for backward compatibility, exactly like `beforeExists`: records
+	 * written before this field existed fall back to the byte heuristic.
+	 */
+	movePartnerUri?: string;
 }
 
 function sessionDir(sessionId: string): string {
@@ -196,6 +211,120 @@ export function revertChange(sessionId: string, toolCallId: string, changeId: st
  * the caller gets activeToolCallIds by scanning the current
  * session branch for apply_patch tool calls.
  */
+/**
+ * the OTHER half of a move, if this change is one half of one.
+ *
+ * WHY THIS EXISTS
+ * a move is one logical operation recorded as TWO path histories: a deletion
+ * at the source and a creation at the destination. `undo_edit` takes a single
+ * path, so undoing only one half is destructive in both directions — undo the
+ * destination and the file is gone from both places (data loss); undo the
+ * source and it exists twice (duplicate). Reproduced with real content by
+ * grok-4.5 stress-testing the tool, 2026-08-12.
+ *
+ * PAIRING RULE, and why it is this strict: exactly one deletion and exactly
+ * one creation within the same tool call, whose bytes are identical. Requiring
+ * uniqueness means a batch that moves one file and deletes another unrelated
+ * one will not pair them by accident; requiring byte equality means a delete
+ * and an unrelated create cannot pair at all. When the batch is ambiguous this
+ * returns null and the caller reverts only what was asked for — a partial undo
+ * the user can see beats a clever one they cannot predict.
+ */
+export interface MovePairing {
+	/** the other half, when it is known for certain */
+	partner: FileChange | null;
+	/**
+	 * paths that COULD be the other half but could not be told apart. only ever
+	 * non-empty for records written before `movePartnerUri` existed.
+	 */
+	ambiguous: string[];
+}
+
+export function findMovePartner(
+	sessionId: string,
+	toolCallId: string,
+	change: FileChange,
+): MovePairing {
+	const siblings = loadChanges(sessionId, toolCallId).filter(
+		(c) => !c.reverted && c.id !== change.id,
+	);
+
+	// the recorded answer, when the writer left one. exact, and immune to two
+	// files in the batch happening to hold identical bytes.
+	if (change.movePartnerUri) {
+		return {
+			partner: siblings.find((c) => c.uri === change.movePartnerUri) ?? null,
+			ambiguous: [],
+		};
+	}
+
+	/*
+	 * LEGACY PATH — records written before `movePartnerUri`. Infer the pair from
+	 * shape and bytes, and when that is genuinely undecidable, SAY SO rather
+	 * than silently doing half the job: a partial undo the caller is warned
+	 * about is recoverable, one they never hear about looks like data loss.
+	 */
+	const isDeletion = (c: FileChange) => c.beforeExists === true && c.afterExists === false;
+	const isCreation = (c: FileChange) => c.beforeExists === false && c.afterExists === true;
+	if (!isDeletion(change) && !isCreation(change)) return { partner: null, ambiguous: [] };
+
+	const wanted = isDeletion(change) ? isCreation : isDeletion;
+	const matches = siblings.filter(
+		(c) => wanted(c) && (isDeletion(change) ? change.before === c.after : c.before === change.after),
+	);
+	if (matches.length === 1) return { partner: matches[0]!, ambiguous: [] };
+	return {
+		partner: null,
+		ambiguous: matches.map((c) => c.uri.replace(/^file:\/\//, "")),
+	};
+}
+
+/**
+ * put a reverted change back — the redo half of undo.
+ *
+ * SAFE ONLY WHEN NOTHING HAPPENED SINCE. If any later, still-applied change
+ * touched this path, the recorded `after` is no longer the state that followed
+ * it, and writing it would clobber newer work with older bytes. That check is
+ * the caller's (`isRedoable`), because only the caller knows which tool calls
+ * are in the current branch.
+ */
+export function reapplyChange(
+	sessionId: string,
+	toolCallId: string,
+	changeId: string,
+): FileChange | null {
+	const p = changePath(sessionId, toolCallId, changeId);
+	if (!fs.existsSync(p)) return null;
+
+	let change: FileChange;
+	try {
+		change = JSON.parse(fs.readFileSync(p, "utf-8")) as FileChange;
+	} catch {
+		return null;
+	}
+	if (!change.reverted) return null;
+
+	const filePath = change.uri.replace(/^file:\/\//, "");
+	const existsAfter = change.afterExists ?? true;
+	if (existsAfter) {
+		fs.mkdirSync(path.dirname(filePath), { recursive: true });
+		fs.writeFileSync(filePath, change.after, "utf-8");
+		if (change.afterMode !== undefined) {
+			try {
+				fs.chmodSync(filePath, change.afterMode);
+			} catch {
+				/* mode is best-effort; content is what matters */
+			}
+		}
+	} else {
+		fs.rmSync(filePath, { force: true });
+	}
+
+	change.reverted = false;
+	fs.writeFileSync(p, JSON.stringify(change, null, 2));
+	return change;
+}
+
 export function findLatestChange(
 	sessionId: string,
 	filePath: string,
