@@ -675,8 +675,8 @@ These replace pi's default tool implementations with customized versions:
 | **grep** | `grep.ts` | Custom output formatting |
 | **glob** | `glob.ts` | Custom result handling |
 | **ls** | `ls.ts` | Delegates to read tool |
-| **undo-edit** | `undo-edit.ts` | Edit reversal with diff display. Reverts the WHOLE tool call by default (`scope: "file"` for one path); a move is undone as one operation |
-| **redo-edit** | `undo-edit.ts` | Re-applies an undone change. Refuses when the file changed since the undo — the only reason redo is safe to offer |
+| **undo-edit** | `undo-edit.ts` | Edit reversal with diff display. Reverts the WHOLE tool call by default (`scope: "file"` for one path); a move is undone as one operation. Refuses when a file was changed outside the tool, since those bytes are recorded nowhere (`force: true` overrides, and says what it discarded) |
+| **redo-edit** | `undo-edit.ts` | Re-applies an undone change. Refuses when a newer tool change touched the path, and (like undo) when the file was changed outside the tool — `force: true` overrides and says what it discarded |
 | **skill** | `skill.ts` | Skill loading |
 
 ### New Tools (not in default pi)
@@ -923,6 +923,76 @@ refuses to reach past a newer change, the undone changes for a path are always a
 contiguous run at the top of the stack, so redo must take the **oldest** of that
 run: the step the file would take next. Verified by flipping the scan direction
 back and watching the new test fail.
+
+#### Round four — undo now looks at the file before overwriting it
+
+The last item he raised, and the one he ranked lowest: `revertChange` writes its
+remembered copy back **unconditionally**, never checking the file still holds
+what the tool left there. So anything written since by a non-recording writer —
+`bash`, `format_file`, another editor — is overwritten without a word.
+
+It deserved more than "tiny edge", for a reason the ranking missed: **every other
+undo is itself undoable from these records, and this one is not.** Those outside
+bytes were never photocopied by anything; they exist in the file and nowhere
+else. It is the only remaining way this tool can destroy something unrecoverable.
+It is also more reachable here than he assumed: `format_file` and `bash` record
+nothing, so `apply_patch → format_file → undo_edit` already exposes it.
+
+`matchesRecordedState()` (in `lib/file-tracker.ts`) answers "is this file exactly
+as we left it"; `undo_edit` checks every change it is about to revert and
+refuses, naming the files, with `force: true` to override.
+
+Deliberately a **notice, not a wall**. It is silent whenever the file is
+untouched, which is nearly always — a check that fires on harmless things is one
+you learn to force without reading, and then it guards nothing. One drifted file
+blocks the whole batch (undoing the clean half would leave a state neither the
+caller nor the records describe), and a **forced** undo appends what it
+discarded, since the diff describes only the tool's own change and would
+otherwise leave the one unrecoverable act with no trace in its own output. That
+last part was raised by a sub-agent while testing the guard live.
+
+Verified by sabotage: stubbing `matchesRecordedState` to always return true fails
+exactly the three drift tests and nothing else. Verified live in one session —
+edit, `python3` append, undo → refused; the same with `force: true` → undone,
+with the discard note.
+
+While confirming the check could not false-positive, `allPaths` was verified to
+be a `Set`, so **one record per path per tool call**. Two comments claiming a
+batch "may write the same path more than once" were wrong and the sorts they
+justified are gone.
+
+#### Round five — the same guard, on redo
+
+The undo guard was justified in round four with the claim that "`redo_edit` had
+guarded exactly this since it was written". **That was wrong, and the wrongness
+was load-bearing:** redo's check reads the *records*, looking for a newer change
+this tool made. A shell command records nothing, so it is invisible to it. The
+whole scenario survived the fix that was supposed to be about it —
+`v1 → v2 → undo → v1`, shell writes `v1-HACKED`, redo silently restores `v2`.
+Caught by grok-4.5 immediately after round four.
+
+`matchesRecordedState(change, side)` now takes which copy the file should be
+holding: `after` for undo (what the tool wrote), `before` for redo (what the undo
+restored). Redo gained the identical refusal, `force`, and discard note. Both
+existence fields fall back the way `revertChange` does, so old records behave.
+
+Redo keeps **both** checks. The records check gives the more useful message when
+the newer writer was this tool ("make the change again instead"), and the disk
+check catches everything else.
+
+Two lessons, both cheap to state and expensive to relearn:
+
+- **Do not cite a guard without reading it.** The claim was plausible, written in
+  a code comment, and repeated into the docs, where it would have justified never
+  looking again.
+- **A symmetric mechanism needs symmetric tests.** The round-four suite proved
+  undo refused, forced, and reported — and every one of those tests passed with
+  redo wide open. The sabotage harness now takes a side
+  (`PI_DRIFT_SABOTAGE=before|after`) and each disables exactly its own tests,
+  which is the property that was missing.
+
+Verified live: edit → undo → `python3` overwrite → redo refused, `v1-HACKED`
+intact.
 
 His other two remaining items are correctly left alone: unique `old_string` is
 the safety property (the error now shows the line at each match, which was the

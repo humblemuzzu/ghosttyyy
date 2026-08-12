@@ -21,6 +21,7 @@ import {
 	findLatestChange,
 	findMovePartner,
 	loadChanges,
+	matchesRecordedState,
 	reapplyChange,
 	revertChange,
 	simpleDiff,
@@ -98,6 +99,12 @@ export function createUndoEditTool(): ToolDefinition {
 				Type.Union([Type.Literal("call"), Type.Literal("file")], {
 					description:
 						'"call" (default) reverts every file written by the change that last touched this path; "file" reverts only this path.',
+				}),
+			),
+			force: Type.Optional(
+				Type.Boolean({
+					description:
+						"Undo even if the file has been modified by something other than this tool since. Those modifications are not recorded anywhere and will be lost.",
 				}),
 			),
 		}),
@@ -221,6 +228,50 @@ export function createUndoEditTool(): ToolDefinition {
 				}
 
 				/*
+				 * REFUSE TO ERASE WORK THIS TOOL DID NOT DO.
+				 *
+				 * The records make every undo itself undoable — except where the
+				 * bytes being overwritten were written by something else, which
+				 * recorded nothing. That is the last way this tool can destroy
+				 * something unrecoverable, and `redo_edit` already guarded it.
+				 *
+				 * Deliberately a NOTICE, not a wall: it stays silent whenever the
+				 * file is exactly as we left it, which is nearly always. A check
+				 * that fires on harmless things is one you learn to force without
+				 * reading, and then it protects nothing.
+				 */
+				const force = (params as any).force === true;
+				const outsideEdits = (changes: FileChange[]) =>
+					changes
+						.filter((c) => !matchesRecordedState(c))
+						.map((c) => path.basename(c.uri.replace(/^file:\/\//, "")));
+				const refuseDrift = (names: string[]) =>
+					({
+						content: [
+							{
+								type: "text" as const,
+								text:
+									`cannot undo: ${names.join(", ")} ${names.length === 1 ? "has" : "have"} been changed ` +
+									`by something other than this tool since that edit — a shell command, a formatter, ` +
+									`or another editor. Those changes were never recorded, so undoing would erase them ` +
+									`for good. Pass force: true to undo anyway.`,
+							},
+						],
+						isError: true,
+					}) as any;
+				/*
+				 * forcing past the guard is allowed, but never silent: the diff
+				 * describes only the tool's own change, so without this the one
+				 * unrecoverable thing an undo can do leaves no trace in its own
+				 * output. Raised by a sub-agent testing the guard live.
+				 */
+				const discardNote = (names: string[]) =>
+					names.length > 0
+						? `\n\n(forced — discarded changes made outside this tool in ${names.join(", ")}; ` +
+							`those bytes were not recorded anywhere and are gone)`
+						: "";
+
+				/*
 				 * WHOLE-CALL UNDO IS THE DEFAULT.
 				 *
 				 * one apply_patch call is one logical change, and the records were
@@ -233,10 +284,10 @@ export function createUndoEditTool(): ToolDefinition {
 				 */
 				if ((params as any).scope !== "file") {
 					const siblings = loadChanges(sessionId, latest.toolCallId).filter((c) => !c.reverted);
-					// newest first: a batch may write the same path more than once
-					const ordered = [...siblings].sort((a, b) => b.timestamp - a.timestamp);
+					const outside = outsideEdits(siblings);
+					if (!force && outside.length > 0) return refuseDrift(outside);
 					const undone: string[] = [];
-					for (const change of ordered) {
+					for (const change of siblings) {
 						if (revertChange(sessionId, latest.toolCallId, change.id)) {
 							undone.push(change.uri.replace(/^file:\/\//, ""));
 						}
@@ -252,11 +303,19 @@ export function createUndoEditTool(): ToolDefinition {
 										.join(", ")})`
 								: "";
 						return {
-							content: [{ type: "text" as const, text: diff + note }],
+							content: [{ type: "text" as const, text: diff + note + discardNote(outside) }],
 							details: { header: resolved },
 						} as any;
 					}
 				}
+
+				// resolved BEFORE reverting: a move undoes as one operation, so
+				// both halves have to pass the drift check or neither is touched.
+				const pairing = findMovePartner(sessionId, latest.toolCallId, latest.change);
+				const outsideOne = outsideEdits(
+					pairing.partner ? [latest.change, pairing.partner] : [latest.change],
+				);
+				if (!force && outsideOne.length > 0) return refuseDrift(outsideOne);
 
 				const reverted = revertChange(sessionId, latest.toolCallId, latest.change.id);
 				if (!reverted) {
@@ -298,7 +357,6 @@ export function createUndoEditTool(): ToolDefinition {
 				 * either half reverts its partner, which is what "undo the move"
 				 * has always meant to whoever typed it.
 				 */
-				const pairing = findMovePartner(sessionId, latest.toolCallId, reverted);
 				if (pairing.partner) {
 					const partnerPath = pairing.partner.uri.replace(/^file:\/\//, "");
 					const undonePartner = revertChange(sessionId, latest.toolCallId, pairing.partner.id);
@@ -315,7 +373,10 @@ export function createUndoEditTool(): ToolDefinition {
 						`If a file seems missing, undo one of these too: ${pairing.ambiguous.join(", ")})`;
 				}
 
-				return { content: [{ type: "text" as const, text: result }], details: { header: resolved } } as any;
+				return {
+					content: [{ type: "text" as const, text: result + discardNote(outsideOne) }],
+					details: { header: resolved },
+				} as any;
 			});
 		},
 	};
@@ -345,9 +406,8 @@ function findRedoCandidate(
 ): { toolCallId: string; change: FileChange } | null {
 	const uri = `file://${path.resolve(filePath)}`;
 	for (const toolCallId of activeToolCallIds) {
-		const match = loadChanges(sessionId, toolCallId)
-			.filter((c) => c.reverted && c.uri === uri)
-			.sort((a, b) => a.timestamp - b.timestamp)[0];
+		// one record per path per call, so the first match is the only match.
+		const match = loadChanges(sessionId, toolCallId).find((c) => c.reverted && c.uri === uri);
 		if (match) return { toolCallId, change: match };
 	}
 	return null;
@@ -369,6 +429,12 @@ export function createRedoEditTool(): ToolDefinition {
 			path: Type.String({
 				description: "The absolute path to the file whose undone change should be re-applied.",
 			}),
+			force: Type.Optional(
+				Type.Boolean({
+					description:
+						"Re-apply even if the file has been modified by something other than this tool since the undo. Those modifications are not recorded anywhere and will be lost.",
+				}),
+			),
 		}),
 
 		renderCall(args: any, theme: any, context: any) {
@@ -444,11 +510,33 @@ export function createRedoEditTool(): ToolDefinition {
 					}
 				}
 
-				// oldest first, so a call that wrote the same path twice ends on
-				// its final state rather than its first.
-				const siblings = loadChanges(sessionId, candidate.toolCallId)
-					.filter((c) => c.reverted)
-					.sort((a, b) => a.timestamp - b.timestamp);
+				const siblings = loadChanges(sessionId, candidate.toolCallId).filter((c) => c.reverted);
+
+				/*
+				 * THE SAME QUESTION UNDO ASKS, POINTED THE OTHER WAY.
+				 *
+				 * The records check above only sees writes this tool made. A
+				 * shell command, a formatter or another editor records nothing,
+				 * so redo would happily write its remembered copy over work that
+				 * exists in the file and nowhere else. Undo was given this guard
+				 * first and redo was not, on my mistaken claim that redo already
+				 * had it — it had a different one. Reported by grok-4.5.
+				 *
+				 * redo starts from what the UNDO restored, so `before` is the
+				 * copy the file should be holding.
+				 */
+				const force = (params as any).force === true;
+				const outside = siblings
+					.filter((c) => !matchesRecordedState(c, "before"))
+					.map((c) => path.basename(c.uri.replace(/^file:\/\//, "")));
+				if (!force && outside.length > 0) {
+					return fail(
+						`cannot redo: ${outside.join(", ")} ${outside.length === 1 ? "has" : "have"} been changed ` +
+							`by something other than this tool since that undo — a shell command, a formatter, ` +
+							`or another editor. Those changes were never recorded, so redoing would erase them ` +
+							`for good. Pass force: true to redo anyway.`,
+					);
+				}
 
 				const redone: string[] = [];
 				for (const change of siblings) {
@@ -470,8 +558,15 @@ export function createRedoEditTool(): ToolDefinition {
 								.map((p) => path.basename(p))
 								.join(", ")})`
 						: "";
+				// forcing is allowed but never silent, exactly as in undo: the
+				// diff describes only the tool's own change.
+				const discarded =
+					outside.length > 0
+						? `\n\n(forced — discarded changes made outside this tool in ${outside.join(", ")}; ` +
+							`those bytes were not recorded anywhere and are gone)`
+						: "";
 				return {
-					content: [{ type: "text" as const, text: diff + note }],
+					content: [{ type: "text" as const, text: diff + note + discarded }],
 					details: { header: resolved },
 				} as any;
 			});

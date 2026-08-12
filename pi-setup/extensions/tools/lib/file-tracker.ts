@@ -161,6 +161,44 @@ export function loadChanges(sessionId: string, toolCallId: string): FileChange[]
  * mark a specific change as reverted and restore the file.
  * returns the change record, or null if not found / already reverted.
  */
+/** which recorded copy the file is expected to be holding right now. */
+export type RecordedSide = "before" | "after";
+
+/**
+ * does the file still hold exactly the copy we expect it to?
+ *
+ * NEITHER DIRECTION MAY OVERWRITE WHAT IT DID NOT PUT THERE.
+ *
+ * Undo and redo both work by writing a remembered copy back, and that is safe
+ * only while the file still holds the copy that step started from — `after`
+ * for undo (what the tool wrote), `before` for redo (what the undo restored).
+ * Anything else that touched it since — a shell command, a formatter, another
+ * editor — left content that was never recorded anywhere: it exists in the
+ * file and nowhere else. Overwriting it is the one loss this tool cannot walk
+ * back, since every other write here is itself reversible from these records.
+ *
+ * Both directions need this, and asking in only one is not a half fix but a
+ * false sense of one: whichever side is left unchecked is a complete path to
+ * the same silent loss.
+ */
+export function matchesRecordedState(change: FileChange, side: RecordedSide = "after"): boolean {
+	const filePath = change.uri.replace(/^file:\/\//, "");
+	let current: string | null = null;
+	try {
+		current = fs.readFileSync(filePath, "utf-8");
+	} catch {
+		// missing, unreadable, or a directory — none of which is what we left.
+		current = null;
+	}
+	// the existence fields are absent on older records: `afterExists` postdates
+	// deletion support, so those all left a file behind; `beforeExists` falls
+	// back to `isNewFile`, exactly as `revertChange` does.
+	const shouldExist =
+		side === "after" ? (change.afterExists ?? true) : (change.beforeExists ?? !change.isNewFile);
+	const expected = side === "after" ? change.after : change.before;
+	return shouldExist ? current === expected : current === null;
+}
+
 export function revertChange(sessionId: string, toolCallId: string, changeId: string): FileChange | null {
 	const p = changePath(sessionId, toolCallId, changeId);
 	if (!fs.existsSync(p)) return null;

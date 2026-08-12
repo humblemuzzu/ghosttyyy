@@ -1633,6 +1633,145 @@ describe("undo and redo as one operation", () => {
 		expect(read(f)).toBe("fresh\n");
 	});
 
+	test("refuses to erase an edit made outside the tool", async () => {
+		/*
+		 * the last unrecoverable loss. every other undo is itself undoable from
+		 * the records — but bytes written by a shell command or a formatter were
+		 * never recorded, so overwriting them ends them. `redo_edit` always
+		 * refused on a changed file; undo checking nothing was the asymmetry.
+		 */
+		const f = fixture("original\n");
+		const id = `drift-${calls}`;
+		await tool.execute(id, { path: f, old_string: "original", new_string: "by-tool" }, undefined, undefined, ctx);
+
+		// something else writes to the file — a script, a formatter, an editor
+		fs.writeFileSync(path.join(DIR, f), "by-tool\nappended-by-hand\n");
+
+		const result = await runUndo([id], { path: path.join(DIR, f) });
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toMatch(/changed by something other than this tool/i);
+		expect(read(f)).toBe("by-tool\nappended-by-hand\n");
+	});
+
+	test("force: true undoes anyway, for when you meant it", async () => {
+		// a check that cannot be overridden is one people route around entirely.
+		const f = fixture("original\n");
+		const id = `drift-force-${calls}`;
+		await tool.execute(id, { path: f, old_string: "original", new_string: "by-tool" }, undefined, undefined, ctx);
+		fs.writeFileSync(path.join(DIR, f), "by-tool\nappended-by-hand\n");
+
+		const result = await runUndo([id], { path: path.join(DIR, f), force: true });
+		expect(result.isError).toBeFalsy();
+		expect(read(f)).toBe("original\n");
+		// and it says what it destroyed — the diff alone describes only the
+		// tool's own change, so forcing would otherwise leave no trace.
+		expect(result.content[0].text).toMatch(/discarded changes made outside this tool/i);
+		expect(result.content[0].text).toContain(f);
+	});
+
+	test("stays silent when the file is exactly as the tool left it", async () => {
+		// the check must cost nothing in the normal case, or it becomes noise
+		// that gets forced without reading.
+		const f = fixture("v1\n");
+		const id = `drift-clean-${calls}`;
+		await tool.execute(id, { path: f, old_string: "v1", new_string: "v2" }, undefined, undefined, ctx);
+		const result = await runUndo([id], { path: path.join(DIR, f) });
+		expect(result.isError).toBeFalsy();
+		expect(result.content[0].text).not.toMatch(/other than this tool/i);
+		expect(read(f)).toBe("v1\n");
+	});
+
+	test("one drifted file blocks the whole batch, undoing none of it", async () => {
+		// the batch is one operation: undoing the clean half and refusing the
+		// rest would leave a state neither the caller nor the records describe.
+		const a = fixture("a1\n");
+		const b = fixture("b1\n");
+		const id = `drift-batch-${calls}`;
+		await tool.execute(
+			id,
+			{
+				ops: [
+					{ path: a, old_string: "a1", new_string: "a2" },
+					{ path: b, old_string: "b1", new_string: "b2" },
+				],
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		fs.writeFileSync(path.join(DIR, b), "b2\nhand-written\n");
+
+		const result = await runUndo([id], { path: path.join(DIR, a) });
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain(b);
+		expect(read(a)).toBe("a2\n");
+		expect(read(b)).toBe("b2\nhand-written\n");
+	});
+
+	test("a file deleted outside the tool still counts as drift", async () => {
+		// undoing a creation means removing the file; if someone already removed
+		// it and put something else there, that something else is not ours.
+		const created = freshName();
+		const id = `drift-gone-${calls}`;
+		await tool.execute(id, { path: created, content: "made\n" }, undefined, undefined, ctx);
+		fs.writeFileSync(path.join(DIR, created), "replaced entirely\n");
+
+		const result = await runUndo([id], { path: path.join(DIR, created) });
+		expect(result.isError).toBe(true);
+		expect(read(created)).toBe("replaced entirely\n");
+	});
+
+	test("redo refuses to erase an edit made outside the tool", async () => {
+		/*
+		 * the same hole as undo's, in the other direction — and it survived the
+		 * undo fix because I justified that fix by claiming redo already had
+		 * this guard. It had a different one: the records check sees only writes
+		 * this tool made, and a shell command records nothing. Reported by
+		 * grok-4.5.
+		 */
+		const f = fixture("v1\n");
+		const id = `redo-drift-${calls}`;
+		await tool.execute(id, { path: f, old_string: "v1", new_string: "v2" }, undefined, undefined, ctx);
+		await runUndo([id], { path: path.join(DIR, f) });
+		expect(read(f)).toBe("v1\n");
+
+		// something outside the tool writes between the undo and the redo
+		fs.writeFileSync(path.join(DIR, f), "v1-HACKED\n");
+
+		const result = await runRedo([id], { path: path.join(DIR, f) });
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toMatch(/changed by something other than this tool/i);
+		expect(read(f)).toBe("v1-HACKED\n");
+	});
+
+	test("redo force: true re-applies anyway and says what it destroyed", async () => {
+		const f = fixture("v1\n");
+		const id = `redo-drift-force-${calls}`;
+		await tool.execute(id, { path: f, old_string: "v1", new_string: "v2" }, undefined, undefined, ctx);
+		await runUndo([id], { path: path.join(DIR, f) });
+		fs.writeFileSync(path.join(DIR, f), "v1-HACKED\n");
+
+		const result = await runRedo([id], { path: path.join(DIR, f), force: true });
+		expect(result.isError).toBeFalsy();
+		expect(read(f)).toBe("v2\n");
+		expect(result.content[0].text).toMatch(/discarded changes made outside this tool/i);
+	});
+
+	test("redo of a creation refuses when the file was re-created outside", async () => {
+		// undoing a creation removes the file; if something else then puts a
+		// file back at that path, those bytes are not ours to overwrite.
+		const created = freshName();
+		const id = `redo-recreated-${calls}`;
+		await tool.execute(id, { path: created, content: "made\n" }, undefined, undefined, ctx);
+		await runUndo([id], { path: path.join(DIR, created) });
+		expect(exists(created)).toBe(false);
+
+		fs.writeFileSync(path.join(DIR, created), "someone else put this here\n");
+		const result = await runRedo([id], { path: path.join(DIR, created) });
+		expect(result.isError).toBe(true);
+		expect(read(created)).toBe("someone else put this here\n");
+	});
+
 	test("redo with nothing undone says so instead of guessing", async () => {
 		const a = fixture("x\n");
 		const id = `redo-none-${calls}`;
