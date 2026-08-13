@@ -162,21 +162,67 @@ export default function deepseekPeakExtension(pi: ExtensionAPI) {
 		}
 	};
 
+	/**
+	 * A throw inside a setInterval callback is an uncaughtException, and pi's
+	 * handler for that KILLS THE PROCESS — so anything on this timer must be
+	 * caught here, not left to bubble.
+	 *
+	 * The failure that made this necessary: `pi.events.emit` calls the runtime's
+	 * `assertActive()`, which throws once the ctx captured at session_start goes
+	 * stale. `session_shutdown` below normally clears the timer first, but this
+	 * is the layer that has to hold if a future pi path invalidates without
+	 * emitting it. A stale runtime never comes back, so stop rather than retry —
+	 * and stay silent, because a console write during a TUI render scribbles the
+	 * screen and the next session's own instance is already painting.
+	 */
+	const paintSafely = (force = false): void => {
+		try {
+			paint(force);
+		} catch {
+			enabled = false;
+			stop();
+		}
+	};
+
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		ctxRef = ctx;
 		stop();
 		// the editor component may not exist yet at session_start; the poll
 		// re-emits, so a dropped first paint self-heals within POLL_MS.
-		paint(true);
-		timer = setInterval(() => paint(), POLL_MS);
+		paintSafely(true);
+		// hidden (/deepseek off) or already broken — a poll that can only no-op
+		// is not worth owning.
+		if (!enabled) return;
+		timer = setInterval(() => paintSafely(), POLL_MS);
 		timer.unref?.();
+	});
+
+	/**
+	 * MANDATORY for any process-lifetime timer in a pi extension.
+	 *
+	 * /new, /resume, fork, import and /reload all tear the session down and then
+	 * mark the old extension ctx stale; every later call through the old `pi`
+	 * throws. The extension factory is re-run for the replacement session, so the
+	 * NEW instance paints correctly — but the OLD closure's interval is owned by
+	 * nothing and keeps firing against the dead runtime until it kills pi.
+	 *
+	 * pi emits session_shutdown BEFORE invalidating, which is the only window in
+	 * which this teardown is legal. `tools/agent-message.ts` does the same.
+	 */
+	pi.on("session_shutdown", async () => {
+		stop();
+		// paint() is a no-op without a ctx, so a timer that somehow outlives
+		// stop() still cannot reach the stale runtime.
+		ctxRef = null;
+		lastClock = null;
+		lastLabel = null;
 	});
 
 	// switching to/from deepseek changes the label's urgency color
 	pi.on("model_select", async (_event, ctx) => {
 		ctxRef = ctx;
-		paint(true);
+		paintSafely(true);
 	});
 
 	pi.registerCommand("deepseek", {
@@ -203,8 +249,8 @@ export default function deepseekPeakExtension(pi: ExtensionAPI) {
 			if (cmd === "on" || cmd === "show") {
 				enabled = true;
 				stop();
-				paint(true);
-				timer = setInterval(() => paint(), POLL_MS);
+				paintSafely(true);
+				timer = setInterval(() => paintSafely(), POLL_MS);
 				timer.unref?.();
 				ctx.ui.notify("DeepSeek label + clock restored.", "info");
 				return;

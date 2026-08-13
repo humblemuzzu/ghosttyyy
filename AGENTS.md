@@ -586,6 +586,57 @@ now return whether anything actually changed, `LabeledEditor.requestRepaint()`
 is public, and the two event handlers repaint on a real change only. Existing
 internal callers ignore the return value and are unaffected.
 
+### It killed pi once — a timer must be torn down at `session_shutdown`
+
+**Fixed 2026-08-13, same evening it shipped.** A session died with:
+
+```
+pi exiting due to uncaughtException:
+Error: This extension ctx is stale after session replacement or reload …
+    at paint (~/.pi/agent/extensions/deepseek-peak/index.ts)
+    at Timeout._onTimeout (…)
+```
+
+**Mechanism, reproduced end-to-end.** `/new`, `/resume`, `/fork`, session
+import and `/reload` all call `AgentSession.dispose()` (or `reload()`), which
+emits `session_shutdown` and then **invalidates the extension runtime** — every
+later call through that `pi` object throws (`assertActive`,
+`dist/core/extensions/loader.js`). The replacement session re-runs each
+extension factory with a fresh runtime, so the NEW instance is fine. But the OLD
+closure's `setInterval` is owned by nothing, keeps its captured `pi`, and the
+next tick that actually calls `pi.events.emit` throws **inside a timer
+callback** — an uncaughtException, which pi answers with `process.exit(1)`.
+
+**Why it looked like sleep broke it, and why it looked random.** `paint()`
+returns early while the label TEXT is unchanged, so the doomed tick is the first
+one after the clock rolls a minute — up to 60s after the `/new`, with nothing on
+screen connecting the two. macOS sleep suspends timers, so a replacement done
+just before closing the lid detonates **on wake**. Confirmed by reproduction in
+tmux: pi survived `/new` for 9s, then died at the minute boundary with a
+byte-identical stack.
+
+**Fix (both layers, `deepseek-peak/index.ts`).** `pi.on("session_shutdown")`
+clears the timer and drops `ctxRef` — that event is emitted *before*
+invalidation, which is the only legal window. `paintSafely()` then wraps every
+paint: a throw out of a timer is fatal, so it is caught, and since a stale
+runtime never recovers it stops the poll instead of retrying. Silently — a
+`console.error` during a TUI render scribbles the screen, and the new session's
+own instance is already painting.
+
+**The general rule for this repo:** an extension timer that outlives a session
+must be cleared on `session_shutdown`, and anything a timer calls must be inside
+a `try`/`catch`. `tools/agent-message.ts` already did this (`pi.on("session_shutdown",
+async () => stop())`); it was the only other process-lifetime interval that
+touches a `pi.*` runtime API. The two component-scoped intervals — the editor's
+spinner and `session-breakdown`'s progress ticker — only touch local component
+state, so they cannot reach `assertActive`.
+
+Guarded by `deepseek-peak/index.test.ts` (5 tests against a stub `pi` whose
+`events.emit` can be made stale exactly like the real runtime). Verified by
+sabotage: removing the handler and the catch fails 4 of the 5. Verified live:
+`/new` twice, `/deepseek off`/`on` across a replacement, alive across three
+minute boundaries with the clock still ticking and an empty stderr.
+
 ### Verified (2026-08-13)
 
 51 unit tests, including: every hour of the day against the published table,
