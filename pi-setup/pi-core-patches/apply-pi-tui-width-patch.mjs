@@ -12,7 +12,7 @@
  *
  * WHY A SCRIPT (not a stored file): pi-tui exists in MULTIPLE copies —
  * pi core's node_modules, ~/.pi/agent/npm/node_modules (used by ALL npm
- * packages: pi-tool-display, pi-sub-bar, condensed-milk, pi-ask, ...), and
+ * packages: pi-tool-display, pi-sub-bar, pi-token-burden, pi-context, ...), and
  * inactive packages. Versions differ (0.74.x, 0.80.x). A textual, idempotent
  * patch survives version drift; whole-file copies don't.
  *

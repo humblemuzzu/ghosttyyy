@@ -10,6 +10,86 @@
     "paper": {
       "url": "http://127.0.0.1:29979/mcp",
       "auth": false
+    },
+    "cloudflare": {
+      "url": "https://mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-docs": {
+      "url": "https://docs.mcp.cloudflare.com/mcp",
+      "auth": false,
+      "protocolVersion": "auto"
+    },
+    "cloudflare-blog": {
+      "url": "https://blog.mcp.cloudflare.com/mcp",
+      "auth": false,
+      "protocolVersion": "auto"
+    },
+    "cloudflare-stack": {
+      "url": "https://stack.mcp.cloudflare.com/mcp",
+      "auth": false,
+      "protocolVersion": "auto"
+    },
+    "cloudflare-agents-docs": {
+      "url": "https://agents.cloudflare.com/mcp",
+      "auth": false,
+      "protocolVersion": "auto"
+    },
+    "cloudflare-bindings": {
+      "url": "https://bindings.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-builds": {
+      "url": "https://builds.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-observability": {
+      "url": "https://observability.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-containers": {
+      "url": "https://containers.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-browser": {
+      "url": "https://browser.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-logpush": {
+      "url": "https://logs.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-ai-gateway": {
+      "url": "https://ai-gateway.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-auditlogs": {
+      "url": "https://auditlogs.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-dns-analytics": {
+      "url": "https://dns-analytics.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-dex": {
+      "url": "https://dex.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
+    },
+    "cloudflare-casb": {
+      "url": "https://casb.mcp.cloudflare.com/mcp",
+      "auth": "oauth",
+      "protocolVersion": "auto"
     }
   }
 }

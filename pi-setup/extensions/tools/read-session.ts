@@ -2,7 +2,7 @@
  * read_session tool — extract relevant context from a pi session via sub-agent.
  *
  * loads a full session tree (all branches), renders it as structured markdown,
- * then spawns a gemini flash sub-agent to extract only the information
+ * then spawns a claude-sonnet-5 sub-agent to extract only the information
  * relevant to the stated goal. the agent sees the complete tree — including
  * abandoned branches — so it can understand decision points and context.
  *
@@ -362,7 +362,7 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 				task,
 				model: MODEL,
 				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
-				builtinTools: [],
+				builtinTools: ["read"],
 				extensionTools: [],
 				systemPromptBody: systemPrompt,
 				signal,

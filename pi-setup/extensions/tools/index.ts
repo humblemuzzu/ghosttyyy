@@ -282,13 +282,28 @@ export default function (pi: ExtensionAPI) {
 	 * our mutex locking, undo tracking, secret scrubbing or permission checks.
 	 * so the built-ins have to be dropped from the active set explicitly.
 	 *
+	 * also hidden: pi-sub-core's usage tools (`get_current_usage`,
+	 * `get_all_usage`, `sub_get_usage`, `sub_get_all_usage`). they are read-only
+	 * quota snapshots the agent has no reason to call — the same data is always
+	 * visible in the status bar (pi-sub-bar) — and a model that calls them
+	 * burns a turn and API latency for nothing. keeping them out of the active
+	 * set keeps them out of the tool list the model sees.
+	 *
 	 * done at session_start rather than at registration because the active set
 	 * is assembled after every extension has registered.
 	 */
 	pi.on("session_start", () => {
 		const active = pi.getActiveTools();
-		const filtered = active.filter((name) => name !== "edit" && name !== "write");
-		// only touch the set if a native actually showed up; setActiveTools on
+		const filtered = active.filter(
+			(name) =>
+				name !== "edit" &&
+				name !== "write" &&
+				name !== "get_current_usage" &&
+				name !== "get_all_usage" &&
+				name !== "sub_get_usage" &&
+				name !== "sub_get_all_usage",
+		);
+		// only touch the set if something actually showed up; setActiveTools on
 		// an unchanged list is a pointless write that other extensions may react to.
 		if (filtered.length !== active.length) {
 			pi.setActiveTools(filtered);

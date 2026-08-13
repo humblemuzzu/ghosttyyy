@@ -3,7 +3,7 @@
  *
  * extracts DisplayItem, message parsing, and TUI tree rendering
  * from the generic subagent extension. dedicated tools (finder,
- * oracle, Task) use these for consistent renderResult display.
+ * oracle, code_review, delegate, librarian) use these for consistent renderResult display.
  *
  * reimplemented here because tools/ can't import from sub-agents/
  * (separate nix store paths).

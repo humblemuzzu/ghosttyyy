@@ -8,7 +8,7 @@
  *   librarian    -> query
  *   oracle       -> task
  *   code_review  -> diff_description
- *   Task         -> prompt
+ *   delegate     -> prompt
  *
  * a model that just called oracle({ task }) then calls code_review({ task }) and
  * gets "must have required properties diff_description". it retries and usually

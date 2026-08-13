@@ -28,7 +28,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { requireParam, resolveParam } from "./lib/params";
-import { piSpawn, zeroUsage, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
+import { piSpawn, resolveAliases, zeroUsage, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
 import {
 	applySessionMeta,
 	collectSubAgentImages,
@@ -47,8 +47,18 @@ const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash", "apply_patch"];
 const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash",
 	"apply_patch", "format_file", "skill", "finder",
-	"web_search", "screenshot",
+	"web_search", "read_web_page", "screenshot",
 ];
+
+/**
+ * the merged, deduped, alias-resolved allowlist piSpawn turns into `--tools`.
+ * exported so tests can pin the exact tool surface a child actually receives —
+ * testing the raw constants alone would drift from what the child gets, since
+ * aliasing (glob -> find) and dedupe happen at the spawn seam.
+ */
+export function delegateAllowlist(): string[] {
+	return resolveAliases([...BUILTIN_TOOLS, ...EXTENSION_TOOLS]);
+}
 
 /** parameter names models actually reach for, canonical first. */
 const PROMPT_PARAMS = ["prompt", "task", "instructions"] as const;
@@ -82,7 +92,8 @@ export function createDelegateTool(): ToolDefinition {
 		label: "Delegate",
 		description:
 			"Delegate a sub-task to a sub-agent that has access to the following tools: " +
-			"read, grep, find, ls, bash, apply_patch, format_file, skill, finder, web_search.\n\n" +
+			"read, grep, find, ls, bash, apply_patch, format_file, skill, finder, " +
+			"web_search, read_web_page, screenshot.\n\n" +
 			"When to use delegate:\n" +
 			"- Complex multi-step tasks that are independent of your current thread\n" +
 			"- Work whose intermediate output would flood your context but is not needed afterwards\n" +

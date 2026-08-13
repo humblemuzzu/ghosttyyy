@@ -3,7 +3,7 @@
  *
  * extracts the spawn-parse-collect loop from the generic subagent
  * extension into a reusable function. each dedicated tool (finder,
- * oracle, Task) calls piSpawn() with its own config.
+ * oracle, code_review, delegate, librarian) calls piSpawn() with its own config.
  *
  * uses shared interpolation from ./interpolate for template variables
  * ({cwd}, {roots}, {date}, etc.) in system prompts.
@@ -28,8 +28,10 @@ import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
  * without those capabilities.
  *
  * ported from bdsqqq's tool-harness TOOL_ALIASES, retargeted to our registered
- * names (his map points edit_file/create_file at `apply_patch`; ours will too
- * once apply_patch replaces edit/write).
+ * names. every mutation name now resolves to apply_patch: edit-file.ts and
+ * create-file.ts are gone, and pi's natives are hidden at session_start (see
+ * index.ts), so a config still asking for "edit"/"write" would otherwise
+ * silently grant the sub-agent NO way to change a file.
  */
 const TOOL_ALIASES: Record<string, string> = {
 	glob: "find",

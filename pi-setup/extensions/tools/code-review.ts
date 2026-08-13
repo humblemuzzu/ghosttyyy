@@ -1,7 +1,7 @@
 /**
- * code_review tool — structured diff review via gemini sub-agent.
+ * code_review tool — structured diff review via a claude-sonnet-5 sub-agent.
  *
- * spawns a gemini sub-agent that:
+ * spawns a claude-sonnet-5 sub-agent that:
  * 1. runs git diff (or other bash command) based on diff_description
  * 2. reads changed files for context
  * 3. produces XML <codeReview> report with per-comment severity/type
@@ -10,8 +10,7 @@
  * is injected as a follow-up message after exploration via piSpawn's
  * RPC mode — follow-up injection after exploration completes.
  *
- * v1: main review agent only. checks system (parallel workspace-defined
- * .md checks via haiku) deferred.
+ * v1: main review agent only.
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";

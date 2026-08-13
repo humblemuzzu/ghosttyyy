@@ -1,16 +1,16 @@
 /**
- * finder tool — fast parallel code search via gemini flash sub-agent.
+ * finder tool — fast parallel code search via a claude-sonnet-5 sub-agent.
  *
  * replaces the generic subagent(agent: "finder", task: ...) pattern
  * with a dedicated tool. the model calls
  * finder(query: "...") instead of routing through the dispatcher.
  *
- * spawns `pi --mode json` with gemini flash, constrained to
- * read-only tools (read, grep, find, ls, glob). the finder agent
+ * spawns `pi --mode json` with claude-sonnet-5, constrained to
+ * read-only tools (read, grep, find, ls). the finder agent
  * maximizes parallelism (8+ tool calls per turn) and completes
  * within ~3 turns.
  *
- * system prompt loaded from sops-decrypted prompts at init time.
+ * system prompt loaded from agents/agent.amp.finder.md at init time.
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -47,7 +47,7 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 			"- You need answers to questions like \"Where do we validate JWT headers?\"\n\n" +
 			"WHEN NOT TO USE THIS TOOL:\n" +
 			"- When you know the exact file path - use Read directly\n" +
-			"- When looking for specific symbols or exact strings - use glob or Grep\n" +
+			"- When looking for specific symbols or exact strings - use find or Grep\n" +
 			"- When you need to create, modify files, or run terminal commands\n\n" +
 			"USAGE GUIDELINES:\n" +
 			"1. Always spawn multiple search agents in parallel to maximise speed.\n" +

@@ -1,5 +1,5 @@
 /**
- * oracle tool — expert technical advisor via gpt-5.2 sub-agent.
+ * oracle tool — expert technical advisor via a claude-opus-4-6 sub-agent.
  *
  * replaces the generic subagent(agent: "oracle", task: ...) pattern
  * with a dedicated tool. the model calls
@@ -9,7 +9,7 @@
  * final message comprehensive. only the last assistant message is
  * returned to the parent agent.
  *
- * system prompt loaded from sops-decrypted prompts at init time.
+ * system prompt loaded from agents/agent.amp.oracle.md at init time.
  */
 
 import * as fs from "node:fs";
@@ -80,7 +80,7 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 			"You should NOT consult the oracle for:\n" +
 			"- File reads or simple keyword searches (use Read or Grep directly)\n" +
 			"- Codebase searches (use finder)\n" +
-			"- Basic code modifications (do it yourself or use Task)\n\n" +
+			"- Basic code modifications (do it yourself or use delegate)\n\n" +
 			"Usage guidelines:\n" +
 			"- Be specific about what you want reviewed, planned, or debugged\n" +
 			"- Provide relevant context. If you know which files are involved, list them.\n\n" +

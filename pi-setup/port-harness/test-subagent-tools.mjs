@@ -38,8 +38,8 @@ process.env.PI_BIN = "/tmp/pi-wrapper.sh";
 const res = await piSpawn({
   cwd: process.cwd(),
   task: "Reply with exactly the word DONE and nothing else.",
-  model: "claude-haiku-4-5",
-  parentModel: "anthropic/claude-opus-4-8",
+  model: "claude-sonnet-5",
+  parentModel: "anthropic/claude-opus-5",
   ...cfg,
 });
 console.log(`\n=== ${which}: exit=${res.exitCode} ===`);

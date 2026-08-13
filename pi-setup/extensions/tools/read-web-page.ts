@@ -4,7 +4,7 @@
  * cheerio strips chrome (nav, footer, scripts), finds main content area,
  * converts to clean markdown. ~95% size reduction on typical pages.
  *
- * `prompt` spawns a gemini flash sub-agent that receives page content
+ * `prompt` spawns a claude-sonnet-5 sub-agent that receives page content
  * and returns AI-generated prose (36/1202 calls use this pattern).
  * `start_index`/`max_length` provide character-level pagination (~16 calls).
  * `raw` skips conversion entirely (1 call).
@@ -212,7 +212,7 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 					task,
 					model: PROMPT_MODEL,
 					parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
-					builtinTools: [],
+					builtinTools: ["read"],
 					extensionTools: [],
 					systemPromptBody: promptSystem,
 					signal,

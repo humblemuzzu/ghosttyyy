@@ -16,13 +16,13 @@ The pi setup lives in `pi-setup/` and is deployed to `~/.pi/agent/` via `pi-setu
 
 **See `pi-setup/2026-05-17-migration-log.md`** for the full record of the v0.74.0 migration, architecture decisions, CrofAI fixes, context management switch, and package cleanup. If anything breaks, check there first.
 
-### bdsqqq Port — IN PROGRESS (read before changing tools/subagents)
+### bdsqqq Port — COMPLETE (read before changing tools/subagents)
 
-**See `pi-setup/2026-07-30-bdsqqq-port.md`.** Ongoing port of selected pieces from
-[bdsqqq/dots](https://github.com/bdsqqq/dots). Phases 0-3 are done (subagent tool
+**See `pi-setup/2026-07-30-bdsqqq-port.md`.** Port of selected pieces from
+[bdsqqq/dots](https://github.com/bdsqqq/dots). All phases are done (subagent tool
 injection fixed, `web_search` replaced with Parallel AI, `agent_message` added,
-`search_sessions` rebuilt on a branch model, condensed-milk removed). Phase 4
-(`apply_patch` replacing `edit`/`write`, `delegate` replacing `Task`) is next.
+`search_sessions` rebuilt on a branch model, condensed-milk removed; Phase 4:
+`apply_patch` lanes replaced `edit`/`write`, `delegate` replaced `Task`).
 
 That file records **why** several things are the way they are — in particular the
 `pi-claude-code-use` OAuth tool filter that silently strips every custom tool from
@@ -32,7 +32,7 @@ Verification harnesses live in `pi-setup/port-harness/`.
 ### Provider Chain
 
 ```
-pi CLI (v0.83.0) — @earendil-works/pi-coding-agent
+pi CLI (v0.84.1) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
@@ -42,7 +42,7 @@ pi CLI (v0.83.0) — @earendil-works/pi-coding-agent
 Current default provider is `anthropic` with **`claude-opus-5`** (set in settings.json, and listed in `enabledModels` so it appears in `/model`). `kimi-code`/`kimi-for-coding` (K2.7 Code) remains available via Kimi Code subscription OAuth, and `openai-codex` with `gpt-5.5`/`gpt-5.6-sol` is also available. Switch the default any time with `/model`.
 
 **When you change the default provider, also update `pi-sub-core-settings.json`:**
-its `defaultProvider` is what `get_current_usage` reports on, and a provider
+its `defaultProvider` is what the status bar / usage refresh reports on, and a provider
 left at `enabled: false` there returns `{}` no matter what. Anthropic is now
 `enabled: "auto"` + `fetchStatus: true`, which surfaces real Claude Max quota
 (5-hour and weekly windows) in the status bar and in both usage tools.
@@ -67,8 +67,7 @@ See `pi-setup/2026-07-30-bdsqqq-port.md` §3.1.
 The system prompt is assembled in layers:
 
 1. **`system-prompt.ts`** — loads `agents/prompt.amp.system.md` template, interpolates variables (`{identity}`, `{harness}`, `{date}`, `{cwd}`, `{roots}`, `{os}`, `{repo}`, `{sessionId}`, `{ls}`, `{harness_docs_section}`)
-2. **`tool-harness.ts`** — env-gated tool filtering based on active workspace
-3. **`brain-loader.ts`** — (disabled) injects `~/Documents/brain/MEMORY.md`, `USER.md`, project memory, and update protocol
+2. **`tools/lib/pi-spawn.ts`** — sub-agent tool surfaces: per-agent `--tools` allowlists merged from each tool's `BUILTIN_TOOLS`/`EXTENSION_TOOLS` consts (replaced the old `tool-harness.ts` env-gated filtering)
 
 ---
 
@@ -395,9 +394,9 @@ This meant finder/oracle/librarian/code-review always inherited the parent model
 
 Conditional resolution based on parent provider:
 - **Parent is Anthropic** (provider `anthropic` or `claude-bridge`, or model name contains `claude`) → use the designated model (`claude-sonnet-5`, `claude-opus-4-6` — see "Sub-agent Models")
-- **Parent is non-Anthropic** (ZAI, local-llama, etc.) → inherit parent model (can't use Claude without separate API access)
+- **Parent is non-Anthropic** (deepseek, kimi-code, sakana, llama-local, openai-codex, etc.) → inherit parent model (can't use Claude without separate API access)
 
-This means subagents use cheap Claude models when you're on Claude, but don't break when you're on ZAI/local.
+This means subagents use Claude models when you're on Claude, but don't break when you're on a non-Anthropic provider.
 
 ---
 
@@ -435,12 +434,12 @@ Nothing to re-apply — this is an extension, deployed by `install.sh` (`cp -R e
 
 ### What It Does
 
-Extends pi's existing @mention system to support agent tool routing. When the user types `@oracle review this auth flow`, a hidden directive is injected into the context telling the model to call the `oracle` tool — not Task, not do it itself.
+Extends pi's existing @mention system to support agent tool routing. When the user types `@oracle review this auth flow`, a hidden directive is injected into the context telling the model to call the `oracle` tool — not delegate, not do it itself.
 
 ### How It Works
 
 1. **Parse** — standalone regex `(?<![\w/])@(oracle|finder|codereview|task)(?=[\s.,;:!?)\]}]|$)` matches `@oracle` without requiring `/value` (unlike `@commit/sha`)
-2. **Resolve** — `agent-source.ts` maps each kind to its tool name (e.g. `codereview` → `code_review`, `task` → `Task`)
+2. **Resolve** — `agent-source.ts` maps each kind to its tool name (e.g. `codereview` → `code_review`, `task` → `delegate`)
 3. **Render** — produces `AGENT DIRECTIVE: Call the \`oracle\` tool for this request. The user explicitly tagged @oracle. Do not substitute another tool.`
 4. **Inject** — `mentions.ts` injects the directive as a hidden `display: false` custom message in the `context` hook
 
@@ -451,7 +450,7 @@ Extends pi's existing @mention system to support agent tool routing. When the us
 | `@oracle` | `oracle` | Expert advisor — architecture, planning, hard bugs |
 | `@finder` | `finder` | Codebase search by concept or behavior |
 | `@codereview` | `code_review` | Code review with diff analysis |
-| `@task` | `Task` | Full subagent for independent parallel work |
+| `@task` | `delegate` | Full subagent for independent parallel work (resumable) |
 
 ### Autocomplete
 
@@ -507,13 +506,67 @@ Built on Mario Zechner's "you don't need MCP" philosophy — MCP tool definition
 |--------|-----------|--------|-------|
 | `astro` | HTTP (`url`) | `http://127.0.0.1:8089/mcp`, `auth: false` | [Astro](https://tryastro.app/docs/mcp/) ASO tool. **Local HTTP server that runs inside the Astro Mac app** — must be enabled in Astro → Settings → MCP Server (default port 8089). `auth: false` because Astro is localhost-only with no token; this stops the adapter from probing OAuth. Lazy (default): pi only connects when an `astro` tool is actually called, so the Astro app must be open + MCP enabled at call time. 60 req/min limit. Tools: `list_apps`, `search_rankings`, `get_app_keywords`, `get_app_ratings`, `extract_competitors_keywords`, `add_app`, `add_keywords`, `set_keyword_note`, `set_keyword_tag`, `manage_tag`, `search_app_store`, `get_keyword_suggestions`. |
 | `paper` | HTTP (`url`) | `http://127.0.0.1:29979/mcp`, `auth: false` | [Paper](https://paper.design/docs/mcp) design tool. **Local HTTP server that runs inside the Paper Desktop app** (macOS/Windows) — auto-starts in the background when you open a file in the app (fixed port 29979). `auth: false` because Paper is localhost-only with no token; this stops the adapter from probing OAuth. Lazy (default): pi only connects when a `paper` tool is actually called, so the Paper app must be open with a file loaded at call time. **Read+write** — the agent can create/modify shapes and content in the *currently open* design file (unlike read-only astro/Figma), so grant write permissions deliberately. Context = the currently open Paper file. Useful for design→code, syncing design tokens (e.g. from Figma), or pulling real content (e.g. from Notion) into designs. Inert (no error, adapter is lazy) if the Paper app isn't installed/running. |
+| `cloudflare` + 15 product servers | HTTP (`url`) | see "Cloudflare MCP servers" below | All remote. `auth: "oauth"` (never `true`!) + `protocolVersion: "auto"` for authenticated ones; `auth: false` for the public ones. |
+
+### Cloudflare MCP servers (added 2026-08-13)
+
+[Cloudflare's managed MCP servers](https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/).
+All are **remote Streamable HTTP** endpoints, all use `protocolVersion: "auto"` — they are stateless MCP SDK v2
+Workers (`createMcpHandler`), which is exactly the case the adapter's README cites for `"auto"`
+(modern 2026-07-28 `server/discover` negotiation with conservative legacy fallback).
+Authenticated servers use **Cloudflare OAuth** (authorization-code + PKCE, dynamic client registration,
+loopback callback, tokens in the macOS Keychain) **or** an optional static `Authorization: Bearer` API token.
+Lazy (default): nothing connects until a `cloudflare-*` tool is actually called.
+
+**`auth` must be `"oauth"`, never `true`.** `auth: true` is NOT a legal value in pi-mcp-adapter
+(valid: `"oauth"`, `"bearer"`, `false`, or omitted) and it fails **silently**: `supportsOAuth()`
+(`mcp-auth-flow.ts`) falls through to `definition.auth === undefined`, so `true` disables both OAuth
+and bearer and the server connects unauthenticated → 401. This bit us on first setup — the deployed
+entry had `"auth": true`. See `pi-setup/2026-08-13-cloudflare-mcp.md`.
+
+| Key | URL | What it is | Auth |
+|-----|-----|-----------|------|
+| `cloudflare` | `https://mcp.cloudflare.com/mcp` | **Cloudflare API** — Code Mode: `search()` + `execute()` over the whole API (~2,500 endpoints, ~1,000 tokens) + `docs` (dev docs search). Agent writes JS against a typed OpenAPI spec, executed in a Dynamic Worker sandbox with outbound restricted to api.cloudflare.com | OAuth (scope picker: Read only default / Full access / per-resource) |
+| `cloudflare-docs` | `https://docs.mcp.cloudflare.com/mcp` | Developer docs search (AutoRAG) | public |
+| `cloudflare-blog` | `https://blog.mcp.cloudflare.com/mcp` | Blog search/read | public |
+| `cloudflare-stack` | `https://stack.mcp.cloudflare.com/mcp` | Docs search over a curated stack (Cloudflare/Hono/Vite/Astro…) | public |
+| `cloudflare-agents-docs` | `https://agents.cloudflare.com/mcp` | Agents SDK docs search | public |
+| `cloudflare-bindings` | `https://bindings.mcp.cloudflare.com/mcp` | Workers platform primitives: KV, R2, D1, Hyperdrive, Workers (+ get code) | OAuth |
+| `cloudflare-builds` | `https://builds.mcp.cloudflare.com/mcp` | Workers Builds insights/management, build logs | OAuth |
+| `cloudflare-observability` | `https://observability.mcp.cloudflare.com/mcp` | Workers logs/metrics debugging (heavy — keep queries concise per Cloudflare's own troubleshooting note) | OAuth |
+| `cloudflare-containers` | `https://containers.mcp.cloudflare.com/mcp` | Ephemeral (~10 min) sandboxed dev containers (Node/Python) | OAuth |
+| `cloudflare-browser` | `https://browser.mcp.cloudflare.com/mcp` | Browser Run: fetch → HTML/Markdown/screenshot/PDF, CSS-selector scraping, async crawls | OAuth |
+| `cloudflare-logpush` | `https://logs.mcp.cloudflare.com/mcp` | Logpush job health summaries | OAuth |
+| `cloudflare-ai-gateway` | `https://ai-gateway.mcp.cloudflare.com/mcp` | AI Gateway logs, prompt/response bodies, usage | OAuth |
+| `cloudflare-auditlogs` | `https://auditlogs.mcp.cloudflare.com/mcp` | Account change-history queries + reports | OAuth |
+| `cloudflare-dns-analytics` | `https://dns-analytics.mcp.cloudflare.com/mcp` | DNS performance optimization/debugging | OAuth |
+| `cloudflare-dex` | `https://dex.mcp.cloudflare.com/mcp` | Digital Experience Monitoring (device/network/app perf, remote PCAP) | OAuth |
+| `cloudflare-casb` | `https://casb.mcp.cloudflare.com/mcp` | Cloudflare One CASB — SaaS security misconfiguration findings | OAuth |
+
+Deliberately **not** added: `radar`, `autorag` (AI Search), `graphql` — deprecated by Cloudflare
+(their READMEs direct new users to the unified `mcp.cloudflare.com/mcp` Code Mode server, which covers
+GraphQL analytics via `execute`); and `demo-day` (a demo server).
+
+**First connect (one-time per server):** run `/mcp-auth <key>` in the TUI (walks the whole browser flow),
+or headless: `mcp({ action: "auth-start", server: "cloudflare" })` → approve in the browser →
+`mcp({ action: "auth-complete", server: "cloudflare", args: { redirectUrl } })`. Tokens are stored in
+the macOS Keychain under `pi-mcp-adapter.oauth`, refreshed transparently (1 h access / 30 d refresh).
+The main server's consent screen has a scope picker (Read only is the default preset).
+
+**Bearer alternative (CI/CD):** any authenticated server also accepts a Cloudflare API token
+(user or account; `cfat_`/`cfut_` prefixes) as a static header —
+`{ "url": "https://bindings.mcp.cloudflare.com/mcp", "headers": { "Authorization": "Bearer <token>" } }`.
+**Custom headers disable implicit OAuth auto-detect**, so that shape must set `auth: "oauth"` explicitly
+if you want both. Multi-account: add a `cf-account-id` header to pin the account.
 
 To add more servers: edit `~/.pi/agent/mcp.json` (global) or a project `.mcp.json`. stdio servers use `command`/`args`; HTTP servers use `url` (+ optional `headers`/`auth`).
 
 ```json
 { "mcpServers": {
   "astro": { "url": "http://127.0.0.1:8089/mcp", "auth": false },
-  "paper": { "url": "http://127.0.0.1:29979/mcp", "auth": false }
+  "paper": { "url": "http://127.0.0.1:29979/mcp", "auth": false },
+  "cloudflare": { "url": "https://mcp.cloudflare.com/mcp", "auth": "oauth", "protocolVersion": "auto" },
+  "cloudflare-docs": { "url": "https://docs.mcp.cloudflare.com/mcp", "auth": false, "protocolVersion": "auto" }
 } }
 ```
 
@@ -529,7 +582,7 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 |---------|---------|---------|----------|
 | `@earendil-works/pi-coding-agent` | 0.84.1 | The pi agent itself (installed via homebrew npm) | **3 core patches** |
 | `@benvargas/pi-claude-code-use` | 1.0.5 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
-| `pi-context` | 2.1.2 | Context management: context_log, context_tag, context_checkout | No |
+| `pi-context` | 2.1.2 | Context management: context_checkpoint, context_timeline, context_compact | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (**config**: see below) |
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
@@ -627,14 +680,13 @@ component knows its screen position (see the research notes in the port log).
 
 ---
 
-## Extensions (13 active)
+## Extensions (12 active)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
 | Extension | File | Purpose |
 |-----------|------|---------|
 | System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` template with variable interpolation |
-| Tool Harness | `tool-harness.ts` | Env-gated tool filtering per workspace |
 | Mentions | `mentions.ts` | @mention resolution (sessions, commits) + agent directives (@oracle, @finder, @codereview, @task) |
 | Session Name | `session-name.ts` | Auto session naming |
 | Session Breakdown | `session-breakdown.ts` | `/session-breakdown` analytics command |
@@ -644,10 +696,10 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
 | Subagent Inspector | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
-| Tools | `tools/` | 27 custom tools (see below) |
+| Tools | `tools/` | 28 custom tools (see below) |
 | Local Model | `local-model.ts` | `/local` — start/stop the llama.cpp router; injects local-model rules ONLY for `llama-local` |
 
-**Note:** pi auto-discovers every `.ts` file in `extensions/` — there is no "present but disabled" state. To disable an extension, delete it or move it out of `extensions/`. `kimi-code-token.mjs` also lives here but is a helper script (called by the `kimi-code` provider), not a loaded extension. The 2026-07-23 cleanup deleted the former disabled extensions (handoff, brain-loader, opencode-zen, commandcode, pi-vcc-config) and `btw.ts` / `local-model.ts` / `crof.ts` / `import-opencode.ts` entirely — recover from git if ever needed.
+**Note:** pi auto-discovers every `.ts` file in `extensions/` — there is no "present but disabled" state. To disable an extension, delete it or move it out of `extensions/`. `kimi-code-token.mjs` also lives here but is a helper script (called by the `kimi-code` provider), not a loaded extension. The 2026-07-23 cleanup deleted the former disabled extensions (handoff, brain-loader, opencode-zen, commandcode, pi-vcc-config) and `btw.ts` / `crof.ts` / `import-opencode.ts` entirely — recover from git if ever needed. (`local-model.ts` was later rebuilt as the `/local` command — see Local Models.)
 
 ---
 
@@ -1658,14 +1710,15 @@ pi-setup/
 ├── agents/                     # 9 agent prompt templates
 │   ├── prompt.amp.system.md    # Main system prompt template
 │   ├── prompt.harness-docs.pi.md  # pi-specific docs
+│   ├── prompt.amp.read-web-page.md  # web-page Q&A prompt
 │   └── ...
 ├── themes/                     # 2 pi TUI themes
 │   ├── gruvbox.json
 │   └── nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 21 config-level skills
+├── config-skills/              # 23 config-level skills
 └── extensions/
-    ├── tools/                  # 24 custom tools + lib/ (config, prompt-patch, fs, mentions)
+    ├── tools/                  # 28 custom tools + lib/ (config, prompt-patch, fs, mentions)
     ├── pi-tool-display/
     │   └── config.json         # All tool overrides disabled (required for compatibility)
     ├── mentions.ts             # @mention resolution + agent directives extension
@@ -1741,7 +1794,7 @@ When pi or any package gets updated:
    - in `providers{}` → `PROVIDER_FACTORIES[name] is not a function`
    - in `providerOrder[]` → `Cannot read properties of undefined (reading 'enabled')`
 
-   Both surface only when `get_all_usage` runs, so a normal boot looks clean.
+   Both surface only when pi-sub-core refreshes usage (status bar / refresh), so a normal boot looks clean.
    After any pi-sub-* update, re-check both keys in
    `pi-sub-core-settings.json` **and** `pi-sub-bar-settings.json` against the
    `PROVIDER_FACTORIES` map in
@@ -1767,7 +1820,7 @@ node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs
 
 # condensed-milk — REMOVED 2026-07-30, nothing to re-apply. Do not reinstall.
 
-# pi-sub-bar — no patches needed (CrofAI + Kimi now built-in as of v1.5.0)
+# pi-sub-bar — no patches needed (re-check provider names in pi-sub-core-settings.json against the installed version after any update; see Update Workflow #3)
 
 # pi-tool-display config (verify exists, recreate if missing)
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json

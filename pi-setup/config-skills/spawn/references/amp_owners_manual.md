@@ -307,7 +307,7 @@ See [Configuring Permissions](https://ampcode.com/guides/configuring-permissions
 
 ### Subagents
 
-Subagents (via the `Task` tool) work on sub-tasks of your request and use the same tools as the main agent. Because the subagent's work is summarized, using subagents helps conserve context in the main thread.
+Subagents (via the `Task` tool; in this pi setup, the equivalent is `delegate`) work on sub-tasks of your request and use the same tools as the main agent. Because the subagent's work is summarized, using subagents helps conserve context in the main thread.
 
 Some ways to use subagents:
 

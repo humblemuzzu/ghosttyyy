@@ -1,5 +1,5 @@
 /**
- * e2e tests for dedicated sub-agent tools (finder, oracle, Task, look_at).
+ * e2e tests for dedicated sub-agent tools (finder, oracle, delegate, code_review).
  *
  * spawns `pi --mode json -p --no-session` for each test and parses
  * the NDJSON event stream. validates registration, sub-agent spawn,
@@ -291,7 +291,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		console.log(sep);
 	});
 
-	it("registration: finder, oracle, Task, look_at visible to model", async () => {
+	it("registration: finder, oracle, delegate, code_review visible to model", async () => {
 		const t0 = Date.now();
 		const { events, exitCode } = await runPi(
 			"List every tool you have available. Just the names, one per line.",
@@ -310,7 +310,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		costs.push({ test: "registration", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
 	}, 60_000);
 
-	it("finder: sub-agent searches codebase via gemini flash", async () => {
+	it("finder: sub-agent searches codebase", async () => {
 		const t0 = Date.now();
 		const { events, exitCode } = await runPi(
 			"Use the finder tool to search for where createBashTool is defined. Just call finder, nothing else.",
@@ -329,7 +329,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		const result = finderResults[0];
 		expect(result.exitCode).toBe(0);
 		expect(result.isError).toBe(false);
-		expect(result.model).toContain("gemini");
+		expect(result.model).toContain("claude");
 		expect(result.content).toContain("bash");
 		expect(result.usage?.turns).toBeGreaterThanOrEqual(1);
 
@@ -337,10 +337,10 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		costs.push({ test: "finder", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
 	}, 120_000);
 
-	it("Task: sub-agent creates file on disk", async () => {
+	it("delegate: sub-agent creates file on disk", async () => {
 		const t0 = Date.now();
 		const testFile = "/tmp/pi-e2e-task-test.txt";
-		const testContent = "e2e test from Task sub-agent";
+		const testContent = "e2e test from delegate sub-agent";
 
 		// clean up prior runs
 		try { unlinkSync(testFile); } catch {}
@@ -372,7 +372,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		costs.push({ test: "delegate", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
 	}, 180_000);
 
-	it("oracle: sub-agent provides advice via gpt-5.2", async () => {
+	it("oracle: sub-agent provides advice", async () => {
 		const t0 = Date.now();
 		const { events, exitCode } = await runPi(
 			'Use the oracle tool with task "What is the single biggest risk of spawning sub-agents as child processes?" and context "We use piSpawn() to fork pi processes for isolated sub-agent execution."',
@@ -390,63 +390,13 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		const result = oracleResults[0];
 		expect(result.exitCode).toBe(0);
 		expect(result.isError).toBe(false);
-		expect(result.model).toContain("gpt");
+		expect(result.model).toContain("claude");
 		expect(result.content.length).toBeGreaterThan(100);
 		expect(result.usage?.turns).toBeGreaterThanOrEqual(1);
 
 		const c = getCosts(events);
 		costs.push({ test: "oracle", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
 	}, 180_000);
-
-	it("look_at: sub-agent analyzes an image via gemini flash", async () => {
-		const t0 = Date.now();
-		// use a known image in the repo
-		const imagePath = resolve(CWD, "assets/wallpaper.jpg");
-		const { events, exitCode } = await runPi(
-			`Use the look_at tool to analyze the file at "${imagePath}". Set objective to "Describe what this image shows" and context to "We are checking that the look_at tool can analyze images."`,
-		);
-		expect(exitCode).toBe(0);
-
-		const calls = getToolCalls(events);
-		const lookAtCalls = calls.filter(c => c.name === "look_at");
-		expect(lookAtCalls.length).toBeGreaterThanOrEqual(1);
-
-		const results = getToolResults(events);
-		const lookAtResults = results.filter(r => r.toolName === "look_at");
-		expect(lookAtResults.length).toBeGreaterThanOrEqual(1);
-
-		const result = lookAtResults[0];
-		expect(result.exitCode).toBe(0);
-		expect(result.isError).toBe(false);
-		expect(result.model).toContain("gemini");
-		// the model should describe visual content
-		expect(result.content.length).toBeGreaterThan(50);
-
-		const c = getCosts(events);
-		costs.push({ test: "look_at", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
-	}, 120_000);
-
-	it("look_at: sub-agent extracts info from a text file", async () => {
-		const t0 = Date.now();
-		const filePath = resolve(CWD, "flake.nix");
-		const { events, exitCode } = await runPi(
-			`Use the look_at tool to analyze the file at "${filePath}". Set objective to "List every flake input name" and context to "We want to know what dependencies this nix flake has."`,
-		);
-		expect(exitCode).toBe(0);
-
-		const results = getToolResults(events);
-		const lookAtResults = results.filter(r => r.toolName === "look_at");
-		expect(lookAtResults.length).toBeGreaterThanOrEqual(1);
-
-		const result = lookAtResults[0];
-		expect(result.exitCode).toBe(0);
-		expect(result.isError).toBe(false);
-		// should mention nixpkgs since it's a known input
-		expect(result.content.toLowerCase()).toContain("nixpkgs");
-
-		const c = getCosts(events);
-		costs.push({ test: "look_at (text)", parent: c.parent, subAgent: c.subAgent, total: c.parent + c.subAgent, durationMs: Date.now() - t0 });
-	}, 120_000);
 
 	it("read_web_page: fetches a URL and returns content", async () => {
 		const t0 = Date.now();
@@ -517,7 +467,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 		const result = crResults[0];
 		expect(result.exitCode).toBe(0);
 		expect(result.isError).toBe(false);
-		expect(result.model).toContain("gemini");
+		expect(result.model).toContain("claude");
 		// should produce XML review output
 		expect(result.content).toContain("<codeReview>");
 		expect(result.content).toContain("<comment>");
@@ -546,7 +496,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 			tmuxSend(windowName, "use the finder tool to search for where createGrepTool is defined");
 
 			// wait for finder sub-agent usage stats to appear
-			await waitForPane(windowName, /gemini.*flash/i, 90_000);
+			await waitForPane(windowName, /claude/i, 90_000);
 
 			// then wait for the parent model to finish responding
 			const capture = await waitForIdle(windowName, 30_000);
@@ -566,7 +516,7 @@ describe.skipIf(!ENABLED)("sub-agent tools e2e", () => {
 
 			// usage stats: "N turn(s)" and model name
 			expect(capture).toMatch(/\d+ turns?\b/i);
-			expect(capture).toMatch(/gemini/i);
+			expect(capture).toMatch(/claude/i);
 
 			// TUI test runs interactive (no JSON events) — extract total from status bar
 			const costMatch = capture.match(/\$ ?\$(\d+\.\d+)/)?.[1]

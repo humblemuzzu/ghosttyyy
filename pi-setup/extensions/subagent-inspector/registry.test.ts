@@ -75,14 +75,14 @@ describe("AgentRegistry", () => {
 			partialResult: details({
 				messages: [{ role: "assistant", content: [] }],
 				usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.5, turns: 1 },
-				model: "claude-sonnet-4-6",
+				model: "claude-sonnet-5",
 			}),
 		});
 		const entry = registry.get("a");
 		expect(entry?.messages.length).toBe(1);
 		expect(entry?.usage?.input).toBe(10);
 		expect(entry?.usage?.cost).toBe(0.5);
-		expect(entry?.model).toBe("claude-sonnet-4-6");
+		expect(entry?.model).toBe("claude-sonnet-5");
 		expect(entry?.status).toBe("running");
 	});
 

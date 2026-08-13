@@ -13,14 +13,14 @@
 #   ~/.pi/agent/themes/         — gruvbox + nightowl themes
 #   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, sub-agents, etc.)
 #   ~/.pi/agent/skills/         — pi-level skills
-#   ~/.pi/agent/settings.json   — settings (zai default, gruvbox theme, compaction off, etc.)
+#   ~/.pi/agent/settings.json   — settings (anthropic default, gruvbox theme, compaction on, etc.)
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/models.json     — model context window overrides
 #   ~/.pi/agent/permissions.json
 #   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
-#   ~/.config/agents/skills/    — 21 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
+#   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
 #   pi packages (npm/git)       — context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
 #   1 global npm package        — pi-claude-bridge (legacy Claude bridge, inactive)
 #
@@ -268,9 +268,9 @@ echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
 echo "│   • custom extensions                   │"
-echo "│   • 24 custom tools (10 replaced + 14)  │"
+echo "│   • 28 custom tools               │"
 echo "│   • 2 themes (gruvbox active)           │"
-echo "│   • 21 config skills                    │"
+echo "│   • 23 config skills                    │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core configs           │"
@@ -282,7 +282,7 @@ echo "│   • pi-tool-display configured          │"
 echo "│                                         │"
 echo "│   Claude Max (OAuth):                   │"
 echo "│   /login anthropic                      │"
-echo "│   /model anthropic/claude-opus-4-6      │"
+echo "│   /model anthropic/claude-opus-5      │"
 echo "│   (pi-claude-code-use patches payloads) │"
 echo "│                                         │"
 echo "│   Debug: CLAUDE_BRIDGE_DEBUG=1 pi       │"

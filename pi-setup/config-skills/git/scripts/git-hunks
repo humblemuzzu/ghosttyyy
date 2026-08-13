@@ -1,0 +1,359 @@
+#!/usr/bin/env bash
+#
+# git-hunks — stage individual hunks WITHOUT interactive mode.
+#
+# WHY THIS EXISTS
+#   `git add <file>` is all-or-nothing. When two people (or two agent sessions)
+#   edit one file, staging it whole sweeps up work that is not yours. `git add -p`
+#   solves that for humans, but it is a keystroke prompt — an agent cannot answer
+#   it. This is the same capability, addressable by number.
+#
+# USAGE
+#   git hunks list [<path>...]        numbered hunks; prints the exact next command
+#   git hunks show <token> <id>...    read a hunk in full before staging it
+#   git hunks add  <token> <id>...    stage exactly those hunks
+#   git hunks verify                  what is staged vs what is left
+#
+#   You never invent the token — `list` prints the command to copy.
+#
+# SCOPE
+#   Operates on UNSTAGED changes to tracked files (`git diff`). A brand-new file
+#   has no hunks to pick between — `git add` it directly. Deliberately never
+#   touches your working tree: staging goes through `git apply --cached`.
+#
+# WHY THERE IS A TOKEN
+#   Ids are positions in a diff, not names, and the state lives in the repo where
+#   any concurrent caller can overwrite it. Two agents staging at the same time is
+#   the exact situation this tool is for, so it must survive it:
+#
+#     agent A: git hunks list mine.txt      -> token k3f9
+#     agent B: git hunks list theirs.txt    -> token 7a1c   (same state file)
+#     agent A: git hunks add k3f9 1         -> REFUSED, not silently B's file
+#
+#   Without the token that last command staged theirs.txt and exited 0. Measured,
+#   not theorised. The token is a fingerprint of the exact diff you were shown, so
+#   `add` can prove you are staging what you read.
+#
+# WHAT IT REFUSES TO DO
+#   - run during an unresolved merge (combined diffs cannot be hunk-staged)
+#   - accept a stale token, or ids from a diff that has since moved
+#   - accept an id that does not exist
+#   - treat an argument as a git flag: paths go after `--`, always
+
+set -euo pipefail
+
+die() { printf 'git-hunks: %s\n' "$*" >&2; exit 1; }
+note() { printf '%s\n' "$*"; }
+
+git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
+
+# State is stored PER TOKEN, in its own directory, and never in a shared "latest"
+# slot. That is what lets parallel agents coexist: three agents listing three
+# different files get three token dirs and never touch each other's. With a
+# single shared slot they were safe but useless — only the agent that listed LAST
+# could stage, the other two were refused and had to re-list, which knocked out
+# the third. Measured, before this: A refused, B refused, C staged.
+STATE_ROOT="$(git rev-parse --git-dir)/git-hunks"
+STATE_DIR=""   # set once a token is known (by cmd_list, or by require_token)
+
+# Token dirs are tiny, but a listing that is never staged leaves one behind.
+# Drop anything older than a day on each list so they cannot accumulate forever.
+prune_stale_tokens() {
+	[ -d "$STATE_ROOT" ] || return 0
+	find "$STATE_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} + 2>/dev/null || true
+}
+
+# A merge/rebase with unresolved paths makes `git diff` emit a COMBINED diff
+# ("@@@ -1,3 -1,3 +1,7 @@@"). It is a different format, it cannot be applied
+# hunk-wise, and parsing it as a normal diff produces nonsense rows. Refuse
+# early and say what to do instead of printing garbage.
+assert_no_conflicts() {
+	local unmerged
+	unmerged="$(git ls-files --unmerged | awk '{print $4}' | sort -u)"
+	[ -z "$unmerged" ] || die "unresolved merge conflicts — resolve them first, then re-run.
+  conflicted: $(printf '%s' "$unmerged" | tr '\n' ' ')
+  hunk-level staging cannot work on a conflicted file: git reports it as a
+  combined diff, which is not an applyable patch."
+}
+
+# -U3 is not cosmetic: `git apply` locates a hunk by its surrounding context, and
+# less of it means a hunk that will not apply cleanly on its own.
+# core.quotePath=false keeps non-ASCII filenames readable instead of \NNN escapes.
+# The `--` is load-bearing: without it an argument like `-R`, `--cached` or `-U0`
+# is taken as a git-diff FLAG, and the tool would list one diff while staging a
+# different one. After `--`, every argument can only ever be a path.
+diff_text() { git -c core.quotePath=false diff -U3 --no-color --no-ext-diff -- "$@"; }
+
+fingerprint() { diff_text "$@" | git hash-object --stdin; }
+
+# --- remembered path scope -------------------------------------------------
+# bash 3.2 (what macOS ships, and what this runs under) treats "${arr[@]}" on an
+# EMPTY array as an unbound variable under `set -u` and dies. Every expansion of
+# SCOPE therefore uses the ${arr[@]+"${arr[@]}"} guard. Do not "simplify" it.
+SCOPE=()
+
+save_scope() {
+	mkdir -p "$STATE_DIR"
+	: > "$STATE_DIR/paths"
+	local a
+	for a in "$@"; do printf '%s\0' "$a" >> "$STATE_DIR/paths"; done
+}
+
+load_scope() {
+	SCOPE=()
+	[ -f "$STATE_DIR/paths" ] || return 0
+	local a
+	while IFS= read -r -d '' a; do SCOPE+=("$a"); done < "$STATE_DIR/paths"
+}
+
+scoped_diff() { diff_text ${SCOPE[@]+"${SCOPE[@]}"}; }
+
+describe_scope() {
+	[ "${#SCOPE[@]}" -eq 0 ] && { printf 'the whole working tree'; return; }
+	printf '%s' "${SCOPE[*]}"
+}
+
+# Split the diff into records: one per hunk, each carrying its file header so any
+# subset is a valid patch on its own.
+#
+#   MODE=list -> "<id>\t<file>\t<@@ line>\t<+/- counts>"
+#   MODE=pick -> the selected hunks, as an applyable patch
+read -r -d '' AWK_PROG <<'AWK' || true
+# Strip the 6-char "--- a/" / "+++ b/" prefix to get the path.
+#
+# The `diff --git a/X b/X` line CANNOT be parsed reliably: with a space in the
+# name it reads "diff --git a/my file.txt b/my file.txt" and there is no way to
+# tell where the first path ends. The ---/+++ lines carry exactly one path each,
+# so they are the only trustworthy source.
+#
+# git still quotes a path containing a quote or control character even with
+# core.quotePath=false; that arrives as `--- "a/we ird"`. Detected by the quote
+# at position 5 and unwrapped, rather than silently chopping the name.
+function unprefix(line,   p) {
+  if (substr(line, 5, 1) == "\"") {
+    p = substr(line, 8)                 # past `--- "a/`
+    sub(/"$/, "", p)
+    return p
+  }
+  return substr(line, 7)                # past `--- a/`
+}
+function flush() {
+  if (hunk == "") return
+  id++
+  if (MODE == "list") {
+    printf "%d\t%s\t%s\t+%d -%d\n", id, file, header, plus, minus
+  } else if (want[id]) {
+    printf "%s%s", fhdr, hunk
+  }
+}
+/^diff --git / {
+  flush(); hunk = ""; fhdr = $0 "\n"; infile = 1
+  # fallback only — correct for paths without spaces, replaced by ---/+++ below
+  file = $NF; sub(/^b\//, "", file)
+  oldfile = ""; next
+}
+/^--- / {
+  if (infile && hunk == "") {
+    fhdr = fhdr $0 "\n"
+    if ($0 != "--- /dev/null") oldfile = unprefix($0)
+    next
+  }
+}
+/^\+\+\+ / {
+  if (infile && hunk == "") {
+    fhdr = fhdr $0 "\n"
+    # a deletion is "+++ /dev/null" — name it by where the content came from
+    file = ($0 == "+++ /dev/null") ? oldfile : unprefix($0)
+    next
+  }
+}
+/^(old mode |new mode |deleted file mode |new file mode |index |similarity |rename )/ {
+  if (infile && hunk == "") { fhdr = fhdr $0 "\n"; next }
+}
+/^@@/ { flush(); hunk = $0 "\n"; header = $0; plus = 0; minus = 0; next }
+{
+  if (hunk != "") {
+    hunk = hunk $0 "\n"
+    if ($0 ~ /^\+/) plus++
+    else if ($0 ~ /^-/) minus++
+  }
+}
+END { flush() }
+AWK
+
+run_awk() {
+	local mode="$1" ids="$2"
+	awk -v MODE="$mode" -v IDS="$ids" \
+		'BEGIN { n = split(IDS, a, ","); for (i = 1; i <= n; i++) if (a[i] != "") want[a[i] + 0] = 1 }
+		 '"$AWK_PROG"
+}
+
+cmd_list() {
+	assert_no_conflicts
+	# `list -- f.txt` and `list f.txt` are both natural to type; diff_text supplies
+	# its own `--`, so drop a leading one rather than passing `-- -- f.txt`.
+	[ "${1:-}" = "--" ] && shift || true
+
+	# Everything here is a path. An argument that looks like a flag is almost
+	# certainly a mistake, and silently treating it as a pathspec answers "no
+	# unstaged changes" — which reads as "your work is gone" rather than "that
+	# is not an option". Say the true thing instead.
+	local a
+	for a in "$@"; do
+		case "$a" in
+			-*) die "'$a' looks like a flag, but git hunks only takes paths here.
+  git-diff flags are deliberately refused: one of them ('-R', '--cached', '-U0')
+  would list one diff while staging a different one.
+  If you really have a file named '$a', pass it as './$a'." ;;
+		esac
+	done
+
+	local out
+	out="$(diff_text "$@" | run_awk list "")"
+	[ -n "$out" ] || { note "no unstaged changes to tracked files"; return 0; }
+
+	prune_stale_tokens
+
+	# The token IS the state key. Deriving it from the fingerprint means the same
+	# listing always names the same dir, and two different listings can never
+	# collide — which is what makes concurrent agents safe AND usable.
+	local fp token
+	fp="$(fingerprint "$@")"
+	token="${fp:0:6}"
+	STATE_DIR="$STATE_ROOT/$token"
+	mkdir -p "$STATE_DIR"
+	# Fingerprint and path filter are recorded TOGETHER: `show`/`add` must look at
+	# exactly the diff these ids were numbered against, or id 1 means two things.
+	printf '%s' "$fp" > "$STATE_DIR/fingerprint"
+	save_scope "$@"
+
+	printf '%-4s %-50s %-9s %s\n' ID FILE CHANGE WHERE
+	printf '%s\n' "----------------------------------------------------------------------------------------"
+	printf '%s\n' "$out" | while IFS=$'\t' read -r id file header counts; do
+		printf '%-4s %-50s %-9s %s\n' "$id" "$file" "$counts" "$header"
+	done
+	echo
+	note "read one first:   git hunks show $token <id>..."
+	note "then stage it:    git hunks add  $token <id>..."
+}
+
+# The token selects the caller's OWN recorded listing, so a concurrent agent
+# cannot redirect this one. The fingerprint then proves that listing still
+# describes reality. Both are needed: the token answers "whose ids are these?",
+# the fingerprint answers "are they still true?".
+require_token() {
+	local given="$1"
+	STATE_DIR="$STATE_ROOT/$given"
+	[ -f "$STATE_DIR/fingerprint" ] || die "token '$given' is not a listing I know about.
+  Either it was already used (a token is spent once you stage with it), or it
+  expired, or 'git hunks list' was never run. Run 'git hunks list' — it prints a
+  fresh token with the ids."
+
+	load_scope
+	local now was
+	now="$(fingerprint ${SCOPE[@]+"${SCOPE[@]}"})"
+	was="$(cat "$STATE_DIR/fingerprint")"
+	[ "$now" = "$was" ] || die "the diff moved since 'git hunks list' — ids are stale.
+  Something edited $(describe_scope) after you listed it.
+  Re-run 'git hunks list'; nothing has been staged."
+}
+
+# Distinguish "you forgot the token" from "that is not a real id", because the
+# fix is completely different and the agent cannot guess which one it hit.
+split_args() {
+	[ $# -ge 2 ] || die "usage: git hunks $CMD <token> <id>...
+  the token comes from 'git hunks list' — run that first"
+	case "$1" in
+		''|*[!0-9a-f]*) die "'$1' is not a token. Expected the 6-character token that
+  'git hunks list' printed, e.g. 'git hunks $CMD 3f9a1c 1 2'" ;;
+	esac
+	if [ "${#1}" -ne 6 ]; then
+		die "'$1' is not a token (tokens are 6 characters). If you meant an id, the
+  token still comes first: git hunks $CMD <token> $*"
+	fi
+}
+
+join_ids() { local IFS=,; echo "$*"; }
+
+# Reject an id that is not a number or not in range, instead of silently
+# skipping it: `add 1 99` used to stage one hunk and report "staged 2 hunk(s)".
+validate_ids() {
+	local total id
+	total="$(scoped_diff | run_awk list "" | wc -l | tr -d ' ')"
+	for id in "$@"; do
+		case "$id" in
+			''|*[!0-9]*) die "'$id' is not a hunk id — ids are the numbers in 'git hunks list'" ;;
+		esac
+		[ "$id" -ge 1 ] 2>/dev/null && [ "$id" -le "$total" ] 2>/dev/null \
+			|| die "no hunk with id $id — 'git hunks list' shows $total"
+	done
+}
+
+cmd_show() {
+	CMD=show; split_args "$@"
+	local token="$1"; shift
+	assert_no_conflicts
+	require_token "$token"
+	validate_ids "$@"
+	scoped_diff | run_awk pick "$(join_ids "$@")"
+}
+
+cmd_add() {
+	CMD=add; split_args "$@"
+	local token="$1"; shift
+	assert_no_conflicts
+	require_token "$token"
+	validate_ids "$@"
+
+	# Deliberately NOT a `local` with a `trap ... EXIT`: the trap fires after the
+	# function has returned, when the local is gone, and `set -u` then kills the
+	# script with "unbound variable" AFTER the staging already succeeded — an exit
+	# code that says failure about work that landed. Global name, explicit cleanup.
+	PATCH_FILE="$(mktemp)"
+	trap 'test -n "${PATCH_FILE:-}" && test -f "$PATCH_FILE" && unlink "$PATCH_FILE" || true' EXIT
+	scoped_diff | run_awk pick "$(join_ids "$@")" > "$PATCH_FILE"
+	[ -s "$PATCH_FILE" ] || die "no hunks matched ids: $*"
+
+	# Say WHAT is being staged, not just how many. A count is unverifiable; a file
+	# and a hunk header can be checked against what the caller meant to stage.
+	note "about to stage, from $(describe_scope):"
+	grep -E '^(\+\+\+ |@@)' "$PATCH_FILE" | sed 's/^/  /'
+	echo
+
+	# --cached stages without touching the working tree; --check is a dry run, so a
+	# patch that cannot apply fails before the index has been half-written.
+	git apply --cached --check "$PATCH_FILE" 2>/dev/null || die "these hunks do not apply to the index.
+  Usually this means the file changed after 'git hunks list'.
+  Re-run 'git hunks list'; nothing has been staged."
+	git apply --cached "$PATCH_FILE"
+
+	# Staging REMOVES these changes from `git diff`, so every remaining id has
+	# shifted and the token no longer describes reality. Drop the state so a
+	# follow-up `add` says "run list first" instead of staging the wrong hunk.
+	rm -rf "$STATE_DIR"
+
+	note "staged $# hunk(s)."
+	echo
+	cmd_verify
+	echo
+	note "READ IT BEFORE COMMITTING:  git diff --cached"
+	note "ids and token are now spent — re-run 'git hunks list' to stage anything else"
+}
+
+cmd_verify() {
+	note "=== STAGED — this is what the commit will contain ==="
+	git diff --cached --stat || true
+	echo
+	note "=== NOT STAGED — this stays behind ==="
+	git diff --stat || true
+}
+
+case "${1:-}" in
+	list)   shift; cmd_list "$@" ;;
+	show)   shift; cmd_show "$@" ;;
+	add)    shift; cmd_add "$@" ;;
+	verify) shift; cmd_verify ;;
+	# print the header block by SHAPE, not by line number — a fixed range silently
+	# prints the wrong thing the first time anyone edits the comments above.
+	*)      awk 'NR>1 && /^#/ { sub(/^# ?/, ""); print; next } NR>1 { exit }' "$0" ;;
+esac

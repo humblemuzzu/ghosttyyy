@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 15 extensions, 25 custom tools, 12 packages, 16 skills, multi-provider support, and a custom agent identity.
+A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 28 custom tools, 8 packages, 29 skills, multi-provider support, and a custom agent identity.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -333,7 +333,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.71.0) coding agent environment — 15 extensions, 25 custom tools, 4 sub-agent types with @mention routing, 12 packages, 16 skills, 4 patched packages, multi-provider support, and custom system prompt.
+Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.84.1) coding agent environment — 12 extensions, 28 custom tools, 5 dedicated sub-agents with @mention routing, 8 packages, 29 skills, 3 pi-core patches, multi-provider support, and a custom system prompt.
 
 ## 🚀 Installation
 
@@ -345,71 +345,69 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 
 ---
 
-## 📦 Packages (12 active)
+## 📦 Packages (8 active)
 
 | Package | Purpose | Patched? |
 |---------|---------|----------|
-| `pi-web-access` | Web search (Exa MCP free, Perplexity, Gemini), URL fetching, GitHub API | No |
-| `pi-context` | Context management: `context_log`, `context_tag`, `context_checkout` | No |
+| `pi-context` | Context management: `context_checkpoint`, `context_timeline`, `context_compact` | No |
 | `pi-token-burden` | Token usage tracking and display | No |
-| `@benvargas/pi-claude-code-use` | Claude Max subscription via OAuth rewrite | No |
-| `@marckrenn/pi-sub-bar` | Usage widget in status bar | **Yes** |
+| `@benvargas/pi-claude-code-use` | Claude Max subscription via OAuth payload rewrite | No |
+| `@marckrenn/pi-sub-bar` | Usage widget in status bar | No (**config**) |
 | `pi-autoresearch` | Autonomous experiment loop for optimization | No |
-| `@sting8k/pi-vcc` | Algorithmic compaction + `vcc_recall` history search | No |
 | `pi-tool-display` | Thinking labels, native user message box | **Config** |
-| `pi-gpt-config` | GPT Codex-parity: personality, verbosity, fast mode | **Yes** |
-| `pi-computer-use` | macOS GUI automation: screenshots, AX clicks, typing, browser nav | No |
-| `pi-ask` | Structured `ask_user` tool with TUI — single/multi select, notes, review | No |
+| `pi-codex-goal` | Codex-style `/goal` — autonomous multi-turn objectives | No |
+| `pi-mcp-adapter` | On-demand MCP gateway — single `mcp` proxy tool | No (**config**) |
+
+**Removed (do not reinstall):** `pi-web-access` (dead `web_search` on every provider, replaced by our Parallel AI tool), `pi-tasks` (array params broken), `@tomooshi/condensed-milk-pi` (reported failed git commands as successes), `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask`. See `pi-setup/pi-migrations.md`.
 
 ---
 
-## 🧩 Extensions (15 active, 2 disabled)
+## 🧩 Extensions (12 active)
 
 | Extension | Purpose |
 |-----------|---------|
 | `editor/` | Custom box-drawing editor with token/cost/model/git labels |
 | `system-prompt.ts` | Injects Amp identity prompt with runtime variables |
-| `tool-harness.ts` | Env-gated tool filtering for sub-agent sandboxing |
-| `handoff.ts` | LLM-driven context transfer at ~85% (replaces compaction) |
 | `mentions.ts` | @mention resolution + agent directives (@oracle, @finder, @codereview, @task) |
-| `session-name.ts` | Auto-generates 3-5 word session titles via Haiku |
-| `session-breakdown.ts` | `/session-breakdown` analytics with calendar heatmap |
-| `btw.ts` | `/btw` side conversations while agent works |
-| `notify.ts` | Desktop notifications via OSC 777 (Ghostty/iTerm2/WezTerm) |
+| `session-name.ts` | Auto-generates short session titles via Haiku |
+| `session-breakdown.ts` | `/session-breakdown` analytics |
+| `notify.ts` | Desktop notifications via OSC 777 |
 | `todos.ts` | File-based todo manager with full TUI |
-| `local-model.ts` | `/llm start\|stop\|status` for llama-server |
-| `opencode-zen.ts` | Curated models.dev provider (free + paid tiers) |
-| `crof.ts` | Budget OSS model provider (DeepSeek/GLM/Qwen/Kimi) |
+| `md-export.ts` | `/md` — session JSONL → markdown export |
 | `command-palette/` | Ctrl+Shift+P fuzzy command overlay |
-| `tools/` | 25 custom tools (see below) |
+| `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
+| `local-model.ts` | `/local` — start/stop the llama.cpp router |
+| `tools/` | 28 custom tools (see below) |
 
-**Disabled (on disk, not loaded):** `brain-loader.ts` (brain vault injection), `md-export.ts` (session→markdown)
+**Removed:** `tool-harness.ts` (replaced by piSpawn's native `--tools` allowlists), `handoff.ts`, `btw.ts`, `opencode-zen.ts`, `crof.ts`, `brain-loader.ts`. pi auto-discovers every `.ts`/dir in `~/.pi/agent/extensions/` — to disable one, delete it or move it out.
 
 ---
 
-## 🛠 Custom Tools (25)
+## 🛠 Custom Tools (28)
 
 ### Replacements (override pi built-ins)
 
 | Tool | Enhancement |
 |------|------------|
-| **bash** | Git trailers, mutex locking, psst secret injection + scrubbing, permission rules, ANSI sanitization |
-| **read** | Image support (jpg/png/gif/webp), line numbers, `.env` blocking |
-| **edit** | Mutex locking, redaction detection, 3-tier matching, change tracking |
-| **write** | Mutex locking, auto parent directory creation |
+| **bash** | Git trailers, mutex locking, psst secret injection + scrubbing, permission rules, output scrubbing |
+| **read** | Image support fitted to the vision budget, line numbers, `.env` blocking |
+| **apply_patch** | The ONLY file-mutation tool — write/edit/batch/envelope lanes, mutex locking, undo tracking. Replaced `edit`/`write` (pi's natives are hidden) |
 | **grep** | Per-file limits, 200-char truncation, context lines |
-| **find** | `rg --files`, mtime sort |
-| **ls**, **format_file**, **undo_edit**, **skill** | Enhanced versions of pi defaults |
+| **find** | `rg --files`, mtime sort (registers as `find`, shadows pi's built-in) |
+| **ls**, **format_file**, **skill**, **undo_edit**, **redo_edit** | Enhanced versions of pi defaults |
 
 ### Sub-agents
 
 | Tool | Model | Purpose |
 |------|-------|---------|
-| **finder** | claude-haiku-4-5 | Concept-based parallel code search (8+ searches/turn) |
-| **oracle** | claude-sonnet-4-6 | Architecture review, complex planning |
-| **code_review** | claude-sonnet-4-6 | Structured 2-phase diff review with XML output |
-| **Task** | inherits parent | Full sub-agent for parallel independent work |
-| **librarian** | claude-haiku-4-5 | Cross-repo GitHub exploration |
+| **finder** | claude-sonnet-5 | Concept-based parallel code search (8+ searches/turn, read-only) |
+| **oracle** | claude-opus-4-6 | Architecture review, complex planning (read + bash + web + screenshot) |
+| **code_review** | claude-sonnet-5 | Structured 2-phase diff review with XML output |
+| **delegate** | inherits parent | Full resumable sub-agent for parallel independent work |
+| **librarian** | claude-sonnet-5 | Cross-repo GitHub exploration (7 GitHub tools) |
+
+On a non-Anthropic parent (deepseek/kimi/sakana/llama), every sub-agent inherits
+the parent model — the Claude labels above apply on the default Anthropic route.
 
 ### @Agent Mentions
 
@@ -420,7 +418,7 @@ Type `@` followed by an agent name to force the model to use that specific subag
 | `@oracle` | `oracle` tool | "review this", "plan this", "debug this" |
 | `@finder` | `finder` tool | "find where we handle X", "search for Y" |
 | `@codereview` | `code_review` tool | "review my changes", "check this diff" |
-| `@task` | `Task` tool | "do this in parallel", "spawn a subagent" |
+| `@task` | `delegate` tool | "do this in parallel", "spawn a subagent" |
 
 Example: `@oracle is this auth middleware safe?` → injects a hidden directive forcing the model to call oracle instead of guessing.
 
@@ -428,9 +426,9 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ### Other tools
 
-`read_web_page`, `read_session`, `search_sessions`, `github` (×7 — read, search, list-dir, list-repos, glob, commit-search, diff)
+`read_web_page`, `read_session`, `search_sessions`, `web_search` (Parallel AI), `screenshot`, `agent_message`, `todo`, `mcp`, plus GitHub (×7 — read, search, list-dir, list-repos, glob, commit-search, diff).
 
-**Disabled:** `look-at` (low quality), `web-search` (conflicts with pi-web-access)
+**Removed:** `look-at` (low quality). `pi-web-access` was removed 2026-07-30 — `web_search` is now our self-contained Parallel AI tool.
 
 ---
 
@@ -439,11 +437,11 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 | File | Purpose |
 |------|---------|
 | `prompt.amp.system.md` | Main Amp identity — behavior rules, tool selection, code defaults |
-| `agent.amp.oracle.md` | Oracle sub-agent: verify before claiming, be opinionated, reference precisely |
-| `agent.amp.finder.md` | Finder sub-agent: 2-3 turns, 6-10 parallel searches per turn |
+| `agent.amp.oracle.md` | Oracle sub-agent: simplicity-first advice, effort/scope signal |
+| `agent.amp.finder.md` | Finder sub-agent: ≤3 turns, 8+ parallel searches per turn |
 | `agent.amp.librarian.md` | Librarian sub-agent: cross-repo GitHub exploration |
 | `prompt.amp.code-review-*.md` | Code review system prompt + XML report format |
-| `prompt.amp.handoff-extraction.md` | Handoff context extraction prompt |
+| `prompt.amp.read-web-page.md` | Web page Q&A prompt (used by `read_web_page`'s `prompt` path) |
 | `prompt.harness-docs.pi.md` | Pi-specific harness documentation |
 
 ---
@@ -452,18 +450,18 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `anthropic` | Claude Opus 4-6/4-7 (1M context) | **Primary** — Claude Max via pi-claude-code-use |
-| `deepseek` | V4 Pro, V4 Flash | 1M context, thinking mode |
-| `local-llama` | Qwen3.6 35B-A3B, Gemma 4 E2B | llama-server on localhost:8080 |
-| `nvidia` | GLM-5.1, DeepSeek V4 Pro | NVIDIA NIM API |
-| `opencode` | models.dev catalog | Curated free/paid models |
-| `crof` | Budget OSS models | Quantized DeepSeek/GLM/Qwen/Kimi |
+| `anthropic` | claude-opus-5 (default), claude-opus-4-6/4-7/4-8 (1M context) | **Primary** — Claude Max via pi-claude-code-use |
+| `deepseek` | deepseek-v4-pro, deepseek-v4-flash | 1M context, thinking mode |
+| `kimi-code` | kimi-for-coding (K2.7 Code) | Kimi Code subscription OAuth |
+| `sakana` | fugu, fugu-ultra | Multi-agent orchestration (Responses API) |
+| `llama-local` | LFM2.5-2.6B | Local llama.cpp router, managed via `/local` |
+| `openai-codex` | gpt-5.5 | OpenAI Codex OAuth |
 
 ---
 
-## 🧠 Skills (16 config + 1 pi-level)
+## 🧠 Skills (29 loadable)
 
-`amp-voice`, `chrome-cdp`, `coordinate`, `dig`, `document`, `git`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `handoff` at pi level.
+23 config-level (`~/.config/agents/skills/`): `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `find-skills`, `userinterface-wiki`, `context-management` (pi-context) and 3 `autoresearch-*` at pi level.
 
 ---
 
@@ -472,14 +470,14 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 ```json
 {
   "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-4-6",
+  "defaultModel": "claude-opus-5",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
-  "compaction": { "enabled": false }
+  "compaction": { "enabled": true }
 }
 ```
 
-Compaction disabled → replaced by handoff system + manual `/pi-vcc`.
+Compaction enabled — pi's native compaction (the handoff/pi-vcc systems are gone).
 
 ---
 
@@ -487,7 +485,7 @@ Compaction disabled → replaced by handoff system + manual `/pi-vcc`.
 
 - **Permissions:** Block `git add -A`, `git push --force`, `rm` (use `trash`)
 - **psst:** Secret vault injection + output scrubbing (values never reach the LLM)
-- **Redaction guard:** Edit tool rejects placeholder patterns in code
+- **Redaction guard:** `apply_patch` rejects placeholder patterns in code
 - **Git trailers:** Session ID auto-injected into every commit
 
 ---
@@ -503,18 +501,16 @@ Compaction disabled → replaced by handoff system + manual `/pi-vcc`.
 ```
 pi-setup/
 ├── install.sh                  # Backs up + deploys everything
-├── settings.json, models.json, keybindings.json, permissions.json
-├── claude-bridge-patches/      # Patched pi-claude-bridge (inactive)
-├── sub-bar-patches/            # Patched pi-sub-bar (CrofAI + Kimi)
-├── gpt-config-patches/         # Patched pi-gpt-config (tool discipline removed)
-├── agents/                     # 10 prompt templates
+├── settings.json, models.json, keybindings.json, permissions.json, mcp.json
+├── pi-core-patches/            # resource-loader, session pinning, pi-tui width patch
+├── agents/                     # 9 prompt templates (main + sub-agents)
 ├── themes/                     # gruvbox + nightowl
-├── pi-skills/                  # handoff skill
-├── config-skills/              # 16 skills
+├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
+├── config-skills/              # 23 skills
 └── extensions/
-    ├── tools/                  # 25 custom tools + lib/
-    ├── editor/, command-palette/
-    └── *.ts                    # 15 active + 2 disabled extensions
+    ├── tools/                  # 28 custom tools + lib/
+    ├── editor/, command-palette/, subagent-inspector/, pi-tool-display/
+    └── *.ts                    # 12 active extensions
 ```
 
 ---

@@ -31,8 +31,8 @@ describe("oracle tool allowlist", () => {
 	});
 
 	test("resolves the glob alias to find", () => {
-		// the frontmatter and old tool-harness name the tool `glob`; pi's
-		// built-in is `find`, and TOOL_ALIASES must bridge that gap.
+		// legacy configs/frontmatter may still name the tool `glob`; pi's
+		// built-in is `find`, and TOOL_ALIASES bridges that gap.
 		expect(allowlist).toContain("find");
 		expect(allowlist).not.toContain("glob");
 	});
