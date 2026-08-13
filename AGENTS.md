@@ -723,12 +723,12 @@ These replace pi's default tool implementations with customized versions:
 | **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing |
 | **read** | `read.ts` | Image viewing, fitted to the vision budget via `lib/image-fit.ts` (falls back to raw bytes on any failure) |
 | **apply_patch** | `apply-patch.ts` | The ONLY file-mutation tool. **Four call shapes, one engine** (see below): `{path, content}`, `{path, old_string, new_string}`, `{ops:[…]}`, `{input: envelope}`. Multi-file atomic batching, mutex locking, undo tracking. Replaced `edit-file.ts` + `create-file.ts` in `6296fef`; pi's native `edit`/`write` are hidden at `session_start` |
-| **format-file** | `format-file.ts` | Prettier/biome formatting |
+| **format_file** | `format-file.ts` | Prettier/biome formatting |
 | **grep** | `grep.ts` | Custom output formatting |
-| **glob** | `glob.ts` | Custom result handling |
+| **find** | `glob.ts` | Custom result handling (registers as `find`, shadowing pi's built-in — there is no tool named `glob`) |
 | **ls** | `ls.ts` | Delegates to read tool |
-| **undo-edit** | `undo-edit.ts` | Edit reversal with diff display. Reverts the WHOLE tool call by default (`scope: "file"` for one path); a move is undone as one operation. Refuses when a file was changed outside the tool, since those bytes are recorded nowhere (`force: true` overrides, and says what it discarded) |
-| **redo-edit** | `undo-edit.ts` | Re-applies an undone change. Refuses when a newer tool change touched the path, and (like undo) when the file was changed outside the tool — `force: true` overrides and says what it discarded |
+| **undo_edit** | `undo-edit.ts` | Edit reversal with diff display. Reverts the WHOLE tool call by default (`scope: "file"` for one path); a move is undone as one operation. Refuses when a file was changed outside the tool, since those bytes are recorded nowhere (`force: true` overrides, and says what it discarded) |
+| **redo_edit** | `undo-edit.ts` | Re-applies an undone change. Refuses when a newer tool change touched the path, and (like undo) when the file was changed outside the tool — `force: true` overrides and says what it discarded |
 | **skill** | `skill.ts` | Skill loading |
 
 ### New Tools (not in default pi)
@@ -741,16 +741,16 @@ These replace pi's default tool implementations with customized versions:
 |------|------|---------|
 | **screenshot** | `screenshot.ts` | macOS capture (display / window / region) that returns an image already inside Claude's vision budget. See "Screenshot & Vision Budget" below |
 | **finder** | `finder.ts` | Concept-based search subagent — chain 3+ searches or search by concept |
-| **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (read+bash+screenshot, web_search, read_web_page) |
+| **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (read/grep/find/ls + bash + screenshot, web_search, read_web_page) |
 | **delegate** | `delegate.ts` | Spawns a resumable subagent (same model as parent) for parallel independent work. Replaced `task.ts` in `e4c8786` — `continueId` makes children resumable, which Task never was |
 | **librarian** | `librarian.ts` | External repository exploration via GitHub API |
 | **agent_message** | `agent-message.ts` | Inter-agent mailbox messaging. Registered via `setupAgentMessage(pi)`, not a plain `registerTool` |
 | **web_search** | `web-search.ts` | Parallel AI Search API. **Conditionally registered** — if its config disables it, nothing is registered rather than advertising a tool that cannot run |
-| **read-web-page** | `read-web-page.ts` | Web page reader using cheerio |
-| **read-session** | `read-session.ts` | Read past pi session history |
-| **search-sessions** | `search-sessions.ts` | Search session history by keyword, file, date |
-| **code-review** | `code-review.ts` | Code review with diff analysis |
-| **github** | `github.ts` | **Seven** tools, not one: `read_github`, `search_github`, `list_directory_github`, `list_repositories`, `glob_github`, `commit_search`, `diff` |
+| **read_web_page** | `read-web-page.ts` | Web page reader using cheerio |
+| **read_session** | `read-session.ts` | Read past pi session history |
+| **search_sessions** | `search-sessions.ts` | Search session history by keyword, file, date |
+| **code_review** | `code-review.ts` | Code review with diff analysis |
+| **read_github**, **search_github**, **list_directory_github**, **list_repositories**, **glob_github**, **commit_search**, **diff** | `github.ts` | **Seven** tools, not one — there is no tool named `github` |
 
 **Web search:** `pi-web-access` was removed 2026-07-30 (see Packages). Phase 3 landed the
 self-contained Parallel AI `web_search` (`web-search.ts`), so the gap that note used to

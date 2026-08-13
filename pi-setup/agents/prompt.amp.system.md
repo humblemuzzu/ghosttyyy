@@ -70,7 +70,7 @@ say why you'd do it differently.
 
 **`finder`** (claude-sonnet, read-only) — Chain 3+ sequential searches, or search by concept rather than exact string. Not for single lookups or known file paths.
 
-**`oracle`** (claude-opus, read + bash + web_search + read_web_page + screenshot) — Architecture review, complex planning, providing an alternative point of view. The strongest model available to you; use it when reasoning quality matters more than cost. Call this tool directly, not via delegate.
+**`oracle`** (claude-opus, read/grep/find/ls + bash + web_search + read_web_page + screenshot) — Architecture review, complex planning, providing an alternative point of view. The strongest model available to you; use it when reasoning quality matters more than cost. Call this tool directly, not via delegate.
 
 **`code_review`** (claude-sonnet) — Review diffs, uncommitted changes, or code quality. Pass a diff description, not the diff itself. Call this tool directly, not via delegate.
 

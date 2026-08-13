@@ -468,7 +468,8 @@ export function createGlobGithubTool(): ToolDefinition {
 			"WHEN TO USE THIS TOOL:\n" +
 			"- When you need to find specific file types (e.g., all TypeScript files)\n" +
 			"- When exploring codebase structure quickly\n\n" +
-			"Uses the git tree API to list all files, then filters by pattern.",
+			"Uses the git tree API to list all files, then filters by pattern.\n\n" +
+			"Pass the glob pattern as `filePattern` (or its alias `pattern`) — one of the two is required.",
 
 		// `filePattern` is the canonical name, but models overwhelmingly guess
 		// `pattern` (matching grep/glob conventions) and then fail schema validation.
