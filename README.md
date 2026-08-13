@@ -367,7 +367,7 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | Extension | Purpose |
 |-----------|---------|
 | `editor/` | Custom box-drawing editor with token/cost/model/git labels |
-| `system-prompt.ts` | Injects Amp identity prompt with runtime variables |
+| `system-prompt.ts` | Injects Amp identity prompt with runtime variables; sub-agents instead get a short generated prompt listing only their own tools |
 | `mentions.ts` | @mention resolution + agent directives (@oracle, @finder, @codereview, @task) |
 | `session-name.ts` | Auto-generates short session titles via Haiku |
 | `session-breakdown.ts` | `/session-breakdown` analytics |

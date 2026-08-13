@@ -16,7 +16,7 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, zeroUsage } from "./lib/pi-spawn";
+import { piSpawn, resolveAliases, zeroUsage } from "./lib/pi-spawn";
 import {
 	collectSubAgentImages,
 	getFinalOutput,
@@ -38,6 +38,15 @@ const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash",
 	"web_search", "read_web_page", "screenshot",
 ];
+
+/**
+ * the merged, deduped, alias-resolved allowlist piSpawn turns into `--tools`
+ * and exports to the child as its tool list. exported so tests can pin the
+ * exact surface a code_review child receives.
+ */
+export function codeReviewAllowlist(): string[] {
+	return resolveAliases([...BUILTIN_TOOLS, ...EXTENSION_TOOLS]);
+}
 
 const DEFAULT_SYSTEM_PROMPT = `You are an expert code reviewer. Review the provided diff for bugs, security issues, and code quality. Report findings with file locations and severity.
 

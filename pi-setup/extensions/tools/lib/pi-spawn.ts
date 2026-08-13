@@ -16,6 +16,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
+import { SUB_AGENT_TOOLS_ENV } from "./sub-agent-prompt";
 
 // --- tool name aliases ---
 
@@ -412,6 +413,14 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			// would leave it ungated at both layers (every registered tool, incl.
 			// `mcp`, exposed to the model).
 			...(requestedTools.length > 0 ? { PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1" } : {}),
+			// tell the child which tools it ACTUALLY has, from the same array that
+			// becomes `--tools` above. system-prompt.ts reads this and gives the
+			// child a prompt naming exactly these tools instead of the parent's
+			// full ~40-tool prompt, which is mostly false inside a child.
+			// see lib/sub-agent-prompt.ts for the measured failure it prevents.
+			...(requestedTools.length > 0
+				? { [SUB_AGENT_TOOLS_ENV]: requestedTools.join(",") }
+				: {}),
 		};
 
 		let wasAborted = false;

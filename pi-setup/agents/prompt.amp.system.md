@@ -113,9 +113,9 @@ already registered and callable — this section exists so you know it's there:
 - Context management (pi-context): `context_checkpoint`, `context_timeline`, `context_compact` — anchor, inspect, and summarize the conversation when it gets long.
 - Goal tracking (pi-codex-goal): `get_goal`, `create_goal`, `update_goal` — long-running objectives with a completion audit.
 
-Sub-agents see a **filtered subset** of this surface (their own `--tools`
-allowlist), so inside a finder or oracle the list above is aspirational — trust
-the tool list you actually see there.
+Sub-agents get a **filtered subset** of this surface (their own `--tools`
+allowlist) and their own short prompt naming it — so don't assume a child can
+call everything listed above.
 
 ### The delegate rule
 

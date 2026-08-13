@@ -16,7 +16,7 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, zeroUsage } from "./lib/pi-spawn";
+import { piSpawn, resolveAliases, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
 import { requireParam } from "./lib/params";
 
@@ -26,6 +26,17 @@ const FINDER_PARAM_NAMES = ["query", "task", "prompt", "description", "search"] 
 const MODEL = "claude-sonnet-5";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 const EXTENSION_TOOLS = ["read", "grep", "find", "ls"];
+
+/**
+ * the merged, deduped, alias-resolved allowlist piSpawn turns into `--tools`
+ * and exports to the child as its tool list. exported so tests can pin the
+ * exact surface a finder child receives — testing the raw constants alone
+ * would drift from what the child gets, since aliasing and dedupe happen at
+ * the spawn seam.
+ */
+export function finderAllowlist(): string[] {
+	return resolveAliases([...BUILTIN_TOOLS, ...EXTENSION_TOOLS]);
+}
 
 export interface FinderConfig {
 	systemPrompt?: string;

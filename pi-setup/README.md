@@ -35,7 +35,7 @@ disable one, delete it or move it out of `extensions/`.
 |---|---|
 | `editor/` | Custom box-drawing bordered editor with labels (context %, cost, model, git branch), enlarged prompt bar, and inline `[image #N]` clipboard-paste |
 | `tools/` | Full replacement tool suite — 28 tools. See below. |
-| `system-prompt.ts` | Injects the full Amp system prompt with runtime template vars |
+| `system-prompt.ts` | Injects the full Amp system prompt with runtime template vars (parent sessions); a sub-agent instead gets a short generated prompt naming exactly its own `--tools` allowlist |
 | `mentions.ts` | `@mention` resolution (`@session`, `@commit`, `@handoff`) + agent directives (`@oracle`, `@finder`, `@codereview`, `@task` → `delegate`) |
 | `session-name.ts` | Auto-generates session names from the first message (Claude Haiku) |
 | `session-breakdown.ts` | `/session-breakdown` — visual analytics (sessions/day, cost, tokens, model breakdown) |

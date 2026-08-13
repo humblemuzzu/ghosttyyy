@@ -66,8 +66,9 @@ See `pi-setup/2026-07-30-bdsqqq-port.md` §3.1.
 
 The system prompt is assembled in layers:
 
-1. **`system-prompt.ts`** — loads `agents/prompt.amp.system.md` template, interpolates variables (`{identity}`, `{harness}`, `{date}`, `{cwd}`, `{roots}`, `{os}`, `{repo}`, `{sessionId}`, `{ls}`, `{harness_docs_section}`)
-2. **`tools/lib/pi-spawn.ts`** — sub-agent tool surfaces: per-agent `--tools` allowlists merged from each tool's `BUILTIN_TOOLS`/`EXTENSION_TOOLS` consts (replaced the old `tool-harness.ts` env-gated filtering)
+1. **`system-prompt.ts`** — **parent sessions only**: loads `agents/prompt.amp.system.md` template, interpolates variables (`{identity}`, `{harness}`, `{date}`, `{cwd}`, `{roots}`, `{os}`, `{repo}`, `{sessionId}`, `{ls}`, `{harness_docs_section}`)
+2. **`tools/lib/sub-agent-prompt.ts`** — **sub-agent sessions**: a child gets a short generated prompt naming exactly its own tools instead of the parent template. See "Sub-agent Prompts" below
+3. **`tools/lib/pi-spawn.ts`** — sub-agent tool surfaces: per-agent `--tools` allowlists merged from each tool's `BUILTIN_TOOLS`/`EXTENSION_TOOLS` consts (replaced the old `tool-harness.ts` env-gated filtering)
 
 ---
 
@@ -375,6 +376,63 @@ advances a row nobody counted (that one smears rather than crashes).
    truncated summary). `\n` is width-0 to every check but moves the real
    cursor. Grep the offending fragment from the smear screenshot to find the
    source component; flatten at its sink like `flattenLabelText`.
+
+---
+
+## Sub-agent Prompts (why children don't get the parent prompt)
+
+**Files:** `extensions/tools/lib/sub-agent-prompt.ts` (+ its test), `extensions/system-prompt.ts`, `extensions/tools/lib/pi-spawn.ts`.
+
+### The problem
+
+A sub-agent is a fresh `pi` process that **loads the same extensions as the
+parent** — so `system-prompt.ts` runs inside it too. It used to append the
+parent's full tool prompt (**11,705 bytes describing ~40 tools**, measured) to a
+child whose registry `--tools` had filtered down to between **1 and 12** tools.
+
+The child then read instructions that were false for it — "apply_patch — every
+file modification", "your dedicated sub-agents are exactly five tools". Measured
+consequence: a `code_review` child spent two calls probing `search_sessions` and
+`skill` before concluding they were absent.
+
+A child's prompt has three layers; only the third was wrong:
+
+1. pi's own base prompt
+2. its agent prompt (`agent.amp.finder.md` …) via `--append-system-prompt` — correct
+3. ~~the parent's full prompt~~ → now a generated block naming its real tools
+
+### The mechanism
+
+`piSpawn` already computes each child's merged, alias-resolved allowlist to build
+`--tools`. It now also exports that **same array** as `PI_SUBAGENT_TOOLS`, and
+`system-prompt.ts` branches on it. One array feeds both the registry filter and
+the prompt text, so **they cannot disagree**.
+
+Every agent brings its own list automatically — finder 4, oracle 8, code_review
+8, librarian 7, delegate 12, `read_web_page`/`read_session` 1 — and a grandchild
+(delegate spawning finder) gets its own, because each `piSpawn` call sets the
+variable fresh for that spawn.
+
+### Things that look arbitrary and are not
+
+- **The parent template is skipped, not patched with a correction line.** A child
+  that has read "apply_patch — every file modification" has already been misled
+  by the time a footnote arrives.
+- **The block carries the working rules** (read first, verify, root causes)
+  because `delegate` is the one sub-agent with **no agent prompt of its own** and
+  would otherwise lose them entirely.
+- **The env var name is one exported constant**, imported by both the writer
+  (`pi-spawn`) and the reader (`system-prompt`) — two string literals could drift,
+  and the failure would be silent.
+- **A missing env var falls back to the old behaviour.** The failure mode is the
+  previous status quo, never a broken session.
+- **Grammar is branched for the one-tool case** — `read_web_page`/`read_session`
+  children get exactly one tool, and "These 1 are the only tools" reads like a bug.
+
+### Side effect worth knowing
+
+It **removes ~11 KB (~2,700 tokens) from every sub-agent spawn**. The fix is
+cheaper as well as correct.
 
 ---
 
@@ -686,7 +744,7 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
 | Extension | File | Purpose |
 |-----------|------|---------|
-| System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` template with variable interpolation |
+| System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` for parent sessions; sub-agents get a generated prompt listing only their own `--tools` allowlist (see "Sub-agent Prompts") |
 | Mentions | `mentions.ts` | @mention resolution (sessions, commits) + agent directives (@oracle, @finder, @codereview, @task) |
 | Session Name | `session-name.ts` | Auto session naming |
 | Session Breakdown | `session-breakdown.ts` | `/session-breakdown` analytics command |

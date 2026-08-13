@@ -23,7 +23,7 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, zeroUsage } from "./lib/pi-spawn";
+import { piSpawn, resolveAliases, zeroUsage } from "./lib/pi-spawn";
 import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
 import { requireParam } from "./lib/params";
 
@@ -78,6 +78,16 @@ const EXTENSION_TOOLS = [
 	"commit_search",
 	"diff",
 ];
+
+/**
+ * the merged, deduped, alias-resolved allowlist piSpawn turns into `--tools`
+ * and exports to the child as its tool list. exported so tests can pin the
+ * exact surface a librarian child receives (the seven github tools, and
+ * nothing local).
+ */
+export function librarianAllowlist(): string[] {
+	return resolveAliases([...BUILTIN_TOOLS, ...EXTENSION_TOOLS]);
+}
 
 export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinition {
 	return {
