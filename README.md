@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 28 custom tools, 8 packages, 29 skills, multi-provider support, and a custom agent identity.
+A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 29 custom tools, 8 packages, 30 skills, multi-provider support, and a custom agent identity.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -333,7 +333,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.84.1) coding agent environment — 12 extensions, 28 custom tools, 5 dedicated sub-agents with @mention routing, 8 packages, 29 skills, 3 pi-core patches, multi-provider support, and a custom system prompt.
+Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.84.1) coding agent environment — 12 extensions, 29 custom tools, 6 dedicated sub-agents with @mention routing, 8 packages, 30 skills, 3 pi-core patches, multi-provider support, and a custom system prompt.
 
 ## 🚀 Installation
 
@@ -377,7 +377,7 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | `command-palette/` | Ctrl+Shift+P fuzzy command overlay |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
 | `local-model.ts` | `/local` — start/stop the llama.cpp router |
-| `tools/` | 28 custom tools (see below) |
+| `tools/` | 29 custom tools (see below) |
 
 **Removed:** `tool-harness.ts` (replaced by piSpawn's native `--tools` allowlists), `handoff.ts`, `btw.ts`, `opencode-zen.ts`, `crof.ts`, `brain-loader.ts`. pi auto-discovers every `.ts`/dir in `~/.pi/agent/extensions/` — to disable one, delete it or move it out.
 
@@ -404,10 +404,18 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | **oracle** | claude-opus-4-6 | Architecture review, complex planning (read + bash + web + screenshot) |
 | **code_review** | claude-sonnet-5 | Structured 2-phase diff review with XML output |
 | **delegate** | inherits parent | Full resumable sub-agent for parallel independent work |
+| **chad** | `deepseek-v4-flash` **pinned** | Read-only deep research, built to swarm — 5–8 at once, one question each |
 | **librarian** | claude-sonnet-5 | Cross-repo GitHub exploration (7 GitHub tools) |
 
 On a non-Anthropic parent (deepseek/kimi/sakana/llama), every sub-agent inherits
 the parent model — the Claude labels above apply on the default Anthropic route.
+
+**`chad` is the exception, deliberately.** Its model is pinned whatever you are
+running, because the model IS the tool: deepseek-v4-flash costs $0.14/$0.28 per M
+with a 1M window, which is what makes eight concurrent researchers reasonable.
+It cannot change anything — no `apply_patch`, and its bash runs under an
+allowlist that refuses writes, redirection, `sed -i`, interpreters and every git
+subcommand that mutates. Reach for `chad` to find out, `delegate` to do.
 
 ### @Agent Mentions
 
@@ -419,6 +427,7 @@ Type `@` followed by an agent name to force the model to use that specific subag
 | `@finder` | `finder` tool | "find where we handle X", "search for Y" |
 | `@codereview` | `code_review` tool | "review my changes", "check this diff" |
 | `@task` | `delegate` tool | "do this in parallel", "spawn a subagent" |
+| `@chad` | `chad` tool | "research this", "swarm this", deep read-only investigation |
 
 Example: `@oracle is this auth middleware safe?` → injects a hidden directive forcing the model to call oracle instead of guessing.
 
@@ -440,6 +449,7 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 | `agent.amp.oracle.md` | Oracle sub-agent: simplicity-first advice, effort/scope signal |
 | `agent.amp.finder.md` | Finder sub-agent: ≤3 turns, 8+ parallel searches per turn |
 | `agent.amp.librarian.md` | Librarian sub-agent: cross-repo GitHub exploration |
+| `agent.amp.chad.md` | Chad sub-agent: read-only research; Answer / Evidence / Verified vs inferred / Gaps |
 | `prompt.amp.code-review-*.md` | Code review system prompt + XML report format |
 | `prompt.amp.read-web-page.md` | Web page Q&A prompt (used by `read_web_page`'s `prompt` path) |
 | `prompt.harness-docs.pi.md` | Pi-specific harness documentation |
@@ -459,9 +469,9 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ---
 
-## 🧠 Skills (29 loadable)
+## 🧠 Skills (30 loadable)
 
-23 config-level (`~/.config/agents/skills/`): `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `find-skills`, `userinterface-wiki`, `context-management` (pi-context) and 3 `autoresearch-*` at pi level.
+24 config-level (`~/.config/agents/skills/`): `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `find-skills`, `userinterface-wiki`, `context-management` (pi-context) and 3 `autoresearch-*` at pi level.
 
 ---
 
@@ -506,7 +516,7 @@ pi-setup/
 ├── agents/                     # 9 prompt templates (main + sub-agents)
 ├── themes/                     # gruvbox + nightowl
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 23 skills
+├── config-skills/              # 24 skills
 └── extensions/
     ├── tools/                  # 28 custom tools + lib/
     ├── editor/, command-palette/, subagent-inspector/, pi-tool-display/

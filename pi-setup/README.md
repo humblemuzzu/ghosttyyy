@@ -112,7 +112,7 @@ fallback only** — not in the active `packages`. See `AGENTS.md` → "pi-claude
 - **gruvbox** (active) — warm retro colors
 - **nightowl** — dark blue Night Owl
 
-### Skills (23 config-level)
+### Skills (24 config-level)
 `amp-voice`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `document`, `git`,
 `nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write`
 5 external skills adapted for pi (author-prefixed): `s-improve` (shadcn — audit→plans),
@@ -155,7 +155,7 @@ pi-setup/
 │   ├── editor/                 # Custom TUI editor
 │   ├── command-palette/        # Ctrl+Shift+P palette
 │   ├── subagent-inspector/     # Ctrl+Shift+A sub-agent transcript inspector
-│   ├── tools/                  # 28 custom tools + shared lib/
+│   ├── tools/                  # 29 custom tools + shared lib/
 │   ├── pi-tool-display/        # config.json (all tool overrides false — required)
 │   ├── system-prompt.ts  mentions.ts  session-name.ts  session-breakdown.ts
 │   ├── md-export.ts  notify.ts  todos.ts  local-model.ts
@@ -163,7 +163,7 @@ pi-setup/
 ├── agents/                     # 9 agent prompt markdown files
 ├── themes/                     # gruvbox.json, nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 23 skills (→ ~/.config/agents/skills/)
+├── config-skills/              # 24 skills (→ ~/.config/agents/skills/)
 ├── claude-bridge-patches/      # Patched pi-claude-bridge (legacy fallback, inactive)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
 └── README.md                   # This file

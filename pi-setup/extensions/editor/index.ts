@@ -299,18 +299,31 @@ class LabeledEditor extends CustomEditor {
 		return this.appTheme.fg("dim", str);
 	}
 
-	setLabel(key: string, text: string, position: "top" | "bottom" = "top", align: "left" | "right" = "left"): void {
+	/** @returns true if the stored label actually changed (callers use this to
+	 * skip a pointless repaint — a polling label emitter would otherwise force
+	 * a render on every tick). */
+	setLabel(key: string, text: string, position: "top" | "bottom" = "top", align: "left" | "right" = "left"): boolean {
 		// SINK GUARD: labels are embedded into single border lines. An embedded
 		// \n renders as an extra terminal row the TUI doesn't account for —
 		// visibleWidth counts it as 0, so no width check catches it — and the
 		// differential renderer desyncs (screen smear). Flatten ALL control
 		// chars here so no label source (incl. other extensions via the
 		// editor-set-label event) can ever inject one.
-		this.labels.set(key, { key, text: flattenLabelText(text), position, align });
+		const flat = flattenLabelText(text);
+		const prev = this.labels.get(key);
+		if (prev && prev.text === flat && prev.position === position && prev.align === align) return false;
+		this.labels.set(key, { key, text: flat, position, align });
+		return true;
 	}
 
-	removeLabel(key: string): void {
-		this.labels.delete(key);
+	removeLabel(key: string): boolean {
+		return this.labels.delete(key);
+	}
+
+	/** repaint the border. labels set from outside the editor (via the
+	 * editor:set-label event) have no other way to reach the render loop. */
+	requestRepaint(): void {
+		this.tuiRef.requestRender();
 	}
 
 	private getLabelsFor(position: "top" | "bottom", align: "left" | "right"): string {
@@ -859,16 +872,23 @@ export default function (pi: ExtensionAPI) {
 		updateGitSegment(diffStats);
 	});
 
+	// A label set from another extension must also trigger the repaint — the
+	// editor only re-renders on its own input/agent events otherwise, so a
+	// time-based label (e.g. deepseek-peak) would sit stale until the next
+	// keystroke. Repaint ONLY on a real change, so a poller emitting the same
+	// text every tick costs nothing.
 	pi.events.on("editor:set-label", (data: unknown) => {
 		const payload = data as SetLabelPayload;
 		if (!payload.key || !payload.text) return;
-		editor?.setLabel(payload.key, payload.text, payload.position ?? "top", payload.align ?? "left");
+		if (editor?.setLabel(payload.key, payload.text, payload.position ?? "top", payload.align ?? "left")) {
+			editor.requestRepaint();
+		}
 	});
 
 	pi.events.on("editor:remove-label", (data: unknown) => {
 		const payload = data as RemoveLabelPayload;
 		if (!payload.key) return;
-		editor?.removeLabel(payload.key);
+		if (editor?.removeLabel(payload.key)) editor.requestRepaint();
 	});
 
 	pi.on("model_select", async (_event, ctx) => {

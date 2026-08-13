@@ -71,15 +71,21 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 			"that can plan, review, and provide expert guidance.\n\n" +
 			"The oracle has access to tools: Read, Grep, find, ls, Bash, web_search, " +
 			"read_web_page, and screenshot.\n\n" +
+			"The oracle returns a VERDICT: one recommendation, its trade-offs, and an " +
+			"effort estimate. It is deliberately instructed to keep its own exploration " +
+			"shallow and to lean on judgement, so give it the context it needs.\n\n" +
 			"You should consult the oracle for:\n" +
 			"- Code reviews and architecture feedback\n" +
-			"- Finding difficult bugs across many files\n" +
+			"- Diagnosing a difficult bug once you know where it lives\n" +
 			"- Planning complex implementations or refactors\n" +
 			"- Answering complex technical questions requiring deep reasoning\n" +
 			"- Providing an alternative point of view\n\n" +
 			"You should NOT consult the oracle for:\n" +
 			"- File reads or simple keyword searches (use Read or Grep directly)\n" +
 			"- Codebase searches (use finder)\n" +
+			"- Establishing what the code actually does across many files (use chad, which " +
+			"reads exhaustively and cites path:line \u2014 then hand its findings to the oracle " +
+			"as `context` if a decision is still needed)\n" +
 			"- Basic code modifications (do it yourself or use delegate)\n\n" +
 			"Usage guidelines:\n" +
 			"- Be specific about what you want reviewed, planned, or debugged\n" +

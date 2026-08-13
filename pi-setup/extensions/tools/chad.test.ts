@@ -1,0 +1,164 @@
+/**
+ * chad tool tests — pin the read-only surface and the model policy.
+ *
+ * two properties matter more than the rest and are asserted from several
+ * directions, because both fail SILENTLY:
+ *
+ *   1. no mutation tool reaches the child. `chad` is read-only by construction,
+ *      not by prompt, and a tool quietly added to the allowlist would give it
+ *      back the ability to write with nothing failing.
+ *   2. the model is pinned. piSpawn copies the parent's model whenever the
+ *      parent is not anthropic, so a chad launched from a kimi session would
+ *      become kimi — same output shape, wrong agent, no error anywhere.
+ */
+
+import { describe, expect, test } from "bun:test";
+import { createChadTool, chadAllowlist } from "./chad";
+import { delegateAllowlist } from "./delegate";
+
+describe("chad allowlist: read-only by construction", () => {
+	const allowlist = chadAllowlist();
+
+	test("carries NO mutation tool of any kind", () => {
+		// the whole safety argument rests on this list. `bash` is present but
+		// gated by lib/read-only-bash.ts; everything here writes unconditionally.
+		for (const tool of ["apply_patch", "edit", "write", "format_file", "undo_edit", "redo_edit"]) {
+			expect(allowlist).not.toContain(tool);
+		}
+	});
+
+	test("delegate has apply_patch and chad does not — they are not the same tool", () => {
+		expect(delegateAllowlist()).toContain("apply_patch");
+		expect(allowlist).not.toContain("apply_patch");
+	});
+
+	test("has the research toolset", () => {
+		for (const tool of [
+			"read", "grep", "find", "ls", "bash", "skill",
+			"web_search", "read_web_page",
+		]) {
+			expect(allowlist).toContain(tool);
+		}
+	});
+
+	test("has the seven github tools directly, rather than nesting a librarian", () => {
+		// a nested librarian would inherit deepseek (piSpawn copies the parent
+		// model for non-anthropic parents), i.e. a whole extra process to reach
+		// tools chad can call itself.
+		for (const tool of [
+			"read_github", "search_github", "list_directory_github",
+			"list_repositories", "glob_github", "commit_search", "diff",
+		]) {
+			expect(allowlist).toContain(tool);
+		}
+	});
+
+	test("excludes screenshot — deepseek is text-only", () => {
+		// pi-ai downgrades images to "(tool image omitted)" for a model whose
+		// `input` lacks "image", so a screenshot here is a tool call that can
+		// never return anything the agent can read.
+		expect(allowlist).not.toContain("screenshot");
+	});
+
+	test("excludes the sub-agents that would degrade to deepseek", () => {
+		for (const tool of ["oracle", "finder", "librarian", "code_review"]) {
+			expect(allowlist).not.toContain(tool);
+		}
+	});
+
+	test("cannot spawn itself or a delegate — a swarm that spawns swarms is a fork bomb", () => {
+		expect(allowlist).not.toContain("chad");
+		expect(allowlist).not.toContain("delegate");
+	});
+
+	test("is deduped and alias-resolved", () => {
+		expect(new Set(allowlist).size).toBe(allowlist.length);
+		expect(allowlist).toContain("find");
+		expect(allowlist).not.toContain("glob");
+	});
+});
+
+describe("chad description tells the parent what it is", () => {
+	const chad = createChadTool() as any;
+
+	test("states the read-only constraint in the description, not only in the prompt", () => {
+		// the description is what the parent plans against; a parent that thinks
+		// chad can edit will hand it edits and get refusals back.
+		expect(chad.description).toMatch(/CANNOT CHANGE ANYTHING/);
+		expect(chad.description).toMatch(/read-only/i);
+	});
+
+	test("points at delegate for work that writes", () => {
+		expect(chad.description).toMatch(/delegate/);
+	});
+
+	test("advertises swarm use", () => {
+		expect(chad.description).toMatch(/several can be launched at once|single message/i);
+	});
+
+	test("names its own tools", () => {
+		for (const tool of ["web_search", "read_web_page", "bash", "GitHub"]) {
+			expect(chad.description).toContain(tool);
+		}
+	});
+
+	test("carries a literal Example: call naming the primary parameter", () => {
+		expect(chad.description).toMatch(/Example:\s*chad\(\{/);
+		expect(chad.description).toContain("prompt:");
+	});
+
+	test("never advertises a mutation tool", () => {
+		// apply_patch may only appear as a denial. the tool inventory line is
+		// what a model reads as "what I get", so it must not appear there.
+		const toolsLine = chad.description
+			.split("\n")
+			.find((line: string) => line.startsWith("Tools:"));
+		expect(toolsLine).toBeDefined();
+		expect(toolsLine).not.toContain("apply_patch");
+		expect(chad.description).toContain("no apply_patch");
+	});
+});
+
+describe("chad schema", () => {
+	const chad = createChadTool() as any;
+
+	test("prompt is required and is a string", () => {
+		expect(chad.parameters.required ?? []).toContain("prompt");
+		expect(chad.parameters.properties.prompt.type).toBe("string");
+	});
+
+	test("continueId exists — a chad is resumable like a delegate", () => {
+		expect(chad.parameters.properties.continueId).toBeDefined();
+		expect(chad.parameters.required ?? []).not.toContain("continueId");
+	});
+
+	test("takes no scope parameter", () => {
+		// scope existed to divide write-ownership between concurrent agents.
+		// nothing writes, so it would be a required field that does nothing.
+		expect(chad.parameters.properties.scope).toBeUndefined();
+	});
+});
+
+describe("chad refuses to spawn without its provider key", () => {
+	test("returns a clear error instead of spawning into an auth failure", async () => {
+		const chad = createChadTool() as any;
+		const saved = process.env.DEEPSEEK_API_KEY;
+		delete process.env.DEEPSEEK_API_KEY;
+		try {
+			const result = await chad.execute(
+				"call-1",
+				{ prompt: "anything" },
+				undefined,
+				undefined,
+				{ cwd: process.cwd() } as any,
+			);
+			expect(result.isError).toBe(true);
+			expect(result.content[0].text).toContain("DEEPSEEK_API_KEY");
+			// the way out has to be in the message, not in the reader's head
+			expect(result.content[0].text).toContain("delegate");
+		} finally {
+			if (saved === undefined) delete process.env.DEEPSEEK_API_KEY;
+			else process.env.DEEPSEEK_API_KEY = saved;
+		}
+	});
+});

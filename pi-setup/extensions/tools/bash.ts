@@ -29,6 +29,7 @@ import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { withFileLock } from "./lib/mutex";
 import { evaluatePermission, loadPermissions } from "./lib/permissions";
+import { evaluateReadOnlyCommand, isReadOnlyBash, readOnlyRefusal } from "./lib/read-only-bash";
 import { resolveToAbsolute } from "./read";
 import { OutputBuffer } from "./lib/output-buffer";
 import { loadSecrets } from "./lib/psst";
@@ -185,6 +186,25 @@ function splitIncompleteEscape(text: string): { display: string; carry: string }
 // --- tool factory ---
 
 export function createBashTool(): ToolDefinition {
+	/*
+	 * a read-only session must SAY so in the description, not only refuse at
+	 * call time. the tool spec is what the model plans against — learning the
+	 * constraint from a rejection costs a turn, and a model that discovers a
+	 * refusal tends to try a second spelling of the same write.
+	 *
+	 * read at construction because piSpawn sets the env var for the whole child
+	 * process; it never changes mid-session.
+	 */
+	const readOnly = isReadOnlyBash();
+	const readOnlyNote = readOnly
+		? "\n\nREAD-ONLY SESSION. Only read-only commands run here. No redirection to a file " +
+			"(`>`, `>>`; `>/dev/null` and `2>&1` are fine), no rm/mv/cp/mkdir/touch/chmod, no " +
+			"`sed -i`, no `find -exec`, no interpreters (`node -e`, `python3 -c`), no installs, " +
+			"and only git's read subcommands (log, show, diff, status, blame, ls-files, rev-parse, " +
+			"grep, ...). Anything else is refused. Report the command you wanted instead of " +
+			"looking for another way to run it."
+		: "";
+
 	return {
 		name: "bash",
 		label: "Bash",
@@ -197,7 +217,8 @@ export function createBashTool(): ToolDefinition {
 			"- Commands run in the workspace root by default; only use `cwd` when you need a different directory\n" +
 			"- ALWAYS quote file paths: `cat \"path with spaces/file.txt\"`\n" +
 			"- Use the Grep tool instead of grep, the Read tool instead of cat\n" +
-			"- Only run `git commit` and `git push` if explicitly instructed by the user.",
+			"- Only run `git commit` and `git push` if explicitly instructed by the user." +
+			readOnlyNote,
 
 		parameters: Type.Object({
 			cmd: Type.Optional(Type.String({
@@ -340,6 +361,23 @@ export function createBashTool(): ToolDefinition {
 					content: [{ type: "text" as const, text: `working directory does not exist: ${effectiveCwd}` }],
 					isError: true,
 				} as any;
+			}
+
+			/*
+			 * read-only gate first, so its message is the one a research sub-agent
+			 * reads. it is checked AFTER the `cd x && cmd` split above, so the guard
+			 * sees the command that will actually run rather than the wrapper.
+			 */
+			if (readOnly) {
+				const readOnlyVerdict = evaluateReadOnlyCommand(command);
+				if (!readOnlyVerdict.allowed) {
+					return {
+						content: [
+							{ type: "text" as const, text: readOnlyRefusal(readOnlyVerdict.reason, command) },
+						],
+						isError: true,
+					} as any;
+				}
 			}
 
 			const verdict = evaluatePermission("Bash", { cmd: command }, loadPermissions());

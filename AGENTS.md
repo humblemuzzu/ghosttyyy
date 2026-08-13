@@ -486,7 +486,123 @@ Nothing to re-apply — this is an extension, deployed by `install.sh` (`cp -R e
 
 ---
 
-## Agent Mention Directives (@oracle, @finder, @codereview, @task)
+## DeepSeek Peak/Off-Peak Clock (`extensions/deepseek-peak/`)
+
+**Added 2026-08-13.** Files: `deepseek-peak/index.ts` (extension), `peak.ts`
+(pure logic), `peak.test.ts` (44 tests), plus a three-line change to
+`editor/index.ts` (see "Repaint" below).
+
+### What it shows
+
+The bottom-left slot of the editor's border — the prompt bar — carries the
+local wall clock, then the current DeepSeek pricing phase and the time until
+it flips:
+
+```
+╰─7:02 · ◇ ds off-peak · 11h 41m left ────────────────────── ~/…/ghosttyyy (main)─╯
+╰─7:02 · ◆ ds PEAK 2× · 41m left ─────────────────────────── ~/…/ghosttyyy (main)─╯
+╰─7:02 · ds flat · 3d 2h ────────────────────── ~/…/ghosttyyy (main)─╯
+```
+
+`/deepseek` prints the full report: current UTC + local time, phase, countdown,
+the peak windows converted to the local timezone, and the rate card.
+`/deepseek off` / `on` hides and restores both labels.
+
+### The clock
+
+**12-hour, no leading zero, no AM/PM** — `7:02`. Intl has no "12-hour without
+meridiem" option, so the meridiem is *stripped* rather than never requested
+(`hour12: false` would give `19:02` — a different clock, not the same one with
+less text). Modern ICU separates the time from AM/PM with **U+202F**, a narrow
+no-break space, not an ASCII space, so the strip must not assume ASCII.
+
+**It is deliberately UNCOLOURED, which is what makes it off-white.** Plain text
+lands on the terminal's own default foreground (`#ebdbb2` in this Ghostty
+gruvbox theme) and follows the terminal if the theme changes. Every theme
+colour reachable here is either loud (`accent`/`warning`/`error`) or grey
+(`muted` `#a89984`, `dim` `#7c6f64`), and **`fg("text")` throws** — both themes
+map `text` to `""`, and `Theme.fg` rejects a falsy ansi string with "Unknown
+theme color". This is only safe because the preceding border chrome ends in
+`\x1b[39m` (`Theme.fg` resets the foreground), so the clock inherits nothing.
+Verified from the emitted bytes rather than by eye:
+`╰─<ESC>[39m7:06 · <ESC>[38;2;168;153;132mds flat…`.
+
+It is a **separate label** from the pricing phase, because the editor already
+joins same-side labels with " · " and the two need different colours. Order
+comes from Map insertion order, so `paint()` emits the clock first. `/deepseek
+off` therefore has to remove **both** keys — removing only the pricing label
+would leave a clock behind that no longer ticks.
+
+### The schedule, and why it needs no API
+
+From **16:00 UTC, 2026-08-16**, DeepSeek charges **2× during 01:00–04:00 and
+06:00–10:00 UTC**; every other hour is off-peak. Announced by @deepseek_ai;
+corroborated independently — those windows are Beijing (UTC+8) 09:00–12:00 and
+14:00–18:00, i.e. Chinese office hours, which is why the boundaries land on
+exact hours and the half-open `[start, end)` reading is safe.
+
+In IST (UTC+5:30) that is **06:30–09:30 and 11:30–15:30** — 7 peak hours a day,
+17 off-peak, and the whole evening is cheap.
+
+**No time API, deliberately.** The windows are defined in UTC and every machine
+already knows UTC exactly — `Date.getUTCHours()`, no timezone database, no DST,
+no leap-second concern, no network, no cache, no failure mode. A time service
+would add a round-trip to learn something the process already holds, and the
+only thing it could fix — a wrong system clock — is already wrong for every
+other program on the machine. The **local** rendering in `/deepseek` does use
+`Intl` with an explicit `"en-US"` locale (the system locale is `en-IN`, which
+formats differently) and the runtime's own timezone rather than a hardcoded
++5:30, so it stays correct if the laptop moves.
+
+### Things that look arbitrary and are not
+
+- **Before the effective date it says "flat", not "off-peak".** Reporting
+  off-peak now would assert a discount that does not exist yet — the V3/R1
+  16:30–00:30 discount was retired 2026-07-24 and never applied to V4.
+- **Peak turns red only when the active model IS deepseek**, orange otherwise.
+  The colour is an alarm about the turn you are about to spend, not decoration.
+- **The label is emitted over the editor's public event bus**
+  (`editor:set-label`), never by importing the editor. pi loads each extension
+  with its own jiti instance and `moduleCache: false`, so a shared module-level
+  object is *not* shared — it reads empty, silently.
+- **Each label re-emits every poll but only repaints when its TEXT changed.**
+  At minute granularity that is one repaint per minute; repainting every tick
+  would fight the editor's own render loop for nothing visible. The poll is 5s
+  rather than 60s so the minute is never more than 5s late — the other 11 ticks
+  are no-ops.
+- **Pre-launch reads `ds flat · 3d 2h`, with no "new rates in" wording.** The
+  countdown already says it.
+- **`peak.test.ts` lives inside the extension directory and is inert.** pi's
+  `resolveExtensionEntries` loads *only* `index.ts` from a subdirectory
+  (verified in `dist/core/extensions/loader.js:473`) — a bare `deepseek-peak.ts`
+  plus `deepseek-peak.test.ts` at the top level would have loaded the test file
+  as an extension.
+
+### Repaint — the one editor change
+
+`editor:set-label` set the label but never called `requestRender()`, so a
+time-based label sat stale until the next keystroke. `setLabel`/`removeLabel`
+now return whether anything actually changed, `LabeledEditor.requestRepaint()`
+is public, and the two event handlers repaint on a real change only. Existing
+internal callers ignore the return value and are unaffected.
+
+### Verified (2026-08-13)
+
+51 unit tests, including: every hour of the day against the published table,
+both half-open boundaries to the second, the 15h overnight wrap, a full-day
+walk asserting the flips land on exactly `[1, 4, 6, 10]`, the IST/Beijing/UTC
+conversions, and every hour asserting the clock matches `/^\d{1,2}:\d{2}$/` with
+no meridiem and no U+202F left behind. Live in a real pi under tmux: all three
+phases rendered correctly, countdowns matched the wall clock to the minute
+(13:19 UTC → 01:00 = `11h 41m`), the pricing label ticked 41m → 39m and the
+clock rolled 7:06 → 7:08 against `date`, **both with no input**, proving the
+repaint path. `/deepseek off` cleared both labels and `on` restored them in
+order. The post-effective-date states were checked by backdating the *deployed*
+copy only, then restoring it from the repo and diffing.
+
+---
+
+## Agent Mention Directives (@oracle, @finder, @codereview, @task, @chad)
 
 **Files:** `extensions/tools/lib/mentions/agent-source.ts` (new), plus modifications to `types.ts`, `sources.ts`, `parse.ts`, `render.ts`, `provider.ts`, `index.ts`, and `extensions/mentions.ts`.
 
@@ -509,6 +625,7 @@ Extends pi's existing @mention system to support agent tool routing. When the us
 | `@finder` | `finder` | Codebase search by concept or behavior |
 | `@codereview` | `code_review` | Code review with diff analysis |
 | `@task` | `delegate` | Full subagent for independent parallel work (resumable) |
+| `@chad` | `chad` | Read-only deep research subagent — cheap enough to swarm |
 
 ### Autocomplete
 
@@ -738,14 +855,14 @@ component knows its screen position (see the research notes in the port log).
 
 ---
 
-## Extensions (12 active)
+## Extensions (13 active)
 
 All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 
 | Extension | File | Purpose |
 |-----------|------|---------|
 | System Prompt | `system-prompt.ts` | Loads `prompt.amp.system.md` for parent sessions; sub-agents get a generated prompt listing only their own `--tools` allowlist (see "Sub-agent Prompts") |
-| Mentions | `mentions.ts` | @mention resolution (sessions, commits) + agent directives (@oracle, @finder, @codereview, @task) |
+| Mentions | `mentions.ts` | @mention resolution (sessions, commits) + agent directives (@oracle, @finder, @codereview, @task, @chad) |
 | Session Name | `session-name.ts` | Auto session naming |
 | Session Breakdown | `session-breakdown.ts` | `/session-breakdown` analytics command |
 | Notify | `notify.ts` | Desktop notifications via OSC 777 |
@@ -753,20 +870,21 @@ All live in `~/.pi/agent/extensions/`, backed up in `pi-setup/extensions/`.
 | MD Export | `md-export.ts` | `/md` — session JSONL → markdown export (clipboard or file) |
 | Command Palette | `command-palette/` | Ctrl+Shift+P overlay |
 | Editor | `editor/` | Custom box-drawing editor |
+| DeepSeek Peak | `deepseek-peak/` | `/deepseek` + live peak/off-peak pricing clock in the editor's bottom-left border |
 | Subagent Inspector | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
-| Tools | `tools/` | 28 custom tools (see below) |
+| Tools | `tools/` | 29 custom tools (see below) |
 | Local Model | `local-model.ts` | `/local` — start/stop the llama.cpp router; injects local-model rules ONLY for `llama-local` |
 
 **Note:** pi auto-discovers every `.ts` file in `extensions/` — there is no "present but disabled" state. To disable an extension, delete it or move it out of `extensions/`. `kimi-code-token.mjs` also lives here but is a helper script (called by the `kimi-code` provider), not a loaded extension. The 2026-07-23 cleanup deleted the former disabled extensions (handoff, brain-loader, opencode-zen, commandcode, pi-vcc-config) and `btw.ts` / `crof.ts` / `import-opencode.ts` entirely — recover from git if ever needed. (`local-model.ts` was later rebuilt as the `/local` command — see Local Models.)
 
 ---
 
-## Custom Tools (28)
+## Custom Tools (29)
 
 **Count note (corrected 2026-08-05):** this section said "24" for a long time while
 `index.ts` registered more. `github.ts` alone registers **seven** tools, not one, and
 `agent_message` registers via `setupAgentMessage(pi)` rather than a `registerTool` line.
-The real figure is **28** (27 `pi.registerTool` calls + `agent_message`), of which
+The real figure is **29** (28 `pi.registerTool` calls + `agent_message`), of which
 `web_search` is conditional — it is skipped entirely when its config disables it, so a
 given session shows 26 or 27.
 
@@ -801,6 +919,7 @@ These replace pi's default tool implementations with customized versions:
 | **finder** | `finder.ts` | Concept-based search subagent — chain 3+ searches or search by concept |
 | **oracle** | `oracle.ts` | Architecture review, hard multi-file bugs, complex planning (read/grep/find/ls + bash + screenshot, web_search, read_web_page) |
 | **delegate** | `delegate.ts` | Spawns a resumable subagent (same model as parent) for parallel independent work. Replaced `task.ts` in `e4c8786` — `continueId` makes children resumable, which Task never was |
+| **chad** | `chad.ts` | Read-only deep research subagent, **pinned** to `deepseek/deepseek-v4-flash` at thinking `high` whatever the parent runs. Cheap enough to launch in swarms. No mutation tool at all, and its bash runs under `lib/read-only-bash.ts`. See "chad" below |
 | **librarian** | `librarian.ts` | External repository exploration via GitHub API |
 | **agent_message** | `agent-message.ts` | Inter-agent mailbox messaging. Registered via `setupAgentMessage(pi)`, not a plain `registerTool` |
 | **web_search** | `web-search.ts` | Parallel AI Search API. **Conditionally registered** — if its config disables it, nothing is registered rather than advertising a tool that cannot run |
@@ -813,6 +932,235 @@ These replace pi's default tool implementations with customized versions:
 **Web search:** `pi-web-access` was removed 2026-07-30 (see Packages). Phase 3 landed the
 self-contained Parallel AI `web_search` (`web-search.ts`), so the gap that note used to
 describe is closed. Page reading is covered by our own `read_web_page` tool.
+
+### chad — read-only research, pinned to deepseek, built to swarm
+
+**Added 2026-08-13.** Files: `chad.ts`, `lib/read-only-bash.ts`, `agents/agent.amp.chad.md`,
+`chad.test.ts`, `lib/read-only-bash.test.ts`, `lib/pi-spawn.test.ts` (new), plus
+`pinModel`/`thinkingLevel`/`readOnlyBash` on `PiSpawnConfig`.
+
+`chad` is `delegate`'s read-only counterpart. One question per call, five or
+eight calls in one message, each returning a report instead of a pile of file
+contents. Verified in `pi-agent-core/dist/agent-loop.js` (`executeToolCallsParallel`):
+tool calls from one assistant message really do run under a single `Promise.all`,
+so a swarm is concurrent rather than a queue.
+
+#### The model is the tool, so it is pinned
+
+`piSpawn` overwrites `config.model` with the parent's model whenever the parent
+provider is not anthropic — that rule exists because finder/oracle/librarian name
+claude models a kimi or sakana session cannot serve. Applied to chad it is
+backwards: deepseek-v4-flash is self-sufficient on its own key, and it is
+**why the tool exists** ($0.14/$0.28 per M, 1M context — roughly 35× cheaper
+input than opus, which is what makes eight at once reasonable). A chad launched
+from a kimi session would silently become a kimi agent: same output shape, wrong
+agent, no error anywhere.
+
+**Those figures change on 2026-08-16 at 16:00 UTC.** The new V4 card is
+$0.22/$0.66 per M off-peak and **$0.44/$1.32 during peak** (01:00–04:00 and
+06:00–10:00 UTC = 06:30–09:30 and 11:30–15:30 IST) — so a peak-hour swarm costs
+**~4.7× more output** than the number above. The tool is still much cheaper than
+opus and the pin is still right; but "cheap enough to swarm" is now
+time-dependent. `/deepseek` (see the DeepSeek Peak/Off-Peak Clock section)
+answers which side of that line the clock is on.
+
+Hence `pinModel: true` — an explicit flag, not the tempting alternative of
+"just don't pass `parentModel`". Absence is not testable and not readable; the
+next person adding `parentModel` "for consistency" breaks it silently. The
+sabotage check makes the difference concrete: with the pin disabled, the
+anthropic-parent test still **passes** (because `qualifyModel` leaves a slashed
+id alone) and only the non-anthropic test fails. Absence would have looked
+correct in exactly the case it isn't.
+
+`thinkingLevel` is its own `--thinking` flag rather than a `model:high` suffix,
+so the pin doesn't live inside a string. pi applies `--thinking` after every
+other source (`main.js` `buildSessionOptions`), so it always wins.
+
+#### Read-only is enforced, not requested
+
+Removing `apply_patch` is **half** a constraint — bash writes. `readOnlyBash: true`
+sets `PI_BASH_READ_ONLY=1`, and the child's own `bash.ts` both advertises the
+policy in its description and enforces it in `execute()`.
+
+`lib/read-only-bash.ts` is an **allowlist**, deliberately. A denylist on a shell
+is unwinnable (`python3 -c`, `perl -pi`, `ed`, `dd`, `tee`, `find -exec`,
+heredocs, and every binary nobody thought of), and `permissions.json` already
+records five separate bypasses of a naive `rm *` glob. An allowlist fails closed:
+an unlisted command is refused *and named*, so a gap shows up as a refusal rather
+than as a write. ~60 read commands, git gated per-subcommand, plus a quote-aware
+scanner for separators, `$( )`, backticks and redirection.
+
+**The name of a command is not a capability, and believing otherwise cost two
+rounds of fixes.** The first version allowlisted by name and stopped there.
+Attacking it found eight commands on the list that write files or run other
+commands through their own flags — `sort -o`, `base64 -o`, `tree -o`, `yq -i`,
+`uniq IN OUT`, `xxd IN OUT`, `rg --pre`, `fd -x` — plus `sed`'s `w FILE` script
+command and `awk`'s `system()`. **`awk`, `gawk` and `mawk` were removed
+outright**: guarding an interpreter's redirects while leaving `system()` open is
+a guard that only looks like one, and excluding `perl -e` while allowing
+`awk 'BEGIN{system(...)}'` was incoherent. Hence `WRITE_FLAGS` and
+`POSITIONAL_OUTPUT` — anything added to the allowlist must be checked for an
+output flag, an exec flag, and a positional output operand.
+
+**`code_review` then found the one that mattered most, which I had missed:
+command substitution inside DOUBLE quotes.** The scanner's quote branch ran
+before its `$(`/backtick detection, so `echo "$(rm f)"` was invisible — and bash
+does **not** suppress substitution inside `"`, only inside `'`. That needed no
+special flag, so every allowlisted command taking a quoted argument was a way
+through: a worse hole than all eight flag vectors combined. It also found
+`man -P CMD` (man's pager is **not** tty-gated, unlike git's, so it fires with
+stdout piped — verified), `git symbolic-ref HEAD <ref>` (two bare operands
+repoint HEAD, which the flag checks cannot see) and `git reflog delete/expire`
+(prunes the history a human would recover from).
+
+Every one of those twelve was **verified by running it** — the harness executes
+each command outside the guard and asserts the file really appeared, so the
+tests assert against the shell rather than against my belief about the shell.
+The fixes preserve the false-positive direction too: single-quoted `$( )`,
+`git symbolic-ref HEAD` and bare `git reflog` all still pass.
+
+Details that look fussy and are not:
+
+- **Quote tracking runs in both directions.** `grep "a > b" f` must not read as a
+  redirect, or the guard gets switched off and then guards nothing. But an
+  UNQUOTED `rg x->y .` **is** refused, and that is correct: bash itself parses it
+  as a redirect into `y`. And `"` is not `'`: substitution is live inside double
+  quotes and inert inside single ones, so the two are treated differently.
+- **`>/dev/null` and `2>&1` are allowed.** Every real command line uses them, and
+  neither stores anything. `>&file` is a write and is refused.
+- **`bareIsRead` is per git subcommand, not a default.** Bare `git remote` lists
+  remotes; bare `git stash` PUSHES and changes the working tree.
+- **`git diff --output=<file>` writes a file**, so `--output` is refused on every
+  git subcommand including the read ones.
+- **A flag's VALUE is not an operand.** `xxd -l 64 f` is one file and a length;
+  counting `64` as a second file would refuse an ordinary read, and a guard that
+  fires on harmless things is one you learn to force without reading.
+- **Accepted holes, stated rather than hidden:** any allowed binary talked into
+  writing by a flag form not yet listed — the same class as the twelve above, so
+  the list is a living one. This is a guardrail on our own agent, not a sandbox
+  — the same disclaimer `lib/permissions.ts` carries. A real boundary would be
+  `sandbox-exec` with `deny file-write*`, which is a different change with
+  different risks and has **not** been tested on this macOS version.
+
+#### Tool surface, and why each exclusion
+
+15 tools: `read grep find ls bash skill web_search read_web_page` + the seven
+github tools.
+
+- **No `apply_patch`/`format_file`/`undo_edit`** — the point.
+- **No `screenshot`** — deepseek is `input: ["text"]`, and pi-ai's
+  `transform-messages.js` `downgradeUnsupportedImages()` swaps images for
+  `(tool image omitted)`. It would be a tool that can never return anything the
+  agent can read.
+- **No `oracle`/`finder`/`librarian`** — a child of a chad inherits deepseek (the
+  same inheritance rule above), so a nested oracle is deepseek talking to itself
+  at process-spawn cost. The **seven github tools are included directly** for
+  that reason: nesting a librarian would spawn a whole process to reach tools
+  chad can call itself, and schema weight on a $0.14/M model is fractions of a
+  cent.
+- **No `chad`/`delegate`** — a swarm that spawns swarms is a fork bomb.
+
+`collectSubAgentImages` is also deliberately **not** used. A chad that opens a
+PNG sees a placeholder, but the pixels would still reach the *parent*, which can
+see them — an expensive image arriving with no comment on it, because the agent
+that fetched it was blind.
+
+#### The sub-agent spawn graph is acyclic, and now pinned
+
+Measured across all six allowlists, there is exactly **one** agent→agent edge:
+
+```
+delegate ──> finder ──> (nothing)
+oracle, code_review, librarian, chad ──> (nothing)
+```
+
+No cycles, max nesting two levels below the parent. (`read_web_page` with a
+`prompt` and `read_session` also spawn a child, but it gets exactly one tool, so
+it terminates.)
+
+**A cycle here would not merely recurse, it would multiply.** chad is built to be
+launched eight at a time; a chad that could spawn chads is 64 processes at depth
+2 and 512 at depth 3, each with its own context and its own bill, while the
+parent sees one tool call sitting there. That is why `chad`'s allowlist excludes
+both `chad` and `delegate`.
+
+Until now that property was guaranteed by nothing but six hand-written constants
+— one name added to one array breaks it, and the damage shows up as a stalled
+session rather than an error. `tool-contract.test.ts` now asserts: no agent
+appears in its own allowlist, no cycle is reachable from any agent, depth ≤ 2,
+and the edge set is exactly `["delegate -> finder"]`. That last one is stated
+literally so a change to the graph's shape has to be acknowledged rather than
+silently satisfying the generic checks. Verified by sabotage: adding `chad` and
+`delegate` to chad's own list fails all four.
+
+#### chad vs oracle — the boundary is drawn in both directions, deliberately
+
+They overlap on "go look at the code", and the first version of the docs drew the
+boundary on **one side only**: chad's description said "architecture judgement →
+use oracle", while oracle's still advertised *"finding difficult bugs across many
+files"*, which reads exactly like a chad job. An asymmetric hint is worse than
+none — it routes to whichever description the model happened to weigh, and the
+failure is invisible because both tools return something plausible.
+
+The distinction is not the model. It is what you get back, and the two agent
+prompts give **opposite instructions on the same axis**:
+
+| | `oracle` | `chad` |
+|---|---|---|
+| deliverable | a verdict — one recommendation + trade-offs + effort | evidence — cited, with verified/inferred split and Gaps |
+| exploration | *"use tools only when they materially improve accuracy"* — deliberately shallow | 8+ parallel calls every turn, exhaustive when completeness is implied |
+| bash | unrestricted (can run your build) | allowlist, writes refused |
+| shape of use | one question, one strong answer | many questions at once |
+
+So: hard part is *finding out* → swarm chads. Hard part is *deciding* → oracle.
+Both → chads first, then their findings into oracle's `context`, which is cheaper
+and better than making the oracle excavate when it is instructed not to.
+
+`tool-contract.test.ts` pins the symmetry: each description must name the other,
+and each must state what it returns.
+
+**Honest caveat, recorded because it is easy to forget:** on a NON-anthropic
+parent, `oracle` inherits the parent model (see the sub-agent model table), so
+its opus advantage disappears and the two converge toward prompt-and-tools only.
+chad is then the more predictable of the pair, because it is the one that is
+pinned.
+
+#### Other decisions worth not re-litigating
+
+- **A `scope` parameter was designed and then cut.** It existed to divide
+  write-ownership between concurrent agents. Nothing writes, so it would have
+  been a required field that did nothing. (The hazard it addressed is real for
+  `delegate`: `lib/mutex.ts` is a module-level Map, so it does not span
+  processes. Read-only sidesteps it entirely rather than solving it.)
+- **`DEEPSEEK_API_KEY` is preflighted** before spawning. In a swarm, eight
+  children each taking ~10s to die on the same missing key is eight confusing
+  errors instead of one clear one, and the pi-side message reads like a model
+  failure.
+- **Sessions persist to `SUB_AGENT_SESSION_DIR`** like delegate, so a chad is
+  resumable via `continueId` without cluttering `/resume`.
+
+#### Verified
+
+`lib/read-only-bash.test.ts` — 177 tests: every bypass form `permissions.json`
+was historically beaten by (`echo hi;rm f`, `for f in *; do rm $f; done`,
+`find . -exec rm {} +`, `xargs rm < list`, `$(rm f)`, backticks, `{ rm f; }`),
+all twelve vectors found by attacking it and by review, both redirection
+directions, `sed -i`/`w`/`e` spellings, git read-vs-write across 60 command
+forms, and the quoted false positives that would make the guard unusable.
+
+`lib/pi-spawn.test.ts` — **new**, and the first test of what the child is
+actually launched with. It runs the real `piSpawn` against a stub `pi` that
+records its argv, because AGENTS.md's own update workflow says an import-level
+audit cannot see a change in the flags we pass (that is how pi 0.84 #7327 took
+out every sub-agent while unit tests stayed green).
+
+Live end-to-end, from a deliberately **kimi-code** parent (the case the pin
+exists for): model on the wire came back `deepseek-v4-flash`, 11 turns, $0.027,
+106s, correct report format, and it declined to run a concurrency harness
+*because* the session was read-only. Two of its citations were spot-checked
+against the files and were exact.
+
+Full suite: **1453 pass / 0 fail**.
 
 ### apply_patch: strict on disk, loose on the wire
 
@@ -1170,26 +1518,27 @@ Shared code used by multiple tools:
 | `prompt-patch.ts` | Auto-derive promptSnippet/promptGuidelines from tool descriptions (ported from @bds_pi/prompt-patch) |
 | `fs.ts` | Path resolution and directory walking utilities (ported from @bds_pi/fs) |
 | `mentions/` | @mention system — parse, resolve, render, agent directives, session/commit indexing, autocomplete provider (ported from @bds_pi/mentions) |
+| `read-only-bash.ts` | the read-only bash allowlist `chad` runs under. quote-aware scanner + per-command gates. see the chad section |
 
 ---
 
 ## Skills
 
-**29 loadable by name** (verified live 2026-08-08): 23 config-level +
+**30 loadable by name** (verified live 2026-08-13): 24 config-level +
 `find-skills` + `userinterface-wiki` + `context-management` (pi-context) +
 3 `autoresearch-*` (pi-autoresearch). The `mcp-scripting` skill that
 pi-mcp-adapter 2.19+ ships is deliberately suppressed — see the
 pi-mcp-adapter config section.
 
-### Config-level (`~/.config/agents/skills/`) — 23 skills
+### Config-level (`~/.config/agents/skills/`) — 24 skills
 
 `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`,
-`dig`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`,
-`remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`,
-`spawn`, `tmux`, `write`
+`dig`, `dm-antislop`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`,
+`nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`,
+`spar`, `spawn`, `tmux`, `write`
 
-Five of those are external skills adapted for pi, with author prefixes —
-**`s-` shadcn, `c-` cursor, `mat-` matt pocock**:
+Six of those are external skills adapted for pi, with author prefixes —
+**`s-` shadcn, `c-` cursor, `mat-` matt pocock, `dm-` dmmulroy**:
 
 | Skill | What it is | Subagents it spawns |
 |-------|------------|---------------------|
@@ -1198,6 +1547,7 @@ Five of those are external skills adapted for pi, with author prefixes —
 | `mat-cr2axis` | two-axis diff review: standards (fowler smells) + spec, side by side | 2 read-only, parallel |
 | `mat-design` | deep-modules vocabulary (module/interface/seam/adapter/depth) | 3–4, only in the DESIGN-IT-TWICE path |
 | `mat-tdd` | test-driven development discipline (red→green, seams, anti-patterns) | none |
+| `dm-antislop` | installs dmmulroy's anti-slop **Oxlint plugin** — 15 rules rejecting low-evidence TS (chained assertions, `unknown` contracts, `Record<string, unknown>`, runtime `typeof`, module mocking, undocumented casts) | none |
 
 **Adapted for pi:** Claude-Code/Cursor machinery mapped to pi tools or cut
 (shadcn's `execute`/`reconcile` worktree flow removed — pi sub-agents have no
@@ -1672,6 +2022,7 @@ parent instead of demanding separate Claude access.
 | **code_review** | `claude-sonnet-5` | diff review |
 | **oracle** | `claude-opus-4-6` | strongest model; architecture, hard bugs, alternative view |
 | **delegate** | *(none — inherits `parentModel`)* | **deliberate.** a delegate is a peer doing your work, so it must match your model and provider. Do not add a `MODEL` const to `delegate.ts`. |
+| **chad** | `deepseek/deepseek-v4-flash` **pinned** (`pinModel: true`, `--thinking high`) | the inverse of delegate, and equally deliberate. the model is not an implementation detail — $0.14/$0.28 per M with a 1M window is what makes a swarm affordable, so inheriting the parent would destroy the tool. provider-qualified because `pinModel` skips `qualifyModel`. |
 | **read_session** | `claude-sonnet-5` | picking the right branch out of a long, branching session is comprehension, not summarisation |
 | **read_web_page** | `claude-sonnet-5` | only the optional `prompt` path spawns a model; a plain fetch spawns none |
 
@@ -1765,8 +2116,9 @@ pi-setup/
 │   ├── package.json            # Version tracking
 │   └── filters/
 │       └── context-compress.ts # Patched context masking (cmd param support)
-├── agents/                     # 9 agent prompt templates
+├── agents/                     # 10 agent prompt templates
 │   ├── prompt.amp.system.md    # Main system prompt template
+│   ├── agent.amp.chad.md       # read-only research subagent
 │   ├── prompt.harness-docs.pi.md  # pi-specific docs
 │   ├── prompt.amp.read-web-page.md  # web-page Q&A prompt
 │   └── ...
@@ -1774,9 +2126,10 @@ pi-setup/
 │   ├── gruvbox.json
 │   └── nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 23 config-level skills
+├── config-skills/              # 24 config-level skills
 └── extensions/
-    ├── tools/                  # 28 custom tools + lib/ (config, prompt-patch, fs, mentions)
+    ├── deepseek-peak/          # peak/off-peak pricing clock (index.ts + peak.ts + 44 tests)
+    ├── tools/                  # 29 custom tools + lib/ (config, prompt-patch, fs, mentions)
     ├── pi-tool-display/
     │   └── config.json         # All tool overrides disabled (required for compatibility)
     ├── mentions.ts             # @mention resolution + agent directives extension
@@ -1794,6 +2147,7 @@ pi-setup/
 | `agent.amp.finder.md` | Finder subagent: concept-based code search |
 | `agent.amp.librarian.md` | Librarian subagent: external repo exploration |
 | `agent.amp.oracle.md` | Oracle subagent: architecture review, hard bugs |
+| `agent.amp.chad.md` | Chad subagent: read-only deep research, structured Answer/Evidence/Verified-vs-inferred/Gaps report |
 | `prompt.amp.handoff-extraction.md` | Handoff extraction prompt (kept for reference; the handoff extension was removed) |
 | `prompt.amp.code-review-system.md` | Code review system prompt |
 | `prompt.amp.code-review-report.md` | Code review report format |

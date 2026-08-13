@@ -45,13 +45,13 @@ export default function (pi: ExtensionAPI) {
 		 * piSpawn sets SUB_AGENT_TOOLS_ENV from the SAME array it turns into
 		 * `--tools`, so the prompt can never name a tool this child lacks. each
 		 * agent brings its own list — finder 4, oracle 8, code_review 8,
-		 * librarian 7, delegate 12, read_web_page/read_session 1 — and a
+		 * librarian 7, delegate 12, chad 15, read_web_page/read_session 1 — and a
 		 * grandchild (delegate spawning finder) gets its own, because every
 		 * piSpawn call sets the variable fresh for that spawn.
 		 *
 		 * the parent template is skipped entirely rather than patched with a
 		 * correction line: a child reading "apply_patch — every file
-		 * modification" and "your dedicated sub-agents are exactly five tools"
+		 * modification" and "your dedicated sub-agents are exactly six tools"
 		 * has already been misled by the time any footnote arrives.
 		 */
 		const childTools = process.env[SUB_AGENT_TOOLS_ENV]?.trim();

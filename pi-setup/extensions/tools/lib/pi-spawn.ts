@@ -3,7 +3,7 @@
  *
  * extracts the spawn-parse-collect loop from the generic subagent
  * extension into a reusable function. each dedicated tool (finder,
- * oracle, code_review, delegate, librarian) calls piSpawn() with its own config.
+ * oracle, code_review, delegate, chad, librarian) calls piSpawn() with its own config.
  *
  * uses shared interpolation from ./interpolate for template variables
  * ({cwd}, {roots}, {date}, etc.) in system prompts.
@@ -17,6 +17,7 @@ import * as path from "node:path";
 import type { Message } from "@mariozechner/pi-ai";
 import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
 import { SUB_AGENT_TOOLS_ENV } from "./sub-agent-prompt";
+import { READ_ONLY_BASH_ENV } from "./read-only-bash";
 
 // --- tool name aliases ---
 
@@ -150,6 +151,38 @@ export interface PiSpawnConfig {
 	 * provider+auth route as the parent session.
 	 */
 	parentModel?: string;
+	/**
+	 * never inherit the parent's model — `model` is used verbatim.
+	 *
+	 * the inheritance rule below exists for ONE reason: finder/oracle/librarian
+	 * name claude models, and a non-anthropic parent has no route to serve them,
+	 * so copying the parent is the only thing that can work. that reasoning does
+	 * not apply to a sub-agent whose model is self-sufficient on its own provider
+	 * key — `chad` is deepseek because deepseek IS the tool, not because the
+	 * parent happens to be on it.
+	 *
+	 * a pinned model must already be provider-qualified ("deepseek/deepseek-v4-flash").
+	 * it is passed through untouched, so a bare id would hit pi 0.84's ambiguity
+	 * error (#7327) rather than resolving to the wrong provider silently.
+	 */
+	pinModel?: boolean;
+	/**
+	 * thinking level for the child (`--thinking`). one of pi's levels: off,
+	 * minimal, low, medium, high, xhigh, max.
+	 *
+	 * passed as its own flag rather than as a `model:high` suffix so the pin does
+	 * not live inside a string, and so an explicit level always beats whatever
+	 * the child would inherit from settings.
+	 */
+	thinkingLevel?: string;
+	/**
+	 * run the child's bash tool under the read-only policy (lib/read-only-bash.ts).
+	 *
+	 * removing a sub-agent's mutation tools is only half a constraint — bash can
+	 * write. this closes the other half, in the child's own process, rather than
+	 * asking the prompt nicely.
+	 */
+	readOnlyBash?: boolean;
 	/**
 	 * tools the sub-agent may use. `builtinTools` and `extensionTools` are
 	 * MERGED into a single native `--tools` allowlist (pi 0.82+ gates built-in,
@@ -296,7 +329,10 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 	if (config.model) {
 		let resolvedModel = config.model;
 
-		if (config.parentModel) {
+		if (config.pinModel) {
+			// used verbatim. see PiSpawnConfig.pinModel for why inheritance is wrong
+			// for this class of sub-agent rather than merely unnecessary.
+		} else if (config.parentModel) {
 			const parentProvider = config.parentModel.split("/")[0]?.toLowerCase() ?? "";
 			const anthropicProviders = ["anthropic", "claude-bridge"];
 			// no provider prefix means the default provider is being used —
@@ -332,6 +368,12 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		}
 
 		args.push("--model", resolvedModel);
+	}
+
+	// explicit level beats the child's inherited default (pi applies --thinking
+	// after every other source; see main.js buildSessionOptions).
+	if (config.thinkingLevel) {
+		args.push("--thinking", config.thinkingLevel);
 	}
 	// merge builtin + extension tool lists into ONE native --tools allowlist.
 	//
@@ -421,6 +463,9 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			...(requestedTools.length > 0
 				? { [SUB_AGENT_TOOLS_ENV]: requestedTools.join(",") }
 				: {}),
+			// the child's own bash tool reads this at construction and both
+			// advertises and enforces the read-only policy.
+			...(config.readOnlyBash ? { [READ_ONLY_BASH_ENV]: "1" } : {}),
 		};
 
 		let wasAborted = false;

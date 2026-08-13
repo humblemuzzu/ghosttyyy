@@ -23,11 +23,12 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { createLibrarianTool, normalizeRepositories } from "./librarian";
-import { createOracleTool } from "./oracle";
-import { createDelegateTool } from "./delegate";
-import { createFinderTool } from "./finder";
-import { createCodeReviewTool } from "./code-review";
+import { createLibrarianTool, librarianAllowlist, normalizeRepositories } from "./librarian";
+import { createOracleTool, oracleAllowlist } from "./oracle";
+import { createDelegateTool, delegateAllowlist } from "./delegate";
+import { createChadTool, chadAllowlist } from "./chad";
+import { createFinderTool, finderAllowlist } from "./finder";
+import { createCodeReviewTool, codeReviewAllowlist } from "./code-review";
 
 type AnyTool = {
 	name: string;
@@ -35,11 +36,12 @@ type AnyTool = {
 	parameters: { properties?: Record<string, any>; required?: string[] };
 };
 
-/** the five sub-agent tools, i.e. everything that spawns a child pi session. */
+/** the six sub-agent tools, i.e. everything that spawns a child pi session. */
 const SUB_AGENT_TOOLS: Array<[string, AnyTool]> = [
 	["librarian", createLibrarianTool() as any],
 	["oracle", createOracleTool() as any],
 	["delegate", createDelegateTool() as any],
+	["chad", createChadTool() as any],
 	["finder", createFinderTool() as any],
 	["code_review", createCodeReviewTool() as any],
 ];
@@ -49,6 +51,7 @@ const PRIMARY_PARAM: Record<string, string> = {
 	librarian: "query",
 	oracle: "task",
 	delegate: "prompt",
+	chad: "prompt",
 	finder: "query",
 	code_review: "diff_description",
 };
@@ -133,6 +136,108 @@ describe("normalizeRepositories tolerates what models actually send", () => {
 		expect(normalizeRepositories(undefined)).toEqual([]);
 		expect(normalizeRepositories("   ")).toEqual([]);
 		expect(normalizeRepositories([1, null, "a/b", "  "])).toEqual(["a/b"]);
+	});
+});
+
+describe("tool contract: overlapping sub-agents name each other", () => {
+	/*
+	 * oracle and chad both answer "go look at the code", so the boundary between
+	 * them has to be in BOTH descriptions. it was in only one: chad already said
+	 * "architecture judgement -> use oracle" while oracle still advertised
+	 * "finding difficult bugs across many files", which reads like a chad job.
+	 *
+	 * an asymmetric hint is worse than none \u2014 it routes to whichever description
+	 * the model happened to weigh, and the failure is invisible because both
+	 * tools return something plausible.
+	 */
+	const oracle = createOracleTool() as any;
+	const chad = createChadTool() as any;
+
+	test("chad sends judgement questions to the oracle", () => {
+		expect(chad.description).toMatch(/use oracle/i);
+	});
+
+	test("oracle sends fact-finding to chad", () => {
+		expect(oracle.description).toMatch(/use chad/i);
+	});
+
+	test("each states what it returns, so the choice is about the deliverable", () => {
+		expect(oracle.description).toMatch(/VERDICT|recommendation/);
+		expect(chad.description).toMatch(/Evidence|Verified vs inferred/i);
+	});
+
+	test("finder stays the locator, not a third opinion", () => {
+		const finder = createFinderTool() as any;
+		expect(finder.description).toMatch(/not to use this tool/i);
+	});
+});
+
+describe("tool contract: the spawn graph is acyclic", () => {
+	/*
+	 * WHY THIS IS NOT PARANOIA
+	 *
+	 * a cycle here does not merely recurse, it MULTIPLIES. chad is built to be
+	 * launched eight at a time; if a chad could spawn chads that is 64 pi
+	 * processes at depth 2 and 512 at depth 3, each with its own context and
+	 * its own API bill, and the parent sees one tool call sitting there.
+	 *
+	 * today the graph has exactly one agent->agent edge (delegate -> finder) and
+	 * that is enforced by nothing but six hand-written constants. adding one
+	 * name to one array is all it takes, and the damage shows up as a stalled
+	 * session rather than an error.
+	 */
+	const allowlists: Record<string, string[]> = {
+		finder: finderAllowlist(),
+		oracle: oracleAllowlist(),
+		code_review: codeReviewAllowlist(),
+		librarian: librarianAllowlist(),
+		delegate: delegateAllowlist(),
+		chad: chadAllowlist(),
+	};
+	const agents = Object.keys(allowlists);
+
+	test("no sub-agent can spawn itself", () => {
+		for (const [name, tools] of Object.entries(allowlists)) {
+			expect(tools, `${name} must not be able to spawn ${name}`).not.toContain(name);
+		}
+	});
+
+	test("no cycle exists anywhere in the graph", () => {
+		const visit = (node: string, path: string[]): string[] | null => {
+			if (path.includes(node)) return [...path, node];
+			for (const child of (allowlists[node] ?? []).filter((t) => agents.includes(t))) {
+				const cycle = visit(child, [...path, node]);
+				if (cycle) return cycle;
+			}
+			return null;
+		};
+		for (const root of agents) {
+			expect(visit(root, []), `cycle reachable from ${root}`).toBeNull();
+		}
+	});
+
+	test("nesting is at most one agent deep, so fan-out cannot compound", () => {
+		const depth = (node: string, seen: string[]): number => {
+			const children = (allowlists[node] ?? []).filter(
+				(t) => agents.includes(t) && !seen.includes(t),
+			);
+			return children.length === 0
+				? 1
+				: 1 + Math.max(...children.map((c) => depth(c, [...seen, node])));
+		};
+		for (const root of agents) {
+			expect(depth(root, []), `${root} nests too deeply`).toBeLessThanOrEqual(2);
+		}
+	});
+
+	test("the one nesting edge is delegate -> finder, and it terminates", () => {
+		// stated explicitly so a change to the shape of the graph has to change
+		// this line too, rather than silently passing the generic checks above.
+		const edges = Object.entries(allowlists).flatMap(([from, tools]) =>
+			tools.filter((t) => agents.includes(t)).map((to) => `${from} -> ${to}`),
+		);
+		expect(edges).toEqual(["delegate -> finder"]);
+		expect(allowlists.finder.filter((t) => agents.includes(t))).toEqual([]);
 	});
 });
 

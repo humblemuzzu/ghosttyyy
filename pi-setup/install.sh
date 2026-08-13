@@ -129,7 +129,7 @@ fi
 if [ -f "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs" ]; then
     chmod +x "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs"
 fi
-ok "Config skills installed (21 skills)"
+ok "Config skills installed (24 skills)"
 
 # ── Settings ──
 info "Installing settings..."

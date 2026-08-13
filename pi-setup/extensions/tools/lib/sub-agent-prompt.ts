@@ -10,7 +10,7 @@
  * `--tools` down to between 1 and 12 tools.
  *
  * the child then read instructions that were false for it: "apply_patch —
- * every file modification", "your dedicated sub-agents are exactly five
+ * every file modification", "your dedicated sub-agents are exactly six
  * tools". measured consequence: a code_review child spent two calls probing
  * `search_sessions` and `skill` before concluding they were absent.
  *

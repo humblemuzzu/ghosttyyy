@@ -22,6 +22,7 @@ export const AGENT_TOOLS: ReadonlySet<string> = new Set([
 	"librarian",
 	"code_review",
 	"delegate",
+	"chad",
 ]);
 
 /**

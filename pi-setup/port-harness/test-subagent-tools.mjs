@@ -22,16 +22,36 @@ const CASES = {
     builtinTools: ["read", "grep", "find", "ls", "bash"],
     extensionTools: ["read", "grep", "find", "ls", "bash"],
   },
-  task: {
-    builtinTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
-    extensionTools: ["read", "grep", "find", "ls", "bash", "edit", "write",
-      "format_file", "skill", "finder", "web_search"],
+  // `task` was replaced by `delegate` in e4c8786; edit/write were replaced by
+  // apply_patch in 6296fef. kept in sync with delegate.ts by hand — the unit
+  // tests pin the real allowlists, this harness proves the flags reach a child.
+  delegate: {
+    builtinTools: ["read", "grep", "find", "ls", "bash", "apply_patch"],
+    extensionTools: ["read", "grep", "find", "ls", "bash",
+      "apply_patch", "format_file", "skill", "finder",
+      "web_search", "read_web_page", "screenshot"],
+  },
+  chad: {
+    builtinTools: ["read", "grep", "find", "ls", "bash"],
+    extensionTools: ["read", "grep", "find", "ls", "bash", "skill",
+      "web_search", "read_web_page",
+      "read_github", "search_github", "list_directory_github",
+      "list_repositories", "glob_github", "commit_search", "diff"],
+    // chad is defined by its model and its read-only bash; a probe that
+    // dropped these would pass while testing a different agent.
+    pinModel: true,
+    model: "deepseek/deepseek-v4-flash",
+    thinkingLevel: "high",
+    readOnlyBash: true,
   },
 };
 
 const which = process.argv[2];
 const cfg = CASES[which];
-if (!cfg) { console.error("usage: node test-subagent-tools.mjs <finder|librarian|oracle|task>"); process.exit(1); }
+if (!cfg) {
+  console.error(`usage: node test-subagent-tools.mjs <${Object.keys(CASES).join("|")}>`);
+  process.exit(1);
+}
 
 process.env.PI_BIN = "/tmp/pi-wrapper.sh";
 
@@ -42,6 +62,7 @@ const res = await piSpawn({
   parentModel: "anthropic/claude-opus-5",
   ...cfg,
 });
+if (cfg.pinModel) console.log(`(pinned model: ${cfg.model} @ ${cfg.thinkingLevel})`);
 console.log(`\n=== ${which}: exit=${res.exitCode} ===`);
 console.log("stderr (probe lines):");
 for (const line of (res.stderr || "").split("\n")) {

@@ -27,6 +27,7 @@ import { createScreenshotTool } from "./screenshot";
 import { createFinderTool } from "./finder";
 import { createOracleTool } from "./oracle";
 import { createDelegateTool } from "./delegate";
+import { createChadTool } from "./chad";
 import { createLibrarianTool } from "./librarian";
 import { createCodeReviewTool } from "./code-review";
 import { createReadWebPageTool } from "./read-web-page";
@@ -89,6 +90,12 @@ export default function (pi: ExtensionAPI) {
 	// delegate replaced task.ts: same spawn, plus resumable children via
 	// continueId. Task always ran --no-session, so every child was a dead end.
 	pi.registerTool(createDelegateTool());
+	// chad is delegate's read-only counterpart, pinned to deepseek-v4-flash so a
+	// swarm of them is affordable. it cannot change anything: no apply_patch, and
+	// its bash runs under the read-only policy in lib/read-only-bash.ts.
+	pi.registerTool(createChadTool({
+		systemPrompt: readAgentPrompt("agent.amp.chad.md"),
+	}));
 	pi.registerTool(createLibrarianTool({
 		systemPrompt: readAgentPrompt("agent.amp.librarian.md"),
 	}));

@@ -40,6 +40,10 @@ const agents: Record<AgentMentionKind, AgentDef> = {
     tool: "delegate",
     description: "full subagent for independent parallel work (resumable)",
   },
+  chad: {
+    tool: "chad",
+    description: "read-only deep research subagent — cheap enough to swarm",
+  },
 };
 
 function createAgentSource(kind: AgentMentionKind): MentionSource {

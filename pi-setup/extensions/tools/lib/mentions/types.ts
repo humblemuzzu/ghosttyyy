@@ -1,6 +1,6 @@
 import type { MentionableSession } from "./session-index.js";
 
-export type AgentMentionKind = "oracle" | "finder" | "codereview" | "task";
+export type AgentMentionKind = "oracle" | "finder" | "codereview" | "task" | "chad";
 
 export type MentionKind =
   | "commit"
