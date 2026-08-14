@@ -1073,7 +1073,7 @@ These replace pi's default tool implementations with customized versions:
 
 | Tool | File | Customization |
 |------|------|---------------|
-| **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing. **`timeout` is REQUIRED (1–600s) and a command silent for 300s is killed regardless of it** — see "Command Time Bounds" |
+| **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing. **`timeout` is REQUIRED (1–600s) and a command silent for 300s is killed regardless of it** — see "Command Time Bounds". Multi-line commands render in full on `ctrl+o` — see "The bash call header" |
 | **read** | `read.ts` | Image viewing, fitted to the vision budget via `lib/image-fit.ts` (falls back to raw bytes on any failure) |
 | **apply_patch** | `apply-patch.ts` | The ONLY file-mutation tool. **Four call shapes, one engine** (see below): `{path, content}`, `{path, old_string, new_string}`, `{ops:[…]}`, `{input: envelope}`. Multi-file atomic batching, mutex locking, undo tracking. Replaced `edit-file.ts` + `create-file.ts` in `6296fef`; pi's native `edit`/`write` are hidden at `session_start` |
 | **format_file** | `format-file.ts` | Prettier/biome formatting |
@@ -1853,6 +1853,119 @@ arming the release timer, the idle interval re-issuing SIGTERM every tick, the
 read at two different times. Its 5th claim (that the force-release path was
 untested) was **checked and was wrong** — the path was exercised but not
 *asserted*; assertions were added rather than the claim accepted.
+
+---
+
+## The bash call header (fixed 2026-08-15)
+
+**Files:** `bash.ts` `renderCall`, `bash-command-display.test.ts` (12 tests).
+
+Every bash row rendered as `$ cd "/Users/muzammil/Documents/Code stuff" …` —
+distinct commands, identical headers. The header was `cmd.split("\n")[0]`, and
+`renderCall` **never read `context.expanded`** even though pi passes it
+(`types.d.ts:335`) and re-runs both renderers on toggle (`tool-execution.js`
+`setExpanded` → `updateDisplay`). So `ctrl+o` expanded the output box and left
+the command exactly as truncated — no key, setting or flag revealed it. Present
+since the initial import (`6e62263`); not a regression from the smear work.
+
+It now shows up to `COLLAPSED_CMD_LINES` (3) rows and everything on `ctrl+o`.
+
+- **The `cd` needed no special handling.** A first draft split `cd DIR` off for
+  display and rendered it as `in ~/…/dir`. That was ~30 lines existing purely to
+  work around the truncation — once line 2 renders, the cd is self-evidently a
+  cd. pi's own `formatBashCall` truncates nothing at all.
+- **Several rows from `renderCall` is safe; a newline in a border label is not.**
+  `Text.render()` wraps and the TUI counts every row it returns. The smear class
+  above is about **single-line sinks** (editor labels, widget rows) and still
+  applies there.
+- **`\r` is split on, not left in.** `normalizeForDisplay` strips
+  `\x00-\x08\x0b\x0c\x0e-\x1f\x7f`; `\x0d` is **not** in those ranges, and a
+  surviving CR returns the cursor to column 0 mid-row.
+- **`ctrl+o` is named literally.** pi's tools use `keyHint("app.tools.expand")`,
+  which lives at a core path our extensions do not alias.
+
+Sabotage-checked by restoring the first-line slice: **7 of 12 fail**, exactly the
+multi-line/expand/CR cases.
+
+### `[took 0.0s]` — the same renderer, a second bug (fixed 2026-08-15)
+
+**Files:** `bash.ts` `renderCall`/`renderResult`, `bash-elapsed.test.ts` (13 tests).
+
+Every command reported `took 0.0s`. Both timestamps lived in `renderResult` and
+were stamped in the same pass:
+
+```ts
+if (context?.executionStarted && state.startedAt === undefined) state.startedAt = Date.now();
+state.endedAt ??= Date.now();   // ← unconditional
+```
+
+`endedAt ??=` fires on the **first streaming update**, milliseconds after
+`startedAt` is set a few lines above it. The clock stopped as soon as the first
+byte of output rendered. Now mirrors pi core (`dist/core/tools/bash.js`):
+
+- **`startedAt` moved to `renderCall`.** `markExecutionStarted()` sets the flag
+  and forces a render, so that is the earliest observable moment. Stamping it in
+  `renderResult` starts the clock at first *output* — and this tool's whole idle
+  watchdog exists because commands can be silent for their entire run.
+- **`endedAt` gated on `!options.isPartial || context.isError`.**
+- **`setInterval(invalidate, 1000)` while partial**, cleared at the end, so the
+  number ticks live (`elapsed 3.0s` → `took 12.4s`). Component-scoped and cleared
+  on the final render, so it is not the `session_shutdown` timer class above.
+- **Timing is stamped above the two `(no output)` early returns.** A command that
+  printed nothing used to show no duration at all — exactly the case worth timing
+  — and an interval armed below them could never be cleared.
+
+### The ticker gets the full deepseek-peak treatment
+
+The first version of this ticker only bounded a **leak**, and that was the wrong
+half of the lesson. What killed a session in the `deepseek-peak` incident was not
+a leak — it was **a throw inside a `setInterval` callback**, which is an
+uncaughtException, which pi answers with `process.exit(1)`. A timer that throws
+once does not degrade; it takes the session with it.
+
+The AGENTS.md rule above exempts "component-scoped intervals" because they "only
+touch local component state". **This one does not qualify** — `context.invalidate()`
+reaches `ui.requestRender()`, i.e. live TUI state. So it gets all four properties
+the deepseek fix has, and the earlier version had none of:
+
+| | why it cannot be dropped |
+|---|---|
+| `try`/`catch` | a throw here is `process.exit(1)`, not a degraded row |
+| **stop**, never retry | a render context that has begun throwing does not recover |
+| silent | a `console.*` during a TUI render scribbles the screen |
+| `unref()` | a timer must never be the reason pi cannot exit |
+
+Three independent stops, each covering what the others cannot: the final
+non-partial result (normal), the deadline (a session replacement can drop the row
+mid-command, orphaning a timer owned by nothing — it self-clears at
+`maxTimeoutSec() + TICKER_SLACK_MS`, since a command cannot outlive its declared
+timeout), and the catch (whatever neither anticipated).
+
+**The idle watchdog in `execute()` got the same wrapper.** Everything it calls is
+already defensive — `sampleGroupCpuSeconds` returns `undefined` rather than
+throwing, `watchdogVerdict` is pure, `killGracefully` catches — so the `catch`
+should be unreachable. *That is precisely the reasoning that cost a session last
+time.* On a throw it stops the watchdog rather than killing the command: the
+declared timeout still bounds the run, so degrading to L1 is safe while killing on
+an internal error is not.
+
+**Verified by sabotage, not by inspection.** Removing the `try`/`catch` and
+pointing `invalidate` at a throwing stub reproduces the original failure verbatim
+— `error: stale render context` escaping the callback — and fails 2 tests. With
+the guard, the same stub is caught once, the ticker stops, and nothing propagates.
+
+**Cost, measured rather than asserted:** a 1s interval costs **1.17 ms of CPU over
+10 s** (idle baseline 0.13 ms) — ~0.01% of one core, and only while a command runs.
+During output it is strictly cheaper than what already happens: `STREAM_UPDATE_INTERVAL_MS`
+is 150 ms, so streaming already re-renders up to 6.7×/s. The ticker only adds work
+during *silence*, at 1 render/s, where there were none.
+
+Sabotage-checked by restoring the unconditional `endedAt ??=`: a 360 ms run
+reports **0.1 s**, and 2 of 13 fail. Note the first duration test written for
+this backdated `startedAt` and so passed under sabotage; the test that catches it
+drives the real `call → partial → final` sequence with real time passing.
+
+Full suite 1585 pass / 0 fail.
 
 ---
 

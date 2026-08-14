@@ -249,6 +249,12 @@ function killGracefully(pid: number): void {
 	}, SIGKILL_DELAY_MS);
 }
 
+/** command lines shown in the call header before eliding; ctrl+o shows the rest */
+const COLLAPSED_CMD_LINES = 3;
+
+/** grace past the max declared timeout before an orphaned elapsed-ticker self-clears */
+const TICKER_SLACK_MS = 60_000;
+
 /** per-block excerpts for collapsed display — head 3 + tail 5 = 8 visual lines */
 const COLLAPSED_EXCERPTS: Excerpt[] = [
 	{ focus: "head" as const, context: 3 },
@@ -456,21 +462,36 @@ export function createBashTool(): ToolDefinition {
 		}),
 
 		renderCall(args: any, theme: any, context: any) {
+			// clock starts here, not on first output: a command can be silent for its
+			// whole run. markExecutionStarted() forces a render at exactly this point.
+			const startState = context?.state;
+			if (startState && context?.executionStarted && startState.startedAt === undefined) {
+				startState.startedAt = Date.now();
+				startState.endedAt = undefined;
+			}
+
 			const Text = getText();
 			// reuse component to prevent render churn — same object every call
 			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const cmd = args.cmd || args.command || "...";
 			const timeout = args.timeout;
 			const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-			// show first line only for multiline commands
-			// normalizeForDisplay: commands can contain graphemes whose terminal
-			// width disagrees with pi-tui's measure — same desync class as output
-			const lines = cmd.split("\n");
-			const firstLine = normalizeForDisplay(lines[0]);
-			const multiSuffix = lines.length > 1 ? theme.fg("muted", " …") : "";
-			text.setText(
-				theme.fg("toolTitle", theme.bold(`$ ${firstLine}`)) + multiSuffix + timeoutSuffix,
+
+			// normalizeForDisplay leaves \r, which would return the cursor to column 0
+			// — split on it. several rows are safe: Text.render() wraps, TUI counts.
+			const lines = normalizeForDisplay(cmd).split(/\r\n?|\n/);
+			while (lines.length > 1 && lines[lines.length - 1].trim() === "") lines.pop();
+			const shown = context?.expanded ? lines : lines.slice(0, COLLAPSED_CMD_LINES);
+			const hidden = lines.length - shown.length;
+
+			const rows = shown.map((line, i) =>
+				i === 0
+					? theme.fg("toolTitle", theme.bold(`$ ${line}`)) + timeoutSuffix
+					: theme.fg("toolTitle", `  ${line}`),
 			);
+			if (hidden > 0) rows.push(theme.fg("muted", `  … +${hidden} more (ctrl+o)`));
+
+			text.setText(rows.join("\n"));
 			return text;
 		},
 
@@ -479,13 +500,54 @@ export function createBashTool(): ToolDefinition {
 
 			const Container = getContainer();
 
+			// stamped before the early returns below: a command with no output is
+			// still worth a duration, and an interval armed after them never clears.
+			const state = context?.state ?? {};
+			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
+				const stopTicker = () => {
+					if (state.interval) {
+						clearInterval(state.interval);
+						state.interval = undefined;
+					}
+				};
+				// a throw in a timer callback is an uncaughtException and pi exits(1)
+				// — see AGENTS.md "deepseek-peak". stop rather than retry, silently.
+				// deadline covers the row being dropped mid-command by /new or /resume.
+				state.deadline = Date.now() + maxTimeout * 1000 + TICKER_SLACK_MS;
+				state.interval = setInterval(() => {
+					try {
+						if (Date.now() > state.deadline) {
+							stopTicker();
+							return;
+						}
+						context?.invalidate?.();
+					} catch {
+						stopTicker();
+					}
+				}, 1000);
+				state.interval.unref?.();
+			}
+			if (!options.isPartial || context?.isError) {
+				state.endedAt ??= Date.now();
+				if (state.interval) {
+					clearInterval(state.interval);
+					state.interval = undefined;
+				}
+			}
+			const timing =
+				state.startedAt === undefined
+					? undefined
+					: `${options.isPartial ? "elapsed" : "took"} ` +
+						`${(((state.endedAt ?? Date.now()) - state.startedAt) / 1000).toFixed(1)}s`;
+			const noOutput = timing ? `(no output) ${timing}` : "(no output)";
+
 			// REUSE: same container every call for final expanded/collapsed rerenders
 			const container = context?.lastComponent ?? new Container();
 			container.clear();
 
 			const content = result.content?.[0];
 			if (!content || content.type !== "text") {
-				container.addChild(new Text(theme.fg("dim", "(no output)"), 0, 0));
+				container.addChild(new Text(theme.fg("dim", noOutput), 0, 0));
 				return container;
 			}
 
@@ -502,16 +564,9 @@ export function createBashTool(): ToolDefinition {
 			text = sanitizeForDisplay(text);
 
 			if (!text || text === "(no output)") {
-				container.addChild(new Text(theme.fg("dim", "(no output)"), 0, 0));
+				container.addChild(new Text(theme.fg("dim", noOutput), 0, 0));
 				return container;
 			}
-
-			// --- elapsed time tracking via persistent context.state ---
-			const state = context?.state ?? {};
-			if (context?.executionStarted && state.startedAt === undefined) {
-				state.startedAt = Date.now();
-			}
-			state.endedAt ??= Date.now();
 
 			// --- FINAL: box format with proper expanded state ---
 			const { expanded } = options;
@@ -521,11 +576,7 @@ export function createBashTool(): ToolDefinition {
 				blocks: [{ lines: outputLines.map((l) => ({ text: theme.fg("toolOutput", l), highlight: true })) }],
 			}];
 
-			let notices: string[] | undefined;
-			if (state.startedAt && state.endedAt) {
-				const elapsed = ((state.endedAt - state.startedAt) / 1000).toFixed(1);
-				notices = [`took ${elapsed}s`];
-			}
+			const notices = timing ? [timing] : undefined;
 
 			// capture expanded in closure
 			let cachedWidth: number | undefined;
@@ -734,7 +785,9 @@ async function runCommand(
 		let lastCpuSampleAt = Date.now();
 		let idleHandle: ReturnType<typeof setInterval> | undefined;
 		if (idleMs > 0) {
-			idleHandle = setInterval(() => {
+			// wrapped for the same reason as the elapsed ticker. on a throw, stop the
+			// watchdog rather than kill: the declared timeout still bounds the run.
+			const idleTick = () => {
 				// one kill only. after the first tick fires, `lastOutputAt` can never
 				// advance again (the process is dying and producing nothing), so every
 				// later tick would re-issue SIGTERM and queue another 3s SIGKILL timer
@@ -777,7 +830,16 @@ async function runCommand(
 				if (verdict === "wait") return;
 				idledOut = true;
 				if (child.pid) killGracefully(child.pid);
+			};
+			idleHandle = setInterval(() => {
+				try {
+					idleTick();
+				} catch {
+					if (idleHandle) clearInterval(idleHandle);
+					idleHandle = undefined;
+				}
 			}, watchdogTickMs(idleMs, IDLE_TICK_MS));
+			idleHandle.unref?.();
 		}
 
 		const onAbort = () => {
