@@ -23,6 +23,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
 const CHECK_ONLY = process.argv.includes("--check");
 const MARKER = "LOCAL PATCH";
@@ -62,11 +63,70 @@ function __clusterAdvance(segment) {
 }
 `;
 
+// The global npm root (`npm root -g`) is NOT optional to scan, and leaving it
+// out hid 8 unpatched copies for months (found 2026-08-14). pi's own
+// `getNpmInstallPath` (dist/core/package-manager.js:1728) falls back to
+// `join(npm root -g, name)` whenever a package is missing from the managed
+// store — so that directory is genuinely loadable, and on this machine it is
+// the nvm root, which is NOT under /opt/homebrew. A hardcoded root list also
+// reports "ALL copies patched" while copies it never looked at sit unpatched,
+// which is worse than reporting nothing.
+function globalNpmRoot() {
+    try {
+        const out = execSync("npm root -g", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        return out && fs.existsSync(out) ? out : null;
+    } catch {
+        return null; // no npm on PATH — the other roots still get scanned
+    }
+}
+
+// Where the RUNNING pi actually lives, rather than assuming homebrew. Mirrors
+// pi's own getPackageDir(): resolve the `pi` on PATH and walk up to the
+// node_modules that contains it.
+function runningPiRoot() {
+    try {
+        const bin = execSync("readlink -f \"$(command -v pi)\" 2>/dev/null || true", {
+            encoding: "utf8",
+            shell: "/bin/bash",
+            stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+        if (!bin) return null;
+        const marker = `${path.sep}node_modules${path.sep}`;
+        const idx = bin.lastIndexOf(marker);
+        if (idx === -1) return null;
+        const root = bin.slice(0, idx + marker.length - 1);
+        return fs.existsSync(root) ? root : null;
+    } catch {
+        return null;
+    }
+}
+
+// This repo checkout, because it is the DEPLOYMENT SOURCE: install.sh does
+// `cp -R "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"`, which copies
+// pi-setup/extensions/tools/node_modules (gitignored build output, 3 pi-tui
+// copies) straight into the loaded path. install.sh happens to re-patch
+// afterwards (cp at :102, npm install at :107, this script at :250), but that
+// makes correctness depend on step ORDER inside one script — anyone deploying
+// with a manual `cp -R` gets unpatched copies in the live path. Patching the
+// source removes the ordering dependency.
+function repoRoot() {
+    try {
+        const here = path.dirname(fileURLToPath(import.meta.url)); // pi-setup/pi-core-patches
+        const root = path.resolve(here, "..", "..");               // repo checkout
+        return fs.existsSync(root) ? root : null;
+    } catch {
+        return null;
+    }
+}
+
 function findPiTuiCopies() {
     const roots = [
         "/opt/homebrew/lib/node_modules",
         path.join(os.homedir(), ".pi/agent"),
-    ];
+        globalNpmRoot(),
+        runningPiRoot(),
+        repoRoot(),
+    ].filter((r) => typeof r === "string" && r.length > 0);
     const found = new Set();
     for (const root of roots) {
         if (!fs.existsSync(root)) continue;

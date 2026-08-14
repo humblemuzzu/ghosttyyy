@@ -32,7 +32,7 @@ Verification harnesses live in `pi-setup/port-harness/`.
 ### Provider Chain
 
 ```
-pi CLI (v0.84.1) — @earendil-works/pi-coding-agent
+pi CLI (v0.84.2) — @earendil-works/pi-coding-agent
   ├─ kimi-code provider (custom local config) + Kimi Code OAuth token helper
   │    └─ https://api.kimi.com/coding/v1 — Kimi Code subscription access
   └─ anthropic provider (native) + pi-claude-code-use (API payload shim for Claude Max OAuth use)
@@ -60,7 +60,7 @@ stayed hidden for months only because the default model was `openai-codex`.
 Without the flag, a fresh session will tell you it cannot call your sub-agents.
 See `pi-setup/2026-07-30-bdsqqq-port.md` §3.1.
 
-**Legacy fallback:** `pi-claude-bridge` (installed but not active in packages) wraps the Claude Code Agent SDK as a custom provider.
+**Legacy fallback:** `pi-claude-bridge` wraps the Claude Code Agent SDK as a custom provider. **Uninstalled from this machine 2026-08-14** (it was 411 MB sitting in a directory pi never loads from — see "One Install, No Duplicates"). Its patched source is still in `pi-setup/claude-bridge-patches/`; reinstall commands are in `install.sh`.
 
 ### System Prompt Assembly
 
@@ -122,8 +122,8 @@ Two upstream defaults are deliberately **turned off**, both added in 2.18–2.19
 | `mcpScript` tool registered | `settings.scriptMode: false` in `mcp.json` | It executes arbitrary JavaScript in a worker and adds a second permanent tool — this package was chosen precisely because it costs *one* ~200-token proxy tool, and `permissions.json` does not cover a JS execution surface. |
 | `mcp-scripting` skill shipped | `{ "source": "npm:pi-mcp-adapter", "skills": [] }` in `settings.json` | With `scriptMode: false` the skill would teach a tool that does not exist. |
 
-The object form is load-bearing and was verified against 0.84.1's
-`collectPackageResources`: with `autoload` unset, `skills: []` filters skills to
+The object form is load-bearing and was verified against 0.84.1's (re-verified
+live on 0.84.2 / adapter 2.25.0) `collectPackageResources`: with `autoload` unset, `skills: []` filters skills to
 none while `extensions` (undefined) still loads from the package's pi manifest —
 so the `mcp` tool still registers. **Do not "simplify" it back to the string
 form**; that silently restores the skill.
@@ -800,13 +800,119 @@ To add more servers: edit `~/.pi/agent/mcp.json` (global) or a project `.mcp.jso
 
 No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched). Backed up as the `npm:pi-mcp-adapter` entry in `pi-setup/settings.json` (package) + `pi-setup/mcp.json` (server config); `install.sh` re-adds both on deploy.
 
+**2.25.0 changed the default result rendering.** MCP tool results now render as
+compact self-rendered rows instead of the boxed row; set
+`settings.toolResultRendering: "boxed"` in `mcp.json` to get the old one back,
+and `settings.collapsedResultLines` (1–3) to control how much shows collapsed.
+This does **not** reopen the TUI smear class — the compact renderer measures
+with pi-tui's own `truncateToWidth`/`visibleWidth`, which is the invariant that
+section requires. 2.25 also adds `settings.notifyOnStartupConnect` to silence
+startup connection notices.
+
+---
+
+## One Install, No Duplicates (cleanup 2026-08-14)
+
+**There is exactly ONE place pi loads packages from, and it is not a global npm
+root.** `getManagedNpmInstallPath` (`dist/core/package-manager.js:1710-1719`)
+returns `join(agentDir, "npm", "node_modules", name)` — i.e.
+`~/.pi/agent/npm/node_modules`. That is what `pi install npm:<name>` writes and
+what `pi update --extension` updates.
+
+| Location | What it is | Rule |
+|---|---|---|
+| `~/.pi/agent/npm/node_modules` | **the** package store (all 8 active packages) | the only one pi reads |
+| `~/.pi/agent/git/<host>/<org>/<repo>` | git-sourced packages (`pi-autoresearch`) | keep |
+| `/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent` | **the pi binary itself** | keep; `/opt/homebrew/bin/pi` points at its `dist/cli.js` |
+| `~/.pi/agent/extensions/tools/node_modules` | our tools' real deps (playwright-core, cheerio, pngjs, psst-cli, clipboard, pi-diff) | keep |
+| any other global npm root | **duplicates** | never install pi packages there |
+
+### Never `npm install -g` a pi package
+
+It does not become "installed but inactive" — it becomes **unloadable**, plus:
+
+1. **It can hijack a package version.** `getNpmInstallPath`
+   (`package-manager.js:1728-1735`) falls back to
+   `join(npm root -g, name)` when a package is **missing** from the managed
+   store. Our `packages` entries pin no versions, so any version there
+   satisfies. Before this cleanup the nvm root held
+   `@benvargas/pi-claude-code-use@2.2.0` — precisely the version we hold back at
+   1.0.5 — waiting for one missing managed copy to be loaded instead.
+2. **It brings an UNPATCHED pi-tui copy.** Every pi package bundles its own; the
+   width patch has to cover all of them.
+
+Install with `pi install npm:<name>`, always.
+
+### `npm ls -g` LIES here — read versions from the agent dir
+
+`node`/`npm` come from nvm, so `npm root -g` resolves to
+`~/.nvm/versions/node/<v>/lib/node_modules`, while the pi *binary* lives under
+homebrew. A bare `npm ls -g` therefore reports a **third** set of versions that
+pi does not use. To read what is actually loaded:
+
+```bash
+for d in ~/.pi/agent/npm/node_modules/*/ ~/.pi/agent/npm/node_modules/@*/*/; do
+  [ -f "$d/package.json" ] && node -e "const p=require('$d/package.json');console.log(p.name+'@'+p.version)"
+done
+```
+
+### What the cleanup removed
+
+~3.0 GB of copies pi could not load, across both global roots: 11 stale pi
+packages from `/opt/homebrew/lib/node_modules` (some fossils — `pi-context@1.1.4`
+vs the live 2.1.2), 7 from the nvm root, and **5 dangling symlinks** in
+`~/.pi/agent/node_modules/` pointing at the pre-rename
+`@mariozechner/pi-coding-agent` path (the whole directory is gone; pi never
+constructs that path).
+
+**pi-tui copies went from 24 to 4** — and 8 of the removed ones were genuinely
+**unpatched**, while `verify-patches.sh` reported "ALL copies patched", because
+`apply-pi-tui-width-patch.mjs` only searched homebrew and `~/.pi/agent`. It now
+also scans `npm root -g` and the running pi's own root, so a stray global
+install shows up as a FAIL instead of hiding. Verified by planting a fake
+unpatched copy in the nvm root and confirming the script flags it (exit 1).
+
+Nothing that is used was touched: root C, the git package, `extensions/tools`,
+all 13 extensions and 29 tools, the pi binary, and unrelated global CLIs
+(`psst`, `wrangler`, `auggie`, `mgrep`, `ccusage`, `netlify-cli`, …) are intact.
+
+### Stale backups — also removed (~5.1 GB, same pass)
+
+Eight backup directories from earlier migrations
+(`~/.pi-backup-20260423-204604` 2.2 GB, `~/.pi/agent-backup-20260517` 2.6 GB,
+`~/pi-cleanup-backup-20260723_154255`, `~/pi-port-backup-*`, four
+`~/pi-update-backup-*`), plus `~/.pi/agent/extensions-disabled/` (5 files, all
+recoverable from git — and pi has **no** disabled-extension state, so the
+directory never did anything), a Feb `agent/backups/20260227_090600/settings.json`,
+and one stale md-export output.
+
+**Each was proved redundant before deletion, not assumed:** the two big backups'
+sessions were diffed against the live store by filename — 2,235 and 619 sessions,
+**zero unique to either**. Every extension inside them was confirmed present in
+git history. `~/.pi/agent/pi-sessions-extracted/` was kept as a directory because
+`md-export.ts:584` uses it as its fallback output dir.
+
+**The repo + git is the backup.** Dated copies of the agent dir are not — they
+rot, they duplicate sessions, and they hide unpatched pi-tui copies.
+
+### The repo's `extensions/tools/node_modules` is the DEPLOYMENT SOURCE
+
+It is gitignored build output, but `install.sh` does
+`cp -R "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"` (`:102`) — so its three
+pi-tui copies land in the **loaded** path. install.sh re-patches afterwards
+(`npm install` at `:107`, width patch at `:250`), so ordering saves it — but
+anyone deploying with a manual `cp -R` would install unpatched copies.
+`apply-pi-tui-width-patch.mjs` therefore also scans **its own repo checkout**, so
+the source is patched rather than healed after the fact. 7 copies now: 4 loaded,
+3 deployment-source, all patched.
+
 ---
 
 ## Packages (npm)
 
 | Package | Version | Purpose | Patched? |
 |---------|---------|---------|----------|
-| `@earendil-works/pi-coding-agent` | 0.84.1 | The pi agent itself (installed via homebrew npm) | **3 core patches** |
+| `@earendil-works/pi-coding-agent` | 0.84.2 | The pi agent itself (installed via homebrew npm) | **3 core patches** |
 | `@benvargas/pi-claude-code-use` | 1.0.5 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-context` | 2.1.2 | Context management: context_checkpoint, context_timeline, context_compact | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
@@ -814,7 +920,7 @@ No patches to re-apply. `pi update --extensions` may bump it — safe (unpatched
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `pi-codex-goal` | 0.2.0 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
-| `pi-mcp-adapter` | 2.21.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect | No (**config**: see below) |
+| `pi-mcp-adapter` | 2.25.0 | On-demand MCP gateway — single `mcp` proxy tool (~200 tokens), lazy server connect | No (**config**: see below) |
 
 **Active in settings.json (8):** `pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`, `pi-autoresearch`, `pi-tool-display`, `pi-codex-goal`, `pi-mcp-adapter`
 
@@ -839,7 +945,27 @@ and the bdsqqq port log; the short version:
 
 **Claude Max usage:** `/login anthropic` → `/model anthropic/claude-opus-5`. pi-claude-code-use intercepts provider API requests (after OAuth) and rewrites payloads for Claude Code-style subscription use. No custom provider needed — uses pi's native anthropic provider.
 
-**Installed but inactive:** `pi-claude-bridge` (0.4.0, legacy fallback, patched), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`
+**`pi-autoresearch` shortcut is pinned to `ctrl+shift+r`** in
+`pi-setup/extensions/pi-autoresearch.json` (deployed by `install.sh`'s
+`cp -R extensions`). **pi-tui 0.84.2 took `ctrl+shift+f`** for the new
+fullscreen transcript search, and autoresearch's default dashboard shortcut is
+exactly that — so every startup printed an `Extension shortcut conflict` and the
+extension won, making the new built-in search unreachable. The fix is the
+package's own config (`shortcuts.ts:17` reads
+`<agentDir>/extensions/pi-autoresearch.json`), **not** a patch to the package —
+it is a git-installed package and a patch would be wiped on update. `null`
+disables the shortcut entirely. `ctrl+shift+r` was chosen after checking pi core,
+pi-tui, all 8 packages and our own extensions: taken are `ctrl+shift+f`/`+g`/
+`+up`/`+down` (pi-tui), `ctrl+shift+p` (command palette), `ctrl+shift+a`
+(subagent inspector).
+
+**Formerly "installed but inactive" — now REMOVED (2026-08-14):** `pi-claude-bridge`
+(0.4.0, patched), `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`. That label was
+wrong: they were installed in a **global npm root, which pi never loads packages
+from**, so they were not "inactive" — they were unloadable. Re-enabling one was
+never a config change; it always required `pi install npm:<name>`, which puts it
+in `~/.pi/agent/npm/node_modules` like everything else. See "One Install, No
+Duplicates".
 
 **Per-version migration record:** `pi-setup/pi-migrations.md` — one entry per pi
 update, recording which patched core file drifted and how the patch was
@@ -2482,8 +2608,9 @@ node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs
 # pi-tool-display config (verify exists, recreate if missing)
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
 
-# pi-claude-bridge (only if reactivating — currently inactive)
-# cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/src/index.ts
+# pi-claude-bridge — UNINSTALLED 2026-08-14. Reactivating needs a reinstall first:
+# npm --prefix /opt/homebrew install -g pi-claude-bridge
+# cp pi-setup/claude-bridge-patches/index.ts /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
 ```
 
 ### What NOT to Do

@@ -22,10 +22,10 @@
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
 #   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
 #   pi packages (npm/git)       — context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
-#   1 global npm package        — pi-claude-bridge (legacy Claude bridge, inactive)
 #
-# After install, re-apply pi-claude-bridge patches if needed:
-#   See README.md → "pi-claude-bridge Local Modifications"
+# NO global npm packages are installed. Every pi package lives in
+# ~/.pi/agent/npm/node_modules (installed by `pi install`), which is the ONLY
+# place pi loads them from. See the duplicate-copy cleanup note below.
 #
 # Safe: backs up existing files before overwriting.
 
@@ -71,16 +71,29 @@ info "Creating directories..."
 mkdir -p "$PI_AGENT"
 mkdir -p "$CONFIG_SKILLS"
 
-# ── Global npm packages ──
-info "Installing global npm packages..."
-# pi-claude-bridge (active Claude bridge)
-if ! npm list -g pi-claude-bridge &>/dev/null 2>&1; then
-    info "  Installing pi-claude-bridge globally (Claude Code Agent SDK bridge)..."
-    npm install -g pi-claude-bridge 2>/dev/null || warn "Failed to install pi-claude-bridge globally (install manually: npm install -g pi-claude-bridge)"
-else
-    info "  pi-claude-bridge already installed globally"
-fi
-ok "Global packages checked"
+# ── Global npm packages: DELIBERATELY NONE (2026-08-14) ──
+# This block used to install pi-claude-bridge globally. It was removed because
+# it was BROKEN and because global installs are dead weight:
+#
+#   1. `npm list -g` / `npm install -g` resolve to whatever `npm root -g` points
+#      at — here the nvm root (~/.nvm/versions/node/<v>/lib/node_modules) — while
+#      the patch block below hardcoded /opt/homebrew/lib/node_modules. So the
+#      check always failed, the install went to one root, and the patch was
+#      applied to a copy in a DIFFERENT root. It had been silently wrong for
+#      months; nobody noticed because the bridge is inactive.
+#   2. pi loads `npm:` packages ONLY from ~/.pi/agent/npm/node_modules
+#      (`getManagedNpmInstallPath`, dist/core/package-manager.js:1710-1719). A
+#      globally installed pi package is unreachable — it is not "inactive", it
+#      is unloadable.
+#
+# 2026-08-14 cleanup removed ~3 GB of such copies from both global roots. Do not
+# reintroduce a global install here; it will not be loaded and it will bring an
+# UNPATCHED pi-tui copy back onto the machine (see the width-patch section).
+#
+# If the legacy bridge is ever genuinely needed again:
+#   npm --prefix /opt/homebrew install -g pi-claude-bridge
+#   cp "$SCRIPT_DIR/claude-bridge-patches/index.ts" /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
+#   (cd /opt/homebrew/lib/node_modules/pi-claude-bridge && npm install cc-session-io@latest)
 
 # ── Extensions ──
 info "Installing extensions..."
@@ -201,21 +214,13 @@ for pkg in "${packages[@]}"; do
 done
 ok "Pi packages installed (${#packages[@]} packages)"
 
-# ── pi-claude-bridge patches ──
-BRIDGE_INDEX="/opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts"
-BRIDGE_DIR="/opt/homebrew/lib/node_modules/pi-claude-bridge"
-if [ -f "$BRIDGE_INDEX" ] && [ -f "$SCRIPT_DIR/claude-bridge-patches/index.ts" ]; then
-    info "Applying pi-claude-bridge system prompt patches..."
-    cp "$SCRIPT_DIR/claude-bridge-patches/index.ts" "$BRIDGE_INDEX"
-    ok "pi-claude-bridge patches applied (custom system prompt)"
-
-    # Ensure cc-session-io is at latest (fixes "No conversation found" on symlinked dirs)
-    info "  Ensuring cc-session-io is at latest version..."
-    (cd "$BRIDGE_DIR" && npm install cc-session-io@latest --silent 2>/dev/null) || warn "Failed to update cc-session-io"
-    ok "cc-session-io updated"
-else
-    warn "pi-claude-bridge not found or patch file missing — apply patches manually"
-fi
+# ── pi-claude-bridge patches: REMOVED 2026-08-14 ──
+# The bridge itself was removed from the machine in the duplicate-copy cleanup
+# (it was 411 MB of unloadable package in a root pi never reads). Its patched
+# source is still kept at pi-setup/claude-bridge-patches/ for reference, and the
+# exact reinstall+patch commands are in the "Global npm packages" block above.
+# This block warned on every single run once the bridge was gone, which trains
+# people to ignore installer warnings.
 
 # ── condensed-milk: REMOVED 2026-07-30, nothing to patch ──
 # It needed three local patches and still silently corrupted data: its
@@ -275,8 +280,6 @@ echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core configs           │"
 echo "│   • 8 pi packages                       │"
-echo "│   • pi-claude-bridge (global npm)       │"
-echo "│   • Bridge patches applied              │"
 echo "│   • pi core patched (conflict + pins)   │"
 echo "│   • pi-tool-display configured          │"
 echo "│                                         │"
@@ -285,7 +288,7 @@ echo "│   /login anthropic                      │"
 echo "│   /model anthropic/claude-opus-5      │"
 echo "│   (pi-claude-code-use patches payloads) │"
 echo "│                                         │"
-echo "│   Debug: CLAUDE_BRIDGE_DEBUG=1 pi       │"
+echo "│   Debug: PI_DEBUG=1 pi                  │"
 echo "│   Then restart pi.                      │"
 echo "╰─────────────────────────────────────────╯"
 echo ""

@@ -12,6 +12,193 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## 2026-08-14 — duplicate-copy cleanup (~3.0 GB), same day as 0.84.2
+
+Not a version migration, but it belongs here because it changes **where packages
+may live** and it fixed a latent hazard that a future update could have tripped.
+
+**Three npm roots held the same pi packages at different versions.** pi loads
+`npm:` packages only from `~/.pi/agent/npm/node_modules`
+(`getManagedNpmInstallPath`, `dist/core/package-manager.js:1710-1719`). The other
+two — `/opt/homebrew/lib/node_modules` (which also holds the pi binary) and
+`~/.nvm/versions/node/v22.22.0/lib/node_modules` (what a bare `npm root -g`
+resolves to) — held 18 stale pi packages between them, some ancient
+(`pi-context@1.1.4` against the live 2.1.2).
+
+**The hazard was not disk.** `getNpmInstallPath` (`package-manager.js:1728-1735`)
+falls back to `join(npm root -g, name)` when a package is **missing** from the
+managed store, and our `packages` entries pin no version. The nvm root held
+`@benvargas/pi-claude-code-use@2.2.0` — the exact version AGENTS.md deliberately
+holds at 1.0.5 — so one missing managed copy would have silently loaded it. An
+earlier note in this repo claiming "no fallback to any global root" was **wrong**;
+the fallback is real and was read at the call site to confirm.
+
+**Second finding: 8 of those copies bundled UNPATCHED pi-tui** while
+`verify-patches.sh` reported "ALL copies patched", because
+`apply-pi-tui-width-patch.mjs` only searched `/opt/homebrew` and `~/.pi/agent`
+— never `npm root -g`. Grepped each: no `__clusterAdvance`. So the audit was
+blind exactly where the loadable-fallback root was.
+
+Removed: 11 pi packages from the homebrew root (keeping
+`@earendil-works/pi-coding-agent`, the binary), 7 from the nvm root
+(`npm uninstall -g pi-mcp-adapter` for the one with a bin link, `trash` for the
+rest), and **5** dangling symlinks in `~/.pi/agent/node_modules/` — four
+`@mariozechner/*` plus `@sinclair/typebox`, all pointing at the pre-rename
+`@mariozechner/pi-coding-agent` path. The whole `node_modules` dir is gone; pi
+never constructs `join(agentDir, "node_modules")`.
+
+pi-tui copies: **24 → 4**, all patched, all actually loaded.
+
+**Two fixes so it cannot regress:**
+- `apply-pi-tui-width-patch.mjs` now also scans `npm root -g` and the running
+  pi's own root. **Verified by sabotage**: a fake unpatched copy planted in the
+  nvm root is now found and flagged (exit 1); the old script saw nothing.
+- `install.sh`'s `pi-claude-bridge` block is gone. It had been **broken for
+  months**: `npm list -g` / `npm install -g` hit the nvm root while the patch
+  block hardcoded `/opt/homebrew/...`, so the check always failed, the install
+  went to one root and the patch was applied to a copy in another. Reinstall
+  commands are preserved as comments.
+
+**Verified after each step** (not just at the end): `pi --version`; a live
+headless run asserting `mcp` + `context_compact` + `get_goal` still resolve —
+deliberately three tools from three *different* packages whose duplicates had
+just been deleted; then `apply_patch` + `screenshot` + `web_search` + `chad` to
+prove the custom extension tools (which import `@mariozechner/pi-tui`, the
+specifier those dead symlinks pretended to serve) still load; clean stderr; no
+dangling bin symlinks in either root; `verify-patches.sh` 9/9 PASS.
+
+One scare worth recording: `netlify` was missing from PATH afterwards. It was
+**pre-existing and unrelated** — netlify-cli 24.4.0 is intact, but its bin links
+are npm's *temporary* names (`.netlify-3lxmSHT1`, `.ntl-egPpTo9E`) from an
+install interrupted on 5 Mar. Check timestamps before blaming your own change.
+
+**Second pass, same day \u2014 stale artifacts (~5.1 GB more).** Eight backup dirs
+from earlier migrations (2.6 GB `~/.pi/agent-backup-20260517`, 2.2 GB
+`~/.pi-backup-20260423-204604`, `pi-cleanup-`, `pi-port-`, four `pi-update-`),
+`~/.pi/agent/extensions-disabled/`, a Feb `agent/backups/` settings snapshot, one
+stale md-export file, and an empty untracked `pi-setup/extensions/tools/.pi/todos`.
+
+Each was **proved** redundant rather than assumed: the two large backups' session
+files were diffed by name against the live store \u2014 2,235 and 619 sessions,
+**zero unique to either**; every extension inside them was confirmed in git
+history (`git log --all -- <path>`). `pi-sessions-extracted/` was kept as a
+directory because `md-export.ts:584` uses it as a fallback output dir.
+
+**A third hazard surfaced in that pass:** the repo's own
+`pi-setup/extensions/tools/node_modules` held 3 **unpatched** pi-tui copies, and
+install.sh copies that directory straight into the loaded path (`:102`). It
+re-patches at `:250`, so ordering saved it \u2014 but correctness depending on step
+order inside one script is fragile, and a manual `cp -R` deploy would have
+installed unpatched copies into the live path. `apply-pi-tui-width-patch.mjs`
+now also scans its own repo checkout, so the deployment SOURCE is patched.
+Final count: **7 copies, all patched** (4 loaded + 3 deployment-source).
+
+Verified afterwards: repo vs deployed is byte-identical for extensions, themes,
+agent prompts, config skills and every config file except `settings.json`, whose
+only diff was `lastChangelogVersion` (runtime state pi writes itself; repo bumped
+to match) and JSON formatting pi rewrote \u2014 the load-bearing
+`{ source, skills: [] }` object form is intact.
+
+**`@benvargas/pi-claude-code-use` was NOT updated** and is still **1.0.5**,
+mtime 17 Jul. Only `pi update --extension npm:pi-mcp-adapter` was run, never
+`pi update --extensions`, which would have bumped it. Exactly one copy of it now
+exists on the machine.
+
+Everything went to Trash, recoverable. Inventory snapshot:
+`/tmp/pi-cleanup-baseline.txt`.
+
+---
+
+## 0.84.2 (2026-08-14) — from 0.84.1, + pi-mcp-adapter 2.25.0
+
+First release with **zero drift in all three patched core files** — stock 0.84.1
+and stock 0.84.2 `resource-loader.js`, `session-selector.js` and
+`keybindings.js` are byte-identical, so the stored patches were copied rather
+than re-derived. They were still diffed from real tarballs first; the standing
+rule is unchanged.
+
+**pi-tui 0.84.1 → 0.84.2**, so pi core brought one fresh unpatched copy. The
+apply script reported `patched v0.84.2` for it and `already-patched` for the
+other 15; `--check` is clean across all 16.
+
+**Four changelog lines looked dangerous and were each read at the call site**
+rather than trusted — this is the class that took out every sub-agent in 0.84.0
+(#7327):
+
+- **`defaultTools` (new setting, new tool-selection path).** `sdk.js` now reads
+  `options.tools ?? (noTools ? [] : (configuredDefaultToolNames ?? defaultActiveToolNames))`.
+  `--tools`, which is what `lib/pi-spawn.ts` passes, still wins outright, and we
+  do not set `defaultTools`. Behaviour identical for us. **If we ever set
+  `defaultTools`, re-read this line** — it sits directly upstream of every
+  sub-agent's tool surface.
+- **"Fixed custom system prompts concatenating the current working directory
+  with later appended prompt content" (#7887).** The entire `system-prompt.js`
+  diff is one trailing `\n` after `Current working directory: …`. No effect on
+  our `system-prompt.ts` or on `--append-system-prompt`.
+- **"Experimental strict JSON-schema constrained sampling for the default read,
+  bash, edit and write tools".** Gated on `PI_EXPERIMENTAL=1`
+  (`core/experimental.js`) and applied to pi's *built-ins*, which our tools
+  replace. **This is not the `apply_patch` grammar trap** — that one throws in
+  `resolveGrammarConstrainedSampling` for tools that declare
+  `constrainedSampling` themselves, and ours still declares none.
+- **"Fixed fallback rendering for extension tool results" (#7979).** Only
+  touches the path for tools with no custom renderer; ours all render
+  themselves.
+
+**One regression this audit did NOT predict: a new keybinding conflict.** pi-tui
+0.84.2 added `ctrl+shift+f` (fullscreen transcript search) and `ctrl+shift+g`,
+and `pi-autoresearch` defaults its dashboard to `ctrl+shift+f` — so every startup
+printed `Extension shortcut conflict` and the extension won, shadowing the new
+built-in. The pre-install diff missed it because it compared pi **core**'s
+`dist/core/keybindings.js` (byte-identical, correctly reported) while the new
+binding shipped in the **pi-tui** package under the `tui.*` namespace. Lesson:
+when a release adds a TUI feature with a shortcut, grep the new **pi-tui** for
+`ctrl+`/`alt+` bindings too, not just pi core's keybindings map. Fixed via
+autoresearch's own config file (`pi-setup/extensions/pi-autoresearch.json`,
+`fullscreenDashboard: "ctrl+shift+r"`) rather than patching a git-installed
+package that an update would overwrite.
+
+Also checked because our extensions depend on them: `cli/args.js` gained
+**`--use-theme` and nothing else** (`--tools`, `--model`, `--provider`,
+`--mode`, `--thinking`, `--append-system-prompt` untouched), and
+`interactive-mode.js` still guards with `if (!customEditor.onPasteImage)`, so
+the editor's clipboard-image placeholder still wins.
+
+**pi-mcp-adapter 2.21.0 → 2.25.0.** Both suppressions survive: the gate is
+still `earlyConfig.settings?.scriptMode !== false` (`index.ts:651`), there are
+still exactly two `registerTool` sites (`mcpScript`, `mcp`), and the shipped
+`skills/` dir still contains only `mcp-scripting`. 2.24 added per-server
+`searchKeywords`; 2.25 **changes the DEFAULT tool-result rendering** from the
+boxed row to compact self-rendered rows — it measures with pi-tui's own
+`truncateToWidth`/`visibleWidth`, i.e. the exact invariant our width work
+requires, so it cannot reopen the smear/crash class. `settings.toolResultRendering:
+"boxed"` restores the old row if the compact one is disliked.
+
+**Verified live, not just by import audit:** `verify-patches.sh` 9/9 PASS before
+and after; a headless session reports `mcpScript` absent / `mcp` present and no
+`mcp-scripting` skill; and one real `finder` sub-agent was spawned against the
+new binary and came back with correct cited output.
+
+Only the two requested packages moved — `@benvargas/pi-claude-code-use` is still
+**1.0.5**, and pi-context/pi-token-burden/pi-tool-display/pi-codex-goal are
+unchanged (`pi update --extension npm:pi-mcp-adapter`, never `--extensions`,
+which would have bumped the held-back one).
+
+No backup dir: `install.sh` was not run, so the patches were re-applied by hand
+(three `cp`s + the width script) as documented in AGENTS.md's quick re-patch
+block.
+
+**Machine note, found while auditing.** There are **three** npm global roots
+here and they hold different versions of the same pi packages:
+`/opt/homebrew/lib/node_modules` (where the `pi` binary itself lives),
+`~/.nvm/versions/node/v22.22.0/lib/node_modules` (what a bare `npm root -g`
+resolves to — it has `@benvargas/pi-claude-code-use@2.2.0`, the version we
+deliberately do **not** want), and `~/.pi/agent/npm/node_modules` (the only one
+pi actually loads packages from). Read package versions from the agent dir; a
+bare `npm ls -g` reports the nvm root and will mislead you.
+
+---
+
 ## 0.84.1 (2026-08-08) — from 0.83.0, + pi-codex-goal 0.2.0, pi-mcp-adapter 2.21.0
 
 `@benvargas/pi-claude-code-use` deliberately **held at 1.0.5** (2.1.0 exists).
@@ -204,7 +391,9 @@ Purely additive upstream (no Breaking Changes section).
 
 `@mariozechner/*` aliases and `@earendil-works/pi-ai/compat` are slated for
 removal "in a future release" (no version announced). Both are **still present
-and verified in 0.84.1**, and our 100 non-vendored extension `.ts` files import
+and verified in 0.84.2** — `getAliases()` still maps all seven
+`@mariozechner/*` specifiers, and `@mariozechner/pi-ai` still resolves to
+`ai/dist/compat.js`. Our 100 non-vendored extension `.ts` files import
 exactly three specifiers, all aliased:
 `@mariozechner/pi-coding-agent` (42), `@mariozechner/pi-tui` (33),
 `@mariozechner/pi-ai` (8) — plus `@sinclair/typebox` (22), also aliased.
