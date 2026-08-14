@@ -186,3 +186,170 @@ describe("tool allowlist still reaches the child both ways", () => {
 		expect(run.env.PI_SUBAGENT_TOOLS).toBe("read,grep,web_search,find");
 	});
 });
+
+/*
+ * STALL WATCHDOG
+ *
+ * a sub-agent is headless: there is no Esc, so a frozen child is
+ * indistinguishable from a busy one until someone walks back to the laptop.
+ * measured: a delegate sat wedged for 2h22m overnight while the parent waited
+ * on `proc`.
+ *
+ * these run the real piSpawn against stub children that either go silent or
+ * keep printing. the stubs matter more than usual here — the property under
+ * test is "does the parent notice silence", which no unit-level assertion on
+ * constants can reach.
+ */
+
+/** write an executable stub child and return its path. */
+function writeStub(name: string, body: string[]): string {
+	const file = join(dir, name);
+	writeFileSync(file, ["#!/bin/sh", ...body, ""].join("\n"), { mode: 0o755 });
+	chmodSync(file, 0o755);
+	return file;
+}
+
+/** run piSpawn against `bin` with a given stall window, restoring env after. */
+async function withChild(
+	bin: string,
+	stallSec: string,
+	config: Record<string, unknown> = {},
+): Promise<{ exitCode: number; stopReason?: string; errorMessage?: string; ms: number }> {
+	const prevBin = process.env.PI_BIN;
+	const prevStall = process.env.PI_SPAWN_STALL_SEC;
+	process.env.PI_BIN = bin;
+	process.env.PI_SPAWN_STALL_SEC = stallSec;
+	const started = Date.now();
+	try {
+		const r = await piSpawn({ cwd: dir, task: "noop", ...(config as any) });
+		return { exitCode: r.exitCode, stopReason: r.stopReason, errorMessage: r.errorMessage, ms: Date.now() - started };
+	} finally {
+		if (prevBin === undefined) delete process.env.PI_BIN; else process.env.PI_BIN = prevBin;
+		if (prevStall === undefined) delete process.env.PI_SPAWN_STALL_SEC; else process.env.PI_SPAWN_STALL_SEC = prevStall;
+	}
+}
+
+describe("stall watchdog", () => {
+	test("kills a child that produces no output at all", async () => {
+		const bin = writeStub("silent.sh", ["sleep 60"]);
+		const run = await withChild(bin, "1");
+		expect(run.stopReason).toBe("stalled");
+		expect(run.exitCode).toBe(1);
+		expect(run.ms).toBeLessThan(15000);
+	}, 30000);
+
+	test("force-release: a killed child holding stdout still returns on the grace timer", async () => {
+		// this stub's `sleep` inherits stdout, so killing the shell does NOT close
+		// the pipe and `proc.on("close")` never fires — the exact reason killing is
+		// not the same as being released. without FORCE_RELEASE_MS this returned at
+		// 60s (the sleep's own length) despite the watchdog firing correctly at 1s.
+		const bin = writeStub("silent-pipe.sh", ["sleep 60"]);
+		const run = await withChild(bin, "1");
+		// stall window 1s + 10s grace, and emphatically NOT the 60s the child wanted
+		expect(run.ms).toBeGreaterThanOrEqual(10_000);
+		// tight: the grace is its own timer, so it does not round up to a watchdog tick
+		expect(run.ms).toBeLessThan(14_000);
+		expect(run.stopReason).toBe("stalled");
+	}, 40000);
+
+	test("an RPC child that finished its turns is released on the grace timer too", async () => {
+		// the RPC kill paths (kill_after_turn / kill_after_error) are the happy
+		// path: the child DID its work. before this they set no killedAt, so a
+		// stuck pipe made them wait out the whole stall window instead of 10s.
+		// stall is set to 60s here purely so that regression would be visible as a
+		// >60s run rather than hiding behind a short window.
+		const turn = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"end_turn"}}';
+		const bin = writeStub("rpc-done.sh", [`echo '${turn}'`, `echo '${turn}'`, "sleep 60"]);
+		const run = await withChild(bin, "60", { followUp: "second turn" });
+		// ~10s grace. before the dedicated release timer this landed at 20s (the
+		// watchdog tick for a 60s window); before killedAt it would be 60s+.
+		expect(run.ms).toBeLessThan(14_000);
+		expect(run.stopReason).not.toBe("stalled");
+	}, 60000);
+
+	test("the release backstop works even with the stall watchdog disabled", async () => {
+		// PI_SPAWN_STALL_SEC=0 removes the interval entirely, but an aborted or
+		// turn-complete child must still be released from a stuck pipe.
+		const turn = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"end_turn"}}';
+		const bin = writeStub("rpc-nostall.sh", [`echo '${turn}'`, `echo '${turn}'`, "sleep 60"]);
+		const run = await withChild(bin, "0", { followUp: "second turn" });
+		expect(run.ms).toBeGreaterThanOrEqual(10_000);
+		expect(run.ms).toBeLessThan(14_000);
+	}, 40000);
+
+	test("the message says RELAUNCH, never resume", async () => {
+		// pi restores a session verbatim and only trims a trailing assistant
+		// message on stopReason "error"/"length", NOT "toolUse" — so a child killed
+		// mid-tool-call leaves a tool_use with no tool_result and replaying it is a
+		// provider 400. telling the model to resume would be telling it to do
+		// something that cannot work.
+		const bin = writeStub("silent2.sh", ["sleep 60"]);
+		const run = await withChild(bin, "1");
+		expect(run.errorMessage).toMatch(/no output for/);
+		expect(run.errorMessage).toMatch(/cannot be resumed/);
+		expect(run.errorMessage).toMatch(/Launch a fresh one/);
+		expect(run.errorMessage).not.toMatch(/\bresume it\b/i);
+	}, 30000);
+
+	test("does NOT kill a child that keeps emitting events", async () => {
+		// the events piSpawn ignores (tool_execution_update, message_update) are
+		// exactly the ones that prove liveness, which is why the watchdog watches
+		// raw bytes rather than parsed events.
+		const bin = writeStub("chatty.sh", [
+			'for i in 1 2 3 4 5 6 7 8; do echo \'{"type":"tool_execution_update"}\'; sleep 0.4; done',
+		]);
+		const run = await withChild(bin, "1");
+		expect(run.stopReason).toBeUndefined();
+		expect(run.exitCode).toBe(0);
+	}, 30000);
+
+	test("stderr-only output also counts as liveness", async () => {
+		const bin = writeStub("chatty-err.sh", [
+			"for i in 1 2 3 4 5 6; do echo noise >&2; sleep 0.4; done",
+		]);
+		const run = await withChild(bin, "1");
+		expect(run.stopReason).toBeUndefined();
+		expect(run.exitCode).toBe(0);
+	}, 30000);
+
+	test("a child that finishes quickly is untouched and leaks no timer", async () => {
+		// if the interval were not cleared in `finally`, this test file would hang
+		// rather than exit.
+		const bin = writeStub("quick.sh", ["echo hi", "exit 0"]);
+		const run = await withChild(bin, "1");
+		expect(run.exitCode).toBe(0);
+		expect(run.stopReason).toBeUndefined();
+		expect(run.ms).toBeLessThan(5000);
+	}, 30000);
+
+	test("PI_SPAWN_STALL_SEC=0 disables it", async () => {
+		const bin = writeStub("silent3.sh", ["sleep 2", "echo done"]);
+		const run = await withChild(bin, "0");
+		expect(run.stopReason).toBeUndefined();
+		expect(run.exitCode).toBe(0);
+	}, 30000);
+
+	test("a spawn failure resolves without the watchdog surviving it", async () => {
+		// proc.on("error") is the other resolve path; the timer is cleared in
+		// `finally`, which covers both.
+		const run = await withChild(join(dir, "does-not-exist"), "1");
+		expect(run.exitCode).toBe(1);
+		expect(run.stopReason).toBeUndefined();
+		expect(run.ms).toBeLessThan(5000);
+	}, 30000);
+
+	test("default window is 15 minutes when the env var is absent", async () => {
+		const prev = process.env.PI_SPAWN_STALL_SEC;
+		delete process.env.PI_SPAWN_STALL_SEC;
+		const prevBin = process.env.PI_BIN;
+		process.env.PI_BIN = writeStub("quick2.sh", ["echo hi", "exit 0"]);
+		try {
+			// a 2s child must not trip a 15m window
+			const r = await piSpawn({ cwd: dir, task: "noop" });
+			expect(r.stopReason).toBeUndefined();
+		} finally {
+			if (prev !== undefined) process.env.PI_SPAWN_STALL_SEC = prev;
+			if (prevBin !== undefined) process.env.PI_BIN = prevBin;
+		}
+	}, 30000);
+});

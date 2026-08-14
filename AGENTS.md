@@ -947,7 +947,7 @@ These replace pi's default tool implementations with customized versions:
 
 | Tool | File | Customization |
 |------|------|---------------|
-| **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing |
+| **bash** | `bash.ts` | Git trailer injection, mutex locking for git commands, psst secret injection into subprocess env, output scrubbing. **`timeout` is REQUIRED (1–600s) and a command silent for 300s is killed regardless of it** — see "Command Time Bounds" |
 | **read** | `read.ts` | Image viewing, fitted to the vision budget via `lib/image-fit.ts` (falls back to raw bytes on any failure) |
 | **apply_patch** | `apply-patch.ts` | The ONLY file-mutation tool. **Four call shapes, one engine** (see below): `{path, content}`, `{path, old_string, new_string}`, `{ops:[…]}`, `{input: envelope}`. Multi-file atomic batching, mutex locking, undo tracking. Replaced `edit-file.ts` + `create-file.ts` in `6296fef`; pi's native `edit`/`write` are hidden at `session_start` |
 | **format_file** | `format-file.ts` | Prettier/biome formatting |
@@ -1538,6 +1538,198 @@ the pre-change matrix (§3.9 of the port log) — is now correct. Set
 `~/.pi/apply-patch-lanes.jsonl`; it is off by default because a tool that writes
 to the home directory as a side effect of being called is a surprise.
 
+## Command Time Bounds — nothing runs unbounded (added 2026-08-14)
+
+**Files:** `bash.ts`, `lib/pi-spawn.ts`, `lib/watchdog.ts` (new),
+`lib/proc-cpu.ts` (new), plus `bash-timeout.test.ts` (54), `lib/watchdog.test.ts`
+(16), `lib/proc-cpu.test.ts` (11), `lib/pi-spawn.test.ts` (+15).
+
+### The incident
+
+A `delegate` launched at 03:03 ran a `vitest` command that finished its work in
+**3 seconds**, printed its complete summary, and then **failed to exit for 2h22m**
+(8,555s). Every other bash call in that session took 2–28s — a **307× outlier**.
+The session was aborted at 06:25 with the work lost and $21.27 spent.
+
+Measured across **18,681 bash calls in 325 sub-agent sessions**: 87.6% finish
+under 5s, 0.20% exceed 300s, 0.064% exceed 600s, and **7.6 hours total** were
+lost to 38 long calls. The `timeout` parameter already existed and was used
+**0 times in 45 calls** — its entire description was `"Timeout in seconds."`,
+which states no default and no consequence, so there was no reason to use it.
+
+**This was never a missing capability. It was a missing default, and then a
+missing trigger.**
+
+### Four layers, each covering what the others structurally cannot
+
+| | mechanism | bounds |
+|---|---|---|
+| **L0** | description tells the model not to pipe to `tail`/`head`/`grep` | restores streaming visibility |
+| **L1** | `timeout` **required**, schema-bounded 1–600s | the declared budget |
+| **L2** | **idle kill** — no output **AND no CPU** for 300s, *whatever* was declared | a corpse whose caller asked for 10 minutes |
+| **L3** | **stall watchdog** in `piSpawn` — no child stdout for 900s | anything that is not bash |
+
+Env overrides: `PI_BASH_MAX_TIMEOUT_SEC` (600), `PI_BASH_IDLE_KILL_SEC` (300,
+`0` disables), `PI_SPAWN_STALL_SEC` (900, `0` disables),
+`PI_BASH_CPU_LIVENESS` (`0` disables the CPU signal, falling back to
+stdout-only).
+
+### L2 is CPU-aware — the Pareto upgrade
+
+Stdout-silence alone is too blunt: a command can do real work while printing
+nothing — a silent compile, an upload, or (the case that bites) a producer
+behind `| tail`, where `tail` buffers everything until the command exits so we
+see **zero bytes for the whole run**. That is indistinguishable from a hang by
+output alone, so real deploys got killed.
+
+**CPU time is the discriminator.** A working process burns CPU; a
+finished-but-hung one (a test runner parked on a leaked handle) burns none.
+Measured, ΔCPU over a 4s window:
+
+```
+sleep 30              0.00s   quiet   (idle / hung)
+yes >/dev/null        4.03s   WORKING (silent to us)
+yes | tail -1000000   4.03s   WORKING (the `| tail` shape)
+node print-then-hang  0.00s   quiet   (the vitest bug)
+```
+
+Each idle tick also samples the process group's cumulative CPU via
+`ps -o pgid=,cputime= -ax` (~10ms, measured; `child.pid` is the group id because
+the command is spawned `detached`). If CPU advanced by more than
+`elapsed × CPU_ALIVE_CORE_FRACTION` (5% of a core, scale-invariant so it works
+at a 10s production tick and a sub-second test tick) the command counts as
+alive. Output and CPU are **OR**'d; the kill fires only when **both** are quiet.
+
+**The invariant that makes it safe: the CPU signal can only ever KEEP a command
+alive, never cause a kill.** Its sole effect on the decision is bumping
+`lastOutputAt` forward, which can only push `watchdogVerdict` toward `"wait"`.
+`sampleGroupCpuSeconds` returns `undefined` on any failure (no `ps`, parse
+error, group already gone), and `undefined` is treated as "no signal → fall back
+to stdout-only" — i.e. exactly the previous behaviour. So a bug or a missing
+`ps` degrades to the old guard; it cannot make anything worse. Strictly fewer
+false kills, zero new ones. The parsing half lives in `lib/proc-cpu.ts`, pure
+and unit-tested; the I/O half returns `undefined` rather than throwing.
+
+**Two residuals, both bounded by the declared timeout and NEITHER worse than the
+old stdout-only guard:**
+- **0-CPU remote work** — `ssh host 'long-job'` where the work runs remotely and
+  the local process just holds a socket: looks idle locally, indistinguishable
+  from a hung ssh. Killed at the idle window unless it prints. (stdout-only
+  killed it too.)
+- **A busy-*loop* hang** — spinning at 100% CPU forever reads as alive, so the
+  wall-clock declared timeout catches it, not the idle kill. Correct: the idle
+  kill simply never fires (safe), and L1 is the bound.
+
+Proven live, side by side on `sh busy-deploy.sh | tail -3` (a CPU-busy step
+whose output `tail` hides), 3s idle window: **without** CPU liveness → killed at
+3s, deploy never finished; **with** it → ran the full 8s, deploy completed. The
+`with CPU liveness DISABLED` test is a permanent built-in sabotage that fails if
+the CPU check ever stops being load-bearing.
+
+### Things that look arbitrary and are not
+
+- **`timeout` is REQUIRED, not defaulted.** A default is a number nobody can
+  justify — the session logs record only call start/end, so the idle *gap*
+  needed to pick one is unmeasurable. Required deletes the question and fails
+  **closed**: no path exists by which a command runs unbounded. Verified safe
+  against pi 0.84.1: validation runs in `prepareToolCall` → `validateToolArguments`
+  **before** `execute()`, and a failure returns as an ordinary `isError` tool
+  result the loop continues from (`agent-loop.js:445-451`), costing one turn.
+  Same trade `delegate.ts` already made for `prompt`.
+- **Bounds live in the schema, not in a runtime clamp.** `timeout: 0` and
+  `timeout: 99999` become messages the model learns from. A silent clamp teaches
+  nothing.
+- **No TypeBox `default`.** pi fills none — `Value.Convert` coerces types only
+  (it *does* turn `"120"` into `120`), so a default would be decorative and the
+  field would still arrive `undefined`.
+- **Grammar-constrained sampling is unaffected.** `resolveGrammarConstrainedSampling`
+  returns early unless a tool declares `constrainedSampling`, and bash does not
+  (`constrained-sampling.js:64-67`). This is the trap that forced `apply_patch`
+  to drop its own — it does not apply here.
+- **L2 measures SILENCE, not duration.** Duration is not the defect: of the 38
+  calls over 300s, roughly 30 were real work (`chat:eval`, `ui-verify`, e2e) and
+  ~8 were hangs. A blanket wall-clock would have destroyed four times more work
+  than it saved. A working command keeps printing; a dead one does not.
+- **The idle timer runs from t=0, NOT armed after first output.** The arming
+  refinement was designed and then killed by measurement: piping through
+  `grep`/`tail` block-buffers everything until the upstream closes — verified,
+  `(echo A; sleep 4; echo B) | grep .` emits **both** lines at t+4s — and every
+  command in the incident ended in such a pipe. An armed-later timer would never
+  have fired on the exact case it exists for. This is also why L0 exists.
+- **Liveness is stamped on RAW chunk arrival, before sanitization.** Bytes that
+  sanitize to nothing (a redrawing progress bar) still prove the process runs.
+- **L3 watches raw stdout bytes, not parsed events.** `piSpawn`'s `processLine`
+  deliberately ignores `tool_execution_update`/`message_update` — which are
+  exactly the events that prove liveness. Measured against a real child: events
+  arrive at the command's own cadence, **max gap 5.1s** over a 65s run.
+- **900s is derived, not guessed.** Longest legitimate silence a healthy child
+  can produce, from pi's own defaults: HTTP idle 300s
+  (`DEFAULT_HTTP_IDLE_TIMEOUT_MS`), provider retry cap 60s, agent-turn backoff 8s
+  (and it *emits* `auto_retry_start` before sleeping), our own bash idle 300s.
+  Worst realistic ≈360s; 900s is 2.5×. **Re-check those four numbers before
+  shrinking it.**
+- **The machine-sleep guard is mandatory.** macOS suspends timers on lid close;
+  on wake one tick would otherwise observe hours of "silence" and kill a healthy
+  process at the exact moment you start watching. `watchdogVerdict` checks sleep
+  **first** and it wins outright — order is load-bearing and pinned by test.
+- **`watchdog.ts` is a pure function on purpose.** Both watchdogs live inside
+  `setInterval` closures over live child processes, i.e. untestable. Subtle plus
+  untestable is precisely how the `deepseek-peak` timer took a session down.
+- **Killing is not the same as being released.** `close` fires only when the
+  child exits **and** its stdio pipes close, so a grandchild that inherited
+  stdout keeps the parent waiting after a successful SIGKILL. Found by the stall
+  test: the watchdog fired correctly at 1s and `piSpawn` still returned at
+  **60s**. `FORCE_RELEASE_MS` (10s) resolves the promise regardless, and every
+  kill path — stall, user abort, and both RPC paths — arms it.
+- **The release backstop is its own timer, not a phase of the watchdog interval.**
+  Folding it in made the actual release land anywhere between 10s and 40s,
+  because the interval's period scales with the stall window.
+- **The child is NOT spawned `detached`.** A detached child sits in its own
+  process group and would stop receiving the terminal's SIGINT, so Ctrl+C would
+  leave orphaned sub-agents burning tokens. Keeping it in our group and
+  force-releasing is the safer half of that trade.
+- **The stall message says RELAUNCH, never resume.** pi restores sessions
+  verbatim (`sdk.js:231-237`) and its only trailing-assistant trim is gated on
+  stopReason `"error"`/`"length"`, **not `"toolUse"`** (`agent-session.js:1696-1704`).
+  A child killed mid-tool-call leaves a `tool_use` with no `tool_result`;
+  replaying that is a provider 400. There is no repair logic anywhere in pi.
+- **`killedAt` guards the watchdog after any kill**, which also fixes
+  attribution: a user abort sets it first, so the watchdog never relabels an
+  Esc as a stall.
+
+### What the big three harnesses do (researched 2026-08-14)
+
+| | default | max | **idle detection** |
+|---|---|---|---|
+| Claude Code | 120s | 600s hard | **none** — and it *discards* output on kill (issue #34266) |
+| Codex CLI | **10s** | none | **none** |
+| OpenCode | 120s | **none** | **none** |
+
+Nobody has idle detection; all three have open hang issues. Relevant for the
+`vitest` case specifically: vitest's own `teardownTimeout` watchdog is armed
+inside `ctx.exit()`, which the CLI reaches only *after* `startVitest()` returns —
+and `startVitest()` awaits `close()`, so a hang **inside** close never arms it.
+There is no `--forceExit` in vitest. Upstream's own answer is an external hard
+timeout.
+
+### Verified
+
+**1537 tests pass, 0 fail.** Sabotage-checked in four directions, each failing
+exactly its own tests and nothing else: reversing the sleep-guard order fails the
+two lid-close tests; removing the idle kill fails 6 tests **by timing out at
+20–30s**, reproducing the original bug's shape; reverting `timeout` to `Optional`
+fails the 3 schema tests; removing the liveness stamps fails exactly the
+false-positive-protection tests on both sides.
+
+A `code_review` pass found 4 real defects, all fixed: the RPC kill paths not
+arming the release timer, the idle interval re-issuing SIGTERM every tick, the
+`close` handler mutating an already-returned result, and `idleKillSec()` being
+read at two different times. Its 5th claim (that the force-release path was
+untested) was **checked and was wrong** — the path was exercised but not
+*asserted*; assertions were added rather than the claim accepted.
+
+---
+
 ### Tool Libraries (`tools/lib/`)
 
 Shared code used by multiple tools:
@@ -1570,6 +1762,8 @@ Shared code used by multiple tools:
 | `fs.ts` | Path resolution and directory walking utilities (ported from @bds_pi/fs) |
 | `mentions/` | @mention system — parse, resolve, render, agent directives, session/commit indexing, autocomplete provider (ported from @bds_pi/mentions) |
 | `read-only-bash.ts` | the read-only bash allowlist `chad` runs under. quote-aware scanner + per-command gates. see the chad section |
+| `watchdog.ts` | the pure silence-detection decision (incl. the machine-sleep guard) shared by bash's idle kill and pi-spawn's stall watchdog. see "Command Time Bounds" |
+| `proc-cpu.ts` | process-group CPU sampling (`ps`) + pure parsing for bash's CPU-aware idle liveness. returns `undefined` on any failure so the guard degrades to stdout-only. see "Command Time Bounds" |
 
 ---
 

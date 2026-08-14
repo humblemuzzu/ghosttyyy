@@ -33,11 +33,149 @@ import { evaluateReadOnlyCommand, isReadOnlyBash, readOnlyRefusal } from "./lib/
 import { resolveToAbsolute } from "./read";
 import { OutputBuffer } from "./lib/output-buffer";
 import { loadSecrets } from "./lib/psst";
+import { watchdogTickMs, watchdogVerdict } from "./lib/watchdog";
+import { sampleGroupCpuSeconds } from "./lib/proc-cpu";
 
 const HEAD_LINES = 50;
 const TAIL_LINES = 50;
 const SIGKILL_DELAY_MS = 3000;
 const STREAM_UPDATE_INTERVAL_MS = 150;
+
+// --- time bounds ---
+
+/*
+ * WHY EVERY COMMAND IS BOUNDED, AND WHY SILENCE IS THE TRIGGER
+ *
+ * measured, 18,681 bash calls across 325 sub-agent sessions: 87.6% finish in
+ * under 5s, 0.20% exceed 300s, and 0.064% exceed 600s. one call ran for
+ * 8,555 SECONDS -- 2h22m -- inside a delegate that ran unattended overnight.
+ *
+ * that call was not slow. it was dead. the test suite it ran finished in
+ * milliseconds and printed its complete summary; vitest then failed to exit
+ * because something held the event loop open (a pg pool, an undici agent, a
+ * timer). 100% of the useful output existed at t+3s and the remaining 8,552
+ * seconds produced nothing and never would. vitest cannot rescue itself here:
+ * its own `teardownTimeout` watchdog is armed inside `ctx.exit()`, which the
+ * CLI only reaches after `startVitest()` returns -- and `startVitest()` awaits
+ * `close()`, so a hang INSIDE close never arms it. upstream's own answer to
+ * this class is "wrap it in an external hard timeout". that is us.
+ *
+ * so there are two bounds, and they measure different things:
+ *
+ *   1. `timeout` (REQUIRED, 1..MAX) -- the caller declares a wall-clock budget.
+ *      required rather than defaulted because a default is a number nobody can
+ *      justify, and because an optional-with-hidden-default field is a
+ *      contradiction a model cannot resolve from the spec (see delegate.ts's
+ *      `prompt` for the same decision and the same reasoning). required fails
+ *      CLOSED: there is no path by which a command runs unbounded.
+ *
+ *   2. IDLE KILL -- kills only a command that is PROVABLY doing nothing:
+ *      no output AND no CPU for N seconds, regardless of the declared budget.
+ *      this is the layer that matters, because a model that writes
+ *      `timeout: 600` on a corpse has satisfied bound 1 and still hangs for ten
+ *      minutes. duration is not the defect; being DEAD is.
+ *
+ * why two signals, not just output. stdout-silence alone is too blunt: a
+ * command can do real work while printing nothing -- a silent compile, an
+ * upload, or (the case that actually bites) a producer behind `| tail`, where
+ * `tail` buffers everything until the command exits so we see zero bytes for
+ * the whole run. measured, ΔCPU over a 4s window:
+ *
+ *      sleep 30              0.00s   quiet   (idle / hung)
+ *      yes >/dev/null        4.03s   WORKING (silent to us)
+ *      yes | tail -1000000   4.03s   WORKING (the `| tail` shape)
+ *      node print-then-hang  0.00s   quiet   (the vitest bug)
+ *
+ * so CPU across the process group tells alive-but-quiet from dead. the CPU
+ * check can only ever mark a command ALIVE -- it never causes a kill -- so if
+ * `ps` is missing or a parse fails (sampleGroupCpuSeconds returns undefined)
+ * the guard degrades to stdout-only, i.e. exactly the previous behaviour. it
+ * is a Pareto improvement: strictly fewer false kills, no new ones. see
+ * lib/proc-cpu.ts.
+ *
+ * the idle timer runs from t=0 rather than arming after first output. that
+ * refinement was designed, then killed by measurement: piping through
+ * `grep`/`tail` block-buffers everything until the upstream closes (verified:
+ * `(echo A; sleep 4; echo B) | grep .` emits BOTH lines at t+4s, not t+0s).
+ *
+ * residuals, stated rather than hidden -- both bounded by the declared timeout,
+ * and NEITHER made worse than the old stdout-only guard:
+ *   - 0-CPU remote work (`ssh host 'long-job'`, work runs remotely, local
+ *     process just holds a socket): looks idle locally, indistinguishable from
+ *     a hung ssh. killed at the idle window unless it prints.
+ *   - a busy-LOOP hang (spinning at 100% CPU forever): reads as alive, so the
+ *     wall-clock declared timeout catches it, not the idle kill.
+ */
+const MIN_TIMEOUT_SEC = 1;
+const DEFAULT_MAX_TIMEOUT_SEC = 600;
+const DEFAULT_IDLE_KILL_SEC = 300;
+
+/**
+ * a process group counts as ALIVE for a tick if it consumed CPU at more than
+ * this fraction of one core since the last sample. scale-invariant on purpose:
+ * threshold = elapsed_seconds * this, so it works identically at a 10s
+ * production tick and a sub-second test tick. 5% of a core clears real work
+ * (compiles, uploads, `yes` all peg or near-peg a core) while ignoring the
+ * millisecond-scale CPU a silent poll loop spends between sleeps.
+ */
+const CPU_ALIVE_CORE_FRACTION = 0.05;
+
+/**
+ * how often the idle watchdog wakes. coarse on purpose: one interval plus a
+ * timestamp comparison, rather than clearTimeout/setTimeout on every output
+ * chunk (which would be thousands of timer-heap operations on a chatty
+ * command). measured cost of an idle interval at this cadence: 0.001% of one
+ * core. the real tick is min(this, idle/3) so a short window is still observed
+ * promptly.
+ */
+const IDLE_TICK_MS = 10_000;
+
+/**
+ * one tick observing this much wall time means the MACHINE SLEPT, not that the
+ * command went quiet -- macOS suspends timers with the lid closed, and on wake a
+ * single tick would otherwise see hours of "silence" and kill a healthy process
+ * at the exact moment the user is watching. absolute rather than a multiple of
+ * the tick: no scheduler delay is a minute, and any real suspend is minutes.
+ * the failure direction is deliberate -- a spurious reset grants one more idle
+ * window, never a wrong kill.
+ */
+const SLEEP_JUMP_MS = 60_000;
+
+function envInt(name: string, fallback: number): number {
+	const raw = process.env[name];
+	if (raw === undefined || raw.trim() === "") return fallback;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+	return Math.floor(parsed);
+}
+
+/**
+ * CPU liveness is on unless explicitly disabled. off falls back to the
+ * stdout-only idle guard -- useful for a machine without a usable `ps`, or to
+ * isolate behaviour in a test.
+ */
+function cpuLivenessEnabled(): boolean {
+	return process.env.PI_BASH_CPU_LIVENESS !== "0";
+}
+
+/**
+ * ceiling on a declared timeout. read at TOOL CONSTRUCTION because it goes into
+ * the schema the model reads, and `piSpawn` sets a child's env before spawn --
+ * exactly like `isReadOnlyBash()`.
+ */
+export function maxTimeoutSec(): number {
+	const value = envInt("PI_BASH_MAX_TIMEOUT_SEC", DEFAULT_MAX_TIMEOUT_SEC);
+	return Math.max(MIN_TIMEOUT_SEC, value);
+}
+
+/**
+ * idle window. read per CALL rather than at construction so a test can vary it
+ * without rebuilding the tool, and so `0` (disable) can be toggled by an
+ * operator debugging a genuinely long silent command.
+ */
+export function idleKillSec(): number {
+	return envInt("PI_BASH_IDLE_KILL_SEC", DEFAULT_IDLE_KILL_SEC);
+}
 
 // --- shell config ---
 
@@ -196,6 +334,35 @@ export function createBashTool(): ToolDefinition {
 	 * process; it never changes mid-session.
 	 */
 	const readOnly = isReadOnlyBash();
+	/*
+	 * ceiling is fixed for the life of the tool: it goes into the schema the
+	 * model plans against, so it must not vary between the description it reads
+	 * and the validator that judges the call.
+	 */
+	const maxTimeout = maxTimeoutSec();
+	/*
+	 * captured ONCE, for the same reason as `maxTimeout`: this number appears in
+	 * the description the model reads AND governs the kill, and the two must not
+	 * be able to disagree. it is threaded into `runCommand` rather than re-read
+	 * there, so there is exactly one source for both.
+	 */
+	const idleSec = idleKillSec();
+	/*
+	 * the escape hatch for legitimately-silent work. teaches the agent, UP FRONT,
+	 * that a quiet command can be stopped and how to opt out -- so it does not
+	 * have to learn this from a kill. the remote-deploy case is named explicitly
+	 * because that is the one the CPU signal cannot cover: the work (and the CPU)
+	 * is on the server, so a local `ssh`/`push` that hides its output looks
+	 * exactly like a hang.
+	 */
+	const idleNote = idleSec > 0
+		? `\n- A command that produces NO output AND uses NO CPU for ${idleSec}s is stopped — ` +
+			"a hung process looks exactly like this. Real work is either printing or burning CPU, " +
+			"so normal commands are safe. But if a command is MEANT to be quiet for a while " +
+			"(a deploy pushing to a remote server over ssh, a slow silent build — the work is on " +
+			"the OTHER machine, so this machine sees no output and no CPU), pass `may_run_silent: true` " +
+			"and ONLY your `timeout` will bound it."
+		: "";
 	const readOnlyNote = readOnly
 		? "\n\nREAD-ONLY SESSION. Only read-only commands run here. No redirection to a file " +
 			"(`>`, `>>`; `>/dev/null` and `2>&1` are fine), no rm/mv/cp/mkdir/touch/chmod, no " +
@@ -213,11 +380,14 @@ export function createBashTool(): ToolDefinition {
 			"- Do NOT chain commands with `;` or `&&` or use `&` for background processes; make separate tool calls instead\n" +
 			"- Do NOT use interactive commands (REPLs, editors, password prompts)\n" +
 			`- Output shows first ${HEAD_LINES} and last ${TAIL_LINES} lines; middle is truncated for large outputs\n` +
+			"- Do NOT pipe to `tail`/`head`/`grep` just to shorten output — this tool already truncates. " +
+			"Piping buffers everything until the command ends, which hides progress and makes a working command look hung\n" +
 			"- Environment variables and `cd` do not persist between commands; use the `cwd` parameter instead\n" +
 			"- Commands run in the workspace root by default; only use `cwd` when you need a different directory\n" +
 			"- ALWAYS quote file paths: `cat \"path with spaces/file.txt\"`\n" +
 			"- Use the Grep tool instead of grep, the Read tool instead of cat\n" +
 			"- Only run `git commit` and `git push` if explicitly instructed by the user." +
+			idleNote +
 			readOnlyNote,
 
 		parameters: Type.Object({
@@ -233,11 +403,54 @@ export function createBashTool(): ToolDefinition {
 						"Working directory for the command (absolute path). Defaults to workspace root.",
 				}),
 			),
-			timeout: Type.Optional(
-				Type.Number({
-					description: "Timeout in seconds.",
+			/*
+			 * the per-command way to say "I expect this to be quiet, be patient".
+			 * disables the idle kill for this command so ONLY the wall-clock timeout
+			 * bounds it -- the honest signal for legitimately-silent work (a remote
+			 * deploy, a quiet build) that the CPU liveness check cannot see because
+			 * the work is on another machine. optional, so it never affects the
+			 * "timeout is the only required property" contract.
+			 */
+			may_run_silent: Type.Optional(
+				Type.Boolean({
+					description:
+						"Set true for a command you EXPECT to be silent for a long time — a deploy " +
+						"pushing to a remote server over ssh, or a quiet build where the work happens " +
+						"elsewhere. Then ONLY your `timeout` bounds it and it will NOT be stopped for " +
+						`producing no output. Leave unset for normal commands (stopped if silent AND ` +
+						`using no CPU for ${idleSec}s, which means the process has hung).`,
 				}),
 			),
+			/*
+			 * REQUIRED, and bounded by the schema rather than clamped at runtime.
+			 *
+			 * pi validates arguments before execute() (agent-loop.js prepareToolCall
+			 * -> validateToolArguments), and a failure comes back as an ordinary
+			 * isError tool result that the loop carries on from -- so a missing or
+			 * out-of-range timeout costs one turn and self-corrects, it does not
+			 * abort anything. bounds live here so `timeout: 0` and `timeout: 99999`
+			 * become messages the model can learn from instead of silent clamps.
+			 *
+			 * TypeBox `default` is deliberately NOT used: pi fills no defaults
+			 * (Value.Convert coerces types only), so a default here would be
+			 * decorative and the field would still arrive undefined.
+			 */
+			timeout: Type.Number({
+				minimum: MIN_TIMEOUT_SEC,
+				maximum: maxTimeout,
+				description:
+					`Required. Max seconds this command may run (${MIN_TIMEOUT_SEC}-${maxTimeout}). ` +
+					"read/grep/git status 10 · typecheck/lint/unit tests 120 · build/install 300 · e2e/deploy 600. " +
+					// only claim the idle kill when it is actually armed: with it
+					// disabled this read "prints NOTHING for 0s is killed", which is
+					// both false and unparseable.
+					(idleSec > 0
+						? `A command that prints NOTHING for ${idleSec}s is killed regardless of this value, ` +
+							"UNLESS you pass may_run_silent:true (for a command you expect to be quiet, " +
+							"like a remote deploy). "
+						: "") +
+					`If it needs more than ${maxTimeout}s, split it or run it outside the agent.`,
+			}),
 		}, {
 			// at least one of cmd/command must be present
 		}),
@@ -344,6 +557,34 @@ export function createBashTool(): ToolDefinition {
 		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			/*
+			 * well-formedness before semantics: a call missing its budget is not a
+			 * command yet, so it is rejected before the permission engine, the
+			 * secret vault, or anything that costs work.
+			 *
+			 * the schema already enforces this for every provider that honours it
+			 * (validation runs before execute()); this is the net for the ones that
+			 * do not. `Value.Convert` coerces a numeric string, so a model sending
+			 * "120" has already become 120 by the time we look.
+			 */
+			const timeoutSec = params.timeout;
+			if (
+				typeof timeoutSec !== "number" ||
+				!Number.isFinite(timeoutSec) ||
+				timeoutSec < MIN_TIMEOUT_SEC ||
+				timeoutSec > maxTimeout
+			) {
+				return {
+					content: [{
+						type: "text" as const,
+						text:
+							`timeout required: seconds, ${MIN_TIMEOUT_SEC}-${maxTimeout}. ` +
+							"read 10 · test 120 · build 300 · e2e 600.",
+					}],
+					isError: true,
+				} as any;
+			}
+
 			// accept both `cmd` (our schema) and `command` (pi default / Claude convention)
 			let command = stripBackground(params.cmd ?? params.command);
 			let effectiveCwd = params.cwd
@@ -401,7 +642,16 @@ export function createBashTool(): ToolDefinition {
 				secretEnv[secret.name] = secret.value;
 			}
 
-			const run = () => runCommand(command, effectiveCwd, params.timeout, signal, onUpdate, secretEnv);
+			// may_run_silent opts a command out of the idle kill: the agent is
+			// declaring it EXPECTS no output for a while (a remote deploy, a quiet
+			// build). only the wall-clock timeout then bounds it. accept a couple of
+			// spellings a model might reach for.
+			const mayRunSilent =
+				params.may_run_silent === true ||
+				params.mayRunSilent === true ||
+				params.expect_silent === true;
+			const effectiveIdleSec = mayRunSilent ? 0 : idleSec;
+			const run = () => runCommand(command, effectiveCwd, timeoutSec, effectiveIdleSec, signal, onUpdate, secretEnv);
 
 			if (isGitCommand(command)) {
 				const gitLockKey = path.join(effectiveCwd, ".git", "__pi_git_lock__");
@@ -418,7 +668,8 @@ export function createBashTool(): ToolDefinition {
 async function runCommand(
 	command: string,
 	cwd: string,
-	timeout: number | undefined,
+	timeout: number,
+	idleSec: number,
 	signal: AbortSignal | undefined,
 	onUpdate: ((update: any) => void) | undefined,
 	secretEnv: Record<string, string> = {},
@@ -438,6 +689,7 @@ async function runCommand(
 
 		const output = new OutputBuffer(HEAD_LINES, TAIL_LINES);
 		let timedOut = false;
+		let idledOut = false;
 		let aborted = false;
 		let controlCarry = "";
 		let lastUpdateAt = 0;
@@ -454,6 +706,78 @@ async function runCommand(
 				timedOut = true;
 				if (child.pid) killGracefully(child.pid);
 			}, timeout * 1000);
+		}
+
+		/*
+		 * IDLE WATCHDOG -- kills a command that has stopped producing output,
+		 * whatever wall-clock budget was declared. see the rationale block at the
+		 * top of this file: this is the layer that bounds a corpse whose caller
+		 * asked for ten minutes of patience.
+		 *
+		 * `lastOutputAt` is stamped on RAW chunk arrival (see handleData), not on
+		 * displayable text, so a command emitting only control sequences -- a
+		 * progress bar redrawing one line -- counts as alive and is bounded by the
+		 * wall clock instead. false-positive direction, on purpose.
+		 *
+		 * `lastOutputAt` is ALSO bumped when the process group's CPU advances (see
+		 * the CPU block below), so a command doing real work while printing nothing
+		 * -- a silent compile, or a producer behind `| tail` -- counts as alive
+		 * too. output and CPU are OR'd; the kill fires only when BOTH are quiet.
+		 */
+		const idleMs = idleSec * 1000;
+		let lastOutputAt = Date.now();
+		let lastIdleTickAt = Date.now();
+		// CPU liveness state. `child.pid` is the process-GROUP id because the child
+		// is spawned `detached` (the same fact `killGracefully(-pid)` relies on).
+		const cpuOn = cpuLivenessEnabled() && idleMs > 0;
+		let lastCpuSecs = cpuOn && child.pid ? sampleGroupCpuSeconds(child.pid) : undefined;
+		let lastCpuSampleAt = Date.now();
+		let idleHandle: ReturnType<typeof setInterval> | undefined;
+		if (idleMs > 0) {
+			idleHandle = setInterval(() => {
+				// one kill only. after the first tick fires, `lastOutputAt` can never
+				// advance again (the process is dying and producing nothing), so every
+				// later tick would re-issue SIGTERM and queue another 3s SIGKILL timer
+				// against a process that is already on its way out.
+				if (idledOut) return;
+				const now = Date.now();
+				/*
+				 * CPU liveness, first: a command burning CPU is alive even if it has
+				 * printed nothing. this can only ever bump `lastOutputAt` (keep the
+				 * command running); it never kills. a sample of `undefined` (ps
+				 * failed, or the group is gone) is treated as no signal -- the guard
+				 * falls back to output-only, exactly the old behaviour.
+				 */
+				if (cpuOn && child.pid) {
+					const cpuNow = sampleGroupCpuSeconds(child.pid);
+					// only advance the sample state on a REAL reading: a failed `ps`
+					// (undefined) leaves last{CpuSecs,SampleAt} untouched, so the next
+					// success measures the true rate across the gap rather than a
+					// short interval against a stale baseline.
+					if (cpuNow !== undefined) {
+						if (lastCpuSecs !== undefined) {
+							const elapsedSec = (now - lastCpuSampleAt) / 1000;
+							// threshold scales with elapsed wall time, so it is identical at
+							// a 10s production tick and a sub-second test tick. abs(): a
+							// child exiting drops the group total, and that drop is activity
+							// too. this only ever BUMPS lastOutputAt (keeps the command
+							// alive) — it can never cause a kill.
+							const threshold = Math.max(elapsedSec, 0) * CPU_ALIVE_CORE_FRACTION;
+							if (Math.abs(cpuNow - lastCpuSecs) > threshold) lastOutputAt = now;
+						}
+						lastCpuSecs = cpuNow;
+						lastCpuSampleAt = now;
+					}
+				}
+				const verdict = watchdogVerdict(now, lastIdleTickAt, lastOutputAt, idleMs, SLEEP_JUMP_MS);
+				lastIdleTickAt = now;
+				// machine slept: forgive the gap rather than kill a process that was
+				// frozen along with everything else.
+				if (verdict === "slept") { lastOutputAt = now; return; }
+				if (verdict === "wait") return;
+				idledOut = true;
+				if (child.pid) killGracefully(child.pid);
+			}, watchdogTickMs(idleMs, IDLE_TICK_MS));
 		}
 
 		const onAbort = () => {
@@ -483,6 +807,10 @@ async function runCommand(
 		};
 
 		const handleData = (decoder: StringDecoder) => (data: Buffer) => {
+			// liveness is stamped on RAW arrival, before sanitization: bytes that
+			// sanitize to nothing (a redrawing progress bar) still prove the process
+			// is running. counting only displayable text would kill it.
+			lastOutputAt = Date.now();
 			// sanitize at source — strip terminal control sequences before they
 			// enter the buffer or reach onUpdate. prevents escape sequences from
 			// ever flowing through the TUI pipeline (even briefly via onUpdate).
@@ -501,6 +829,7 @@ async function runCommand(
 
 		child.on("error", (err) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (idleHandle) clearInterval(idleHandle);
 			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
 			resolve({
@@ -511,6 +840,7 @@ async function runCommand(
 
 		child.on("close", (code) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
+			if (idleHandle) clearInterval(idleHandle);
 			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
 
@@ -528,10 +858,35 @@ async function runCommand(
 				return;
 			}
 
+			/*
+			 * before the wall-clock branch: the two are mutually exclusive in
+			 * practice (idle fires only after `idleSec` of silence, the wall clock
+			 * only at the declared budget), but if a kill raced them the idle
+			 * diagnosis is the more useful one -- it tells the caller the output
+			 * above is complete, which "timed out" does not.
+			 */
+			if (idledOut) {
+				const text =
+					`${outputText || "(no output)"}\n\n` +
+					`killed: no output and no CPU activity for ${idleSec}s — the process was doing ` +
+					"nothing on this machine. Output above is everything it printed. A process that " +
+					"finishes its work and fails to exit looks exactly like this — check the output " +
+					"first; it may be complete. If this command was LEGITIMATELY quiet (a deploy or " +
+					"build whose work runs on a remote server, so this machine sees no output and no " +
+					"CPU), re-run it with may_run_silent: true — a longer timeout will NOT help, the " +
+					"idle check ignores it.";
+				resolve({
+					content: [{ type: "text" as const, text }],
+					isError: true,
+				} as any);
+				return;
+			}
+
 			if (timedOut) {
-				const text = outputText
-					? `${outputText}\n\ncommand timed out after ${timeout} seconds`
-					: `command timed out after ${timeout} seconds`;
+				const notice =
+					`command timed out after ${timeout} seconds (your declared timeout). ` +
+					`Raise it, up to ${maxTimeoutSec()}s, if the command legitimately needs longer.`;
+				const text = outputText ? `${outputText}\n\n${notice}` : notice;
 				resolve({
 					content: [{ type: "text" as const, text }],
 					isError: true,

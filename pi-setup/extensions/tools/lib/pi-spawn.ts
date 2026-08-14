@@ -18,6 +18,90 @@ import type { Message } from "@mariozechner/pi-ai";
 import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
 import { SUB_AGENT_TOOLS_ENV } from "./sub-agent-prompt";
 import { READ_ONLY_BASH_ENV } from "./read-only-bash";
+import { watchdogTickMs, watchdogVerdict } from "./watchdog";
+
+// --- stall watchdog ---
+
+/*
+ * WHY A SUB-AGENT NEEDS A WATCHDOG AND AN INTERACTIVE SESSION DOES NOT
+ *
+ * pi has no deadline on a tool call or an agent turn anywhere (verified: zero
+ * setTimeout in agent-loop.js). that is defensible for the TUI, where the HUMAN
+ * is the watchdog and Esc always works. a spawned child is headless: there is no
+ * Esc, and a frozen one is indistinguishable from a busy one until someone walks
+ * back to the laptop. measured consequence: a delegate sat wedged for 2h22m
+ * overnight and the parent waited on `proc` the entire time.
+ *
+ * the signal this uses costs nothing because it already exists. pi's print mode
+ * writes EVERY session event to stdout (print-mode.js: `session.subscribe(e =>
+ * writeRawStdout(JSON.stringify(toJsonEvent(e))))`), and a tool's `onUpdate`
+ * becomes a `tool_execution_update` event -- so a child running a command that
+ * prints emits parent-side traffic at that command's own cadence. measured
+ * end-to-end against a real child ticking every 5s: max gap between stdout
+ * events 5.1s. a child frozen inside a hung command emits nothing at all.
+ *
+ * so this watches RAW BYTES on stdout/stderr rather than parsed events -- most
+ * of the traffic (`tool_execution_update`, `message_update`) is deliberately
+ * ignored by `processLine` below, and counting only the events we parse would
+ * blind the watchdog to exactly the streaming that proves liveness.
+ *
+ * it is a BACKSTOP, not the primary guard. bash bounds its own commands (a
+ * declared timeout, ceiling 600s, plus an idle kill at 300s), so this window
+ * sits well above any legal command and can never race one. when it fires it
+ * means the child froze somewhere that is not bash: a model API call, a fetch
+ * with no timeout, a deadlock.
+ *
+ * WHY 900s AND NOT LESS -- the longest stretch a HEALTHY child can legitimately
+ * stay silent, measured against pi 0.84.1's own defaults:
+ *
+ *   pi's HTTP idle timeout        300s   http-dispatcher.js DEFAULT_HTTP_IDLE_TIMEOUT_MS
+ *   provider retry delay (cap)     60s   settings-manager getProviderRetrySettings
+ *   agent-turn retry backoff        8s   maxRetries 3 x baseDelayMs 2000, and it
+ *                                        emits `auto_retry_start` BEFORE sleeping,
+ *                                        so the parent sees traffic either way
+ *   our own bash idle kill        300s   bash.ts, bounds any silent command first
+ *
+ * worst realistic case is a stream idling to pi's own 300s limit and then
+ * backing off: ~360s. 900s is 2.5x that. shrink this only after re-checking
+ * those four numbers -- an over-eager window kills working children, which is a
+ * worse failure than the one it prevents.
+ */
+const DEFAULT_STALL_SEC = 900;
+const STALL_TICK_MS = 30_000;
+
+/**
+ * how long after a kill we still wait for `proc.on("close")` before returning
+ * anyway.
+ *
+ * killing is not the same as being released. `close` fires when the child exits
+ * AND its stdio pipes close, and a grandchild that inherited stdout holds those
+ * pipes open after the child itself is gone -- so SIGKILL can succeed while the
+ * parent goes on waiting forever, which is precisely the failure this watchdog
+ * exists to end. found by the stall test: the watchdog fired correctly at 1s and
+ * `piSpawn` still returned at 60s.
+ *
+ * the child is NOT spawned `detached`, deliberately: a detached child sits in
+ * its own process group and would no longer receive the terminal's SIGINT, so
+ * Ctrl+C would leave orphaned sub-agents burning tokens. keeping it in our group
+ * and force-releasing here is the safer half of that trade.
+ */
+const FORCE_RELEASE_MS = 10_000;
+
+/**
+ * one tick observing this much wall time means the machine slept, not that the
+ * child died. same guard, same reasoning, as bash.ts's idle watchdog: a
+ * spurious reset grants one more window, a missing guard kills a healthy child
+ * the moment the lid opens.
+ */
+const SLEEP_JUMP_MS = 60_000;
+
+function stallSec(): number {
+	const raw = process.env.PI_SPAWN_STALL_SEC;
+	if (raw === undefined || raw.trim() === "") return DEFAULT_STALL_SEC;
+	const parsed = Number(raw);
+	if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_STALL_SEC;
+	return Math.floor(parsed);
+}
 
 // --- tool name aliases ---
 
@@ -400,6 +484,15 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 
 	let tmpPromptDir: string | null = null;
 	let tmpPromptPath: string | null = null;
+	/*
+	 * declared OUT here, not in the try below, because `finally` cannot see a
+	 * binding scoped to the try block -- and `finally` is the one place that runs
+	 * after both of the promise's resolve paths (`close` and `error`), so it is
+	 * where the interval has to be cleared for the timer to be unleakable.
+	 */
+	let watchdog: ReturnType<typeof setInterval> | undefined;
+	/** see FORCE_RELEASE_MS. hoisted for the same reason as `watchdog`. */
+	let releaseTimer: ReturnType<typeof setTimeout> | undefined;
 
 	const result: PiSpawnResult = {
 		exitCode: 0,
@@ -469,6 +562,13 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		};
 
 		let wasAborted = false;
+		/*
+		 * hoisted out of the promise executor so the `finally` below can clear the
+		 * interval. the promise has exactly two resolve paths -- `proc.on("close")`
+		 * and `proc.on("error")` -- and `finally` runs after either, so one
+		 * clearInterval covers both and the timer cannot outlive the spawn.
+		 */
+		let stalled = false;
 		const debugEnabled = !!process.env.PI_SPAWN_DEBUG;
 		const debug = (label: string, data?: Record<string, unknown>) => {
 			if (!debugEnabled) return;
@@ -489,6 +589,54 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 
 			// RPC state: track end_turns to know when to kill
 			let endTurnCount = 0;
+
+			const stallMs = stallSec() * 1000;
+			let lastActivity = Date.now();
+			let lastStallTickAt = Date.now();
+			/*
+			 * set the moment we kill for ANY reason (stall or user abort). the
+			 * watchdog then doubles as the release backstop, so no second timer is
+			 * needed and `finally`'s single clearInterval still covers everything.
+			 */
+			let killedAt: number | undefined;
+			let released = false;
+			/*
+			 * arm the release backstop. its own timer rather than a phase of the
+			 * watchdog interval: the interval's period scales with the stall window
+			 * (30s at the 15m default), so folding the grace into it made the actual
+			 * release land anywhere between 10s and 40s after the kill. a dedicated
+			 * timer means FORCE_RELEASE_MS means what it says.
+			 *
+			 * idempotent — several kill paths can fire for one child.
+			 */
+			const scheduleRelease = () => {
+				if (releaseTimer !== undefined) return;
+				releaseTimer = setTimeout(() => {
+					if (released) return;
+					released = true;
+					debug("force_release", { afterMs: FORCE_RELEASE_MS });
+					resolve(1);
+				}, FORCE_RELEASE_MS);
+			};
+			if (stallMs > 0) {
+				watchdog = setInterval(() => {
+					const now = Date.now();
+					// already killed by this or any other path: the release timer owns
+					// what happens next, and re-killing would only queue redundant
+					// signals at a process on its way out.
+					if (killedAt !== undefined) return;
+					const verdict = watchdogVerdict(now, lastStallTickAt, lastActivity, stallMs, SLEEP_JUMP_MS);
+					lastStallTickAt = now;
+					if (verdict === "slept") { lastActivity = now; return; }
+					if (verdict === "wait") return;
+					stalled = true;
+					killedAt = now;
+					debug("kill_stalled", { stallMs });
+					scheduleRelease();
+					proc.kill("SIGTERM");
+					setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 5000);
+				}, watchdogTickMs(stallMs, STALL_TICK_MS));
+			}
 
 			// send initial prompt via RPC stdin, then immediately queue follow_up.
 			// follow_up is queued (not delivered) until the agent is idle, so the
@@ -548,6 +696,10 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 							endTurnCount++;
 							if (endTurnCount >= expectedTurns) {
 								debug("kill_after_turn", { endTurnCount });
+								// same release grace as every other kill: a child that
+								// finished normally must not hang on a stuck pipe.
+								killedAt ??= Date.now();
+								scheduleRelease();
 								proc.kill("SIGTERM");
 								setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 5000);
 							}
@@ -556,6 +708,8 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 						// RPC: if agent errors, terminate immediately
 						if (useRpc && (stopReason === "error" || stopReason === "aborted")) {
 							debug("kill_after_error", { stopReason });
+							killedAt ??= Date.now();
+							scheduleRelease();
 							proc.kill("SIGTERM");
 							setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 5000);
 						}
@@ -571,6 +725,8 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			};
 
 			proc.stdout.on("data", (data: Buffer) => {
+				if (released) return;
+				lastActivity = Date.now();
 				buffer += data.toString();
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
@@ -578,11 +734,17 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			});
 
 			proc.stderr.on("data", (data: Buffer) => {
+				if (released) return;
+				lastActivity = Date.now();
 				result.stderr += data.toString();
 			});
 
 			proc.on("close", (code) => {
-				if (buffer.trim()) processLine(buffer);
+				// `released` means the promise already resolved and the caller holds
+				// `result`. parsing a trailing line now would mutate an object that has
+				// been handed off — the same class as the stale-ctx timer crash this
+				// repo has already been bitten by once.
+				if (!released && buffer.trim()) processLine(buffer);
 				resolve(code ?? 0);
 			});
 
@@ -591,6 +753,10 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			if (config.signal) {
 				const killProc = () => {
 					wasAborted = true;
+					// release backstop applies to a user abort too: Esc must free the
+					// parent even when a grandchild is holding the child's stdout.
+					killedAt ??= Date.now();
+					scheduleRelease();
 					proc.kill("SIGTERM");
 					setTimeout(() => {
 						if (!proc.killed) proc.kill("SIGKILL");
@@ -606,12 +772,32 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			result.exitCode = 1;
 			result.stopReason = "aborted";
 		}
+		/*
+		 * after `wasAborted`, so a user's Esc is never relabelled as a stall.
+		 *
+		 * the message says RELAUNCH, never resume, and that is not hedging: pi
+		 * restores a session verbatim (sdk.js) and its only trailing-assistant trim
+		 * is gated on stopReason "error"/"length", NOT "toolUse" (agent-session.js).
+		 * a child killed mid-tool-call therefore leaves a `tool_use` block with no
+		 * matching `tool_result`, and replaying that history is a 400 from the
+		 * provider. there is no repair logic anywhere in pi. telling the model to
+		 * resume would be telling it to do something that cannot work.
+		 */
+		if (stalled) {
+			result.exitCode = 1;
+			result.stopReason = "stalled";
+			result.errorMessage =
+				`sub-agent killed: no output for ${Math.round(stallSec() / 60)}m. ` +
+				"Launch a fresh one for the remaining work — this child cannot be resumed.";
+		}
 		// RPC processes are killed intentionally — don't treat SIGTERM exit as error
 		if (useRpc && result.exitCode !== 0 && (result.stopReason === "end_turn" || result.stopReason === "stop")) {
 			result.exitCode = 0;
 		}
 		return result;
 	} finally {
+		if (watchdog) clearInterval(watchdog);
+		if (releaseTimer) clearTimeout(releaseTimer);
 		if (tmpPromptPath) try { fs.unlinkSync(tmpPromptPath); } catch { /* ignore */ }
 		if (tmpPromptDir) try { fs.rmdirSync(tmpPromptDir); } catch { /* ignore */ }
 	}

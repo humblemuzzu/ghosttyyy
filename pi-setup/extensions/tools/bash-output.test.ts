@@ -23,7 +23,7 @@ describe("bash tool output formatting", () => {
 		it("shows command in output header", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "hello world"` },
+				{ cmd: `echo "hello world"`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -36,7 +36,7 @@ describe("bash tool output formatting", () => {
 		it("shows full command including args", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `ls -la /tmp` },
+				{ cmd: `ls -la /tmp`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -51,7 +51,7 @@ describe("bash tool output formatting", () => {
 		it("shows all output when small", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "line 1"; echo "line 2"; echo "line 3"` },
+				{ cmd: `echo "line 1"; echo "line 2"; echo "line 3"`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -67,7 +67,7 @@ describe("bash tool output formatting", () => {
 		it("handles no output gracefully", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `true` }, // succeeds with no output
+				{ cmd: `true`, timeout: 30 }, // succeeds with no output
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -84,7 +84,7 @@ describe("bash tool output formatting", () => {
 			// generate 200 lines
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `for i in $(seq 1 200); do echo "line $i"; done` },
+				{ cmd: `for i in $(seq 1 200); do echo "line $i"; done`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -116,7 +116,7 @@ describe("bash tool output formatting", () => {
 		it("shows exit code on failure", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "some output"; exit 42` },
+				{ cmd: `echo "some output"; exit 42`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -130,7 +130,7 @@ describe("bash tool output formatting", () => {
 		it("no exit code on success", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "success"` },
+				{ cmd: `echo "success"`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -146,7 +146,7 @@ describe("bash tool output formatting", () => {
 		it("captures both stdout and stderr", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "stdout"; echo "stderr" >&2` },
+				{ cmd: `echo "stdout"; echo "stderr" >&2`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -164,7 +164,7 @@ describe("bash tool output formatting", () => {
 			// NEW BEHAVIOR: head (first N lines) + tail
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `for i in $(seq 1 100); do echo "output line $i"; done` },
+				{ cmd: `for i in $(seq 1 100); do echo "output line $i"; done`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -186,7 +186,7 @@ describe("bash tool output formatting", () => {
 			// NEW BEHAVIOR: starts with "$ <cmd>"
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "test"` },
+				{ cmd: `echo "test"`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -206,7 +206,7 @@ describe("bash tool output formatting", () => {
 		it("head lines appear before tail lines in truncated output", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `for i in $(seq 1 150); do echo "line $i"; done` },
+				{ cmd: `for i in $(seq 1 150); do echo "line $i"; done`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -229,7 +229,7 @@ describe("bash tool output formatting", () => {
 		it("handles command with special characters", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `echo "special: 'quotes' and \"double\" and \$var"` },
+				{ cmd: `echo "special: 'quotes' and \"double\" and \$var"`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -242,7 +242,7 @@ describe("bash tool output formatting", () => {
 		it("handles very long single line", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `python3 -c "print('x' * 10000)"` },
+				{ cmd: `python3 -c "print('x' * 10000)"`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
@@ -256,7 +256,7 @@ describe("bash tool output formatting", () => {
 		it("handles many short lines", async () => {
 			const result = await tool.execute!(
 				"test-id",
-				{ cmd: `for i in $(seq 1 500); do echo "x"; done` },
+				{ cmd: `for i in $(seq 1 500); do echo "x"; done`, timeout: 30 },
 				undefined,
 				undefined,
 				mockCtx as any,
