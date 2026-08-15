@@ -29,6 +29,10 @@
       "enabled": false,
       "fetchStatus": false
     },
+    "grok": {
+      "enabled": "auto",
+      "fetchStatus": false
+    },
     "zai": {
       "enabled": "auto",
       "fetchStatus": false
@@ -53,6 +57,7 @@
     "antigravity",
     "codex",
     "kiro",
+    "grok",
     "anthropic"
   ],
   "defaultProvider": "anthropic"

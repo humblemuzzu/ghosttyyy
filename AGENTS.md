@@ -916,7 +916,7 @@ the source is patched rather than healed after the fact. 7 copies now: 4 loaded,
 | `@benvargas/pi-claude-code-use` | 1.0.5 | API payload shim for Claude Max OAuth use (system prompt + tool-name compatibility) (primary Claude method) | No |
 | `pi-context` | 2.1.2 | Context management: context_checkpoint, context_timeline, context_compact | No |
 | `pi-token-burden` | 0.6.5 | Token usage tracking and display | No |
-| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | No (**config**: see below) |
+| `@marckrenn/pi-sub-bar` | 1.5.0 | Usage widget — shows provider quotas in status bar | **Local patch**: grok provider (`pi-setup/pi-sub-patches/`) |
 | `pi-autoresearch` | 1.6.2 | Autonomous experiment loop for optimization targets (GitHub install) | No |
 | `pi-tool-display` | 0.5.0 | Compact tool rendering, thinking labels, user message box | **Config** |
 | `pi-codex-goal` | 0.2.0 | Codex-style `/goal` — autonomous multi-turn objectives with completion audit | No |
@@ -2676,15 +2676,15 @@ When pi or any package gets updated:
 
 2. **condensed-milk-pi**: REMOVED 2026-07-30 — do not reinstall. See "condensed-milk-pi: REMOVED" above for why (it reported failed git commands as successes).
 
-3. **pi-sub-bar / pi-sub-core updated**: no code patches, but the settings files
-   must only name providers the installed version actually ships. As of
-   **pi-sub-core 1.5.0** those are exactly:
+3. **pi-sub-bar / pi-sub-core updated**: we ship a **local grok provider patch**
+   (`pi-setup/pi-sub-patches/`). `pi install` / `pi update --extensions`
+   restores stock copies and wipes it — re-run `install.sh` (or the cp block
+   in that file) after every sub-* update. Stock upstream providers are:
 
    `anthropic, copilot, gemini, antigravity, codex, kiro, zai`
 
-   There is **no `kimi` and no `crofai`** — an earlier note here claimed they
-   were "built-in as of v1.5.0", which was wrong and cost a debugging session.
-   A provider named in `pi-sub-core-settings.json` that has no factory breaks
+   plus our local **`grok`**. There is **no `kimi` and no `crofai`**. A
+   provider named in `pi-sub-core-settings.json` that has no factory breaks
    the usage tools in two different ways:
 
    - in `providers{}` → `PROVIDER_FACTORIES[name] is not a function`
@@ -2694,7 +2694,13 @@ When pi or any package gets updated:
    After any pi-sub-* update, re-check both keys in
    `pi-sub-core-settings.json` **and** `pi-sub-bar-settings.json` against the
    `PROVIDER_FACTORIES` map in
-   `~/.pi/agent/npm/node_modules/@marckrenn/pi-sub-core/src/providers/registry.ts`.
+   `~/.pi/agent/npm/node_modules/@marckrenn/pi-sub-core/src/providers/registry.ts`,
+   and confirm `verify-patches.sh` still PASSes the grok check.
+
+   Grok reads `~/.grok/auth.json` (OIDC), refreshes via the issuer's token
+   endpoint when expired, and fetches
+   `GET {cli-chat-proxy}/billing?format=credits`. Windows: period %
+   (`Week`/`Month`/`Usage`) + optional `Grok Build` + prepaid `Extra $…`.
 
 4. **pi-tool-display updated**: Config file at `~/.pi/agent/extensions/pi-tool-display/config.json` is NOT touched by npm updates. But if you delete and reinstall, **recreate the config** with all tool overrides set to `false`. Without it, pi-tool-display overwrites our custom tools.
 
@@ -2716,7 +2722,13 @@ node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs
 
 # condensed-milk — REMOVED 2026-07-30, nothing to re-apply. Do not reinstall.
 
-# pi-sub-bar — no patches needed (re-check provider names in pi-sub-core-settings.json against the installed version after any update; see Update Workflow #3)
+# pi-sub grok provider (wiped by pi install / pi update --extensions)
+SUB_NM="$HOME/.pi/agent/npm/node_modules/@marckrenn"
+cp pi-setup/pi-sub-patches/pi-sub-shared-index.ts "$SUB_NM/pi-sub-shared/index.ts"
+cp pi-setup/pi-sub-patches/registry.ts "$SUB_NM/pi-sub-core/src/providers/registry.ts"
+cp pi-setup/pi-sub-patches/grok.ts "$SUB_NM/pi-sub-core/src/providers/impl/grok.ts"
+cp pi-setup/pi-sub-patches/bar-metadata.ts "$SUB_NM/pi-sub-bar/src/providers/metadata.ts"
+cp pi-setup/pi-sub-patches/bar-settings-types.ts "$SUB_NM/pi-sub-bar/src/settings-types.ts"
 
 # pi-tool-display config (verify exists, recreate if missing)
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json

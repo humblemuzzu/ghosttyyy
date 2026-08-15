@@ -258,6 +258,31 @@ else
     warn "pi core dist or patch files missing — apply pi-core-patches manually"
 fi
 
+# ── pi-sub grok provider patch ──
+# Local addition of a Grok usage provider to pi-sub-core/shared/bar. Upstream
+# has no provider plugin hook — PROVIDER_FACTORIES is a hardcoded map — so the
+# only way in is patching the installed package copies after every `pi install`.
+# Stock copies are restored by `pi update --extensions`; re-run install.sh (or
+# the cp block below) after any sub-bar/sub-core update.
+SUB_NM="$PI_AGENT/npm/node_modules/@marckrenn"
+SUB_PATCH="$SCRIPT_DIR/pi-sub-patches"
+if [ -d "$SUB_NM/pi-sub-core" ] && [ -d "$SUB_PATCH" ]; then
+    info "Applying pi-sub grok provider patch..."
+    [ -f "$SUB_PATCH/pi-sub-shared-index.ts" ] && \
+        cp "$SUB_PATCH/pi-sub-shared-index.ts" "$SUB_NM/pi-sub-shared/index.ts"
+    [ -f "$SUB_PATCH/registry.ts" ] && \
+        cp "$SUB_PATCH/registry.ts" "$SUB_NM/pi-sub-core/src/providers/registry.ts"
+    [ -f "$SUB_PATCH/grok.ts" ] && \
+        cp "$SUB_PATCH/grok.ts" "$SUB_NM/pi-sub-core/src/providers/impl/grok.ts"
+    [ -f "$SUB_PATCH/bar-metadata.ts" ] && \
+        cp "$SUB_PATCH/bar-metadata.ts" "$SUB_NM/pi-sub-bar/src/providers/metadata.ts"
+    [ -f "$SUB_PATCH/bar-settings-types.ts" ] && \
+        cp "$SUB_PATCH/bar-settings-types.ts" "$SUB_NM/pi-sub-bar/src/settings-types.ts"
+    ok "pi-sub grok provider patch applied"
+else
+    warn "pi-sub packages or pi-sub-patches missing — grok usage provider not installed"
+fi
+
 # ── pi-tool-display config ──
 TOOL_DISPLAY_CONFIG="$PI_AGENT/extensions/pi-tool-display/config.json"
 if [ -f "$SCRIPT_DIR/extensions/pi-tool-display/config.json" ]; then

@@ -101,6 +101,14 @@
         "showCredits": true
       }
     },
+    "grok": {
+      "showStatus": false,
+      "windows": {
+        "showWeek": true,
+        "showBuild": true,
+        "showExtra": true
+      }
+    },
     "zai": {
       "showStatus": false,
       "windows": {

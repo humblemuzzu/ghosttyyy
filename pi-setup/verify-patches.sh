@@ -98,6 +98,19 @@ else
          "cp pi-setup/extensions/tools/lib/pi-spawn.ts ~/.pi/agent/extensions/tools/lib/pi-spawn.ts"
 fi
 
+# ── pi-sub: grok usage provider (local patch) ──
+# Factory + PROVIDERS entry must land together. A settings entry without the
+# factory throws PROVIDER_FACTORIES[name] is not a function on every refresh.
+SUB_NM="$PI_AGENT/npm/node_modules/@marckrenn"
+if grep -q 'grok: () => new GrokProvider' "$SUB_NM/pi-sub-core/src/providers/registry.ts" 2>/dev/null && \
+   grep -q '"grok"' "$SUB_NM/pi-sub-shared/index.ts" 2>/dev/null && \
+   [ -f "$SUB_NM/pi-sub-core/src/providers/impl/grok.ts" ]; then
+    pass "pi-sub: grok provider factory + shared PROVIDERS entry"
+else
+    fail "pi-sub: grok provider patch missing" \
+         "re-run pi-setup/install.sh (pi-sub-patches block) or cp pi-setup/pi-sub-patches/* into ~/.pi/agent/npm/node_modules/@marckrenn/"
+fi
+
 # ── shiki-diff: pi-diff render pipeline (edit/write syntax-highlighted diffs) ──
 # The edit/write tools call @heyhuynhgiabuu/pi-diff's __testing render functions.
 # They fall back to the plain box renderer if this breaks, so it's non-fatal —
