@@ -66,33 +66,35 @@ function resolveRules(): string {
 export default function guardrailsExtension(pi: ExtensionAPI): void {
 	if (process.env.PI_GUARDRAILS_OFF === "1") return;
 
-	const rules = resolveRules();
+	pi.on("context", async (event) => {
+		/*
+		 * Previous injections are stripped before the current one is added.
+		 * The handler receives a deep copy of the whole conversation, so
+		 * without this the block accumulates once per turn.
+		 */
+		const messages = event.messages.filter(
+			(message: { customType?: string }) => message.customType !== CUSTOM_TYPE,
+		);
 
-	if (rules) {
-		pi.on("context", async (event) => {
-			/*
-			 * Previous injections are stripped before the current one is added.
-			 * The handler receives a deep copy of the whole conversation, so
-			 * without this the block accumulates once per turn.
-			 */
-			const messages = event.messages.filter(
-				(message: { customType?: string }) => message.customType !== CUSTOM_TYPE,
-			);
+		// Read per call, not once at load: a boot-time constant means every rules
+		// edit needs a restart, and a stale block is indistinguishable from one
+		// the model ignored.
+		const rules = resolveRules();
+		if (!rules) return { messages };
 
-			return {
-				messages: [
-					...messages,
-					{
-						role: "custom",
-						customType: CUSTOM_TYPE,
-						content: rules,
-						display: false,
-						timestamp: Date.now(),
-					},
-				],
-			};
-		});
-	}
+		return {
+			messages: [
+				...messages,
+				{
+					role: "custom",
+					customType: CUSTOM_TYPE,
+					content: rules,
+					display: false,
+					timestamp: Date.now(),
+				},
+			],
+		};
+	});
 
 	pi.on("tool_call", async (event) => {
 		if (event.toolName !== GATED_TOOL) return;
