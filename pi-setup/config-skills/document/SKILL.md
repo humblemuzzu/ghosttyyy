@@ -1,88 +1,69 @@
 ---
 name: document
-description: apply documentation philosophy — explain why, not what. use for jsdocs, READMEs, inline comments.
+description: documentation rules — almost nothing in code, real prose in READMEs. use when writing a README or when deciding whether a comment earns its place.
 ---
 
 # document
 
-apply documentation philosophy: explain why, not what.
+the default is no comment. this skill is mostly about what not to write.
 
-## when to use
+## the bar
 
-- writing jsdocs for components or functions
-- updating README or project docs
-- adding inline comments during implementation
-- reviewing existing documentation for cleanup
+a comment earns its place only if a careful reader, looking at the code with
+no other context, would **misread** it without the comment.
 
-## workflow
+not "would find it helpful". not "would take a moment longer". misread.
 
-1. check if documentation is needed — if it describes obvious behavior, skip it
-2. identify the non-obvious why: design constraints, behavioral consequences, inheritance warnings
-3. write terse, lowercase prose
-4. delete anything that merely restates the code
+if you cannot name the specific wrong conclusion the reader would draw, there
+is no comment to write.
 
-## quick reference: why over what
+## never write
 
-**delete this:**
+- what the code does — the names already say it
+- anything about the task, the ticket, the fix, or who calls it. it belongs in
+  your message to the user, and it rots in the file the moment anything moves
+- a header block summarising a file. the exports are the summary
+- a restatement of the type
+- `@param` / `@example` blocks that repeat the signature
+- a comment on a constant whose name is already the explanation
+
+## write, rarely
+
+- a workaround: what breaks without it, in one line
+- an invariant the code relies on but does not state
+- a constraint from outside the file (an api limit, a wire format, a race)
+- a warning where the obvious edit is the wrong one
+
+## length
+
+one line. two if the why genuinely needs a second.
+
+more than that is an essay, and an essay in a source file is a sign the code
+should be clearer instead. a change that is mostly commentary will be refused
+before it lands.
+
 ```typescript
+// good — names the failure, one line
+// undici 8.x closes the socket on a 204, so the retry has to rebuild the agent.
+
+// bad — restates the code
 /** context provider that wraps children in a DisclosureProvider. */
+
+// bad — task context, rots immediately
+/** added for the detect-health flow, see PR #13. handles the case where … */
 ```
 
-**keep this:**
-```typescript
-/**
- * blocks CompositeContext so nested Lists create isolated focus loops.
- * essential for "Simple API" goal — our List is "greedy" and would
- * otherwise join parent's arrow-key navigation.
- */
-```
+## readmes are different
 
-## what to document
+prose docs are for readers who do not have the code open, so they carry the
+context that must stay out of the source. write them properly:
 
-- design rationale and constraints
-- context shadowing / inheritance warnings
-- non-obvious behavioral consequences
-- internal decisions affecting correctness
+- what it is, in a sentence
+- how to run it
+- the decisions a reader would otherwise have to reverse-engineer
+- lowercase, terse, no unsupported claims, describe rather than emote
 
-## what to delete
+## cleanup
 
-- obvious behavior ("renders a button")
-- what the function name already says
-- what types already express
-
-## jsdoc structure
-
-```typescript
-/**
- * one-line description of purpose or behavior.
- *
- * additional context if design rationale is complex (keep brief).
- *
- * @prop propName - what it does
- * @example
- * ```tsx
- * <Component>content</Component>
- * ```
- */
-```
-
-## maintainer notes
-
-preserve `@bdsqqq notes` or similar when they explain non-obvious decisions:
-
-```typescript
-/**
- * @bdsqqq notes: alpha colors avoided for strokes due to compounding
- * overlap issues at intersection points.
- */
-```
-
-## colocate context with code
-
-jsdocs are source of truth. upon finishing a task, colocate valuable context as jsdocs — only notes that explain non-obvious why. delete everything else.
-
-## tone
-
-- lowercase only (ALL CAPS for emphasis)
-- terse, no unsupported claims
-- specific over general; describe, don't emote
+when you touch a file that is already over-commented, delete the comments that
+fail the bar above. leave the ones that pass.

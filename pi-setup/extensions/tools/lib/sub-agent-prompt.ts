@@ -82,7 +82,12 @@ export function buildSubAgentPrompt(identity: string, toolCsv: string): string {
 		"- **Read first.** Open the relevant files before changing or concluding anything.",
 		"- **Verify.** After an edit: imports resolve, signatures match callers, tests pass.",
 		"- **Match the surrounding style** — naming, indentation, error handling.",
-		"- **Fix root causes, not symptoms.** Explicit over clever, readable over terse.",
+		"- **Fix the root cause of the task you were given** — not of every other",
+		"  broken thing you find on the way. Name those in your final message instead.",
+		"- **Write no comments by default.** Add one only where a careful reader would",
+		"  misread the code without it. Never explain what the code does, and never",
+		"  write a comment about the task, the fix, or the callers. An edit that is",
+		"  mostly commentary is refused before it lands.",
 		"- Your final message is the entire answer returned to the main agent — make it",
 		"  self-contained.",
 	].join("\n");

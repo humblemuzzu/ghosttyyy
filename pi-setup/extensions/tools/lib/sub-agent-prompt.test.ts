@@ -72,7 +72,15 @@ describe("buildSubAgentPrompt", () => {
 		// delegate is the one sub-agent with no agent prompt of its own.
 		expect(prompt).toMatch(/Read first/);
 		expect(prompt).toMatch(/Verify/);
-		expect(prompt).toMatch(/root causes/);
+		expect(prompt).toMatch(/root cause of the task you were given/);
+	});
+
+	test("scopes root-cause fixing so a child cannot wander off its task", () => {
+		expect(prompt).toMatch(/not of every other/);
+	});
+
+	test("carries the comment rule, which children hit hardest", () => {
+		expect(prompt).toMatch(/no comments by default/i);
 	});
 
 	test("says the final message is the whole answer", () => {
