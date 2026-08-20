@@ -9,7 +9,7 @@
 #   ./install.sh
 #
 # What it installs:
-#   ~/.pi/agent/extensions/     — custom extensions (editor, tools, mentions, todos, md-export, etc.)
+#   ~/.pi/agent/extensions/     — custom extensions (editor, tools, mentions, md-export, etc.)
 #   ~/.pi/agent/themes/         — gruvbox + nightowl themes
 #   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, sub-agents, etc.)
 #   ~/.pi/agent/skills/         — pi-level skills
@@ -21,7 +21,7 @@
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
 #   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
 #   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
-#   pi packages (npm/git)       — context, token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
+#   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
 #
 # NO global npm packages are installed. Every pi package lives in
 # ~/.pi/agent/npm/node_modules (installed by `pi install`), which is the ONLY
@@ -194,7 +194,6 @@ info "Installing pi packages..."
 # Mirror of settings.json "packages" (source of truth). pi-claude-bridge is NOT
 # here — it's a legacy fallback installed globally above, not an active package.
 packages=(
-    "npm:pi-context"
     "npm:pi-token-burden"
     "npm:@benvargas/pi-claude-code-use"
     "npm:@marckrenn/pi-sub-bar"
@@ -203,8 +202,9 @@ packages=(
     "npm:pi-codex-goal"
     "npm:pi-mcp-adapter"
 )
-# NOTE: pi-web-access, pi-tasks and @tomooshi/condensed-milk-pi were removed
-# deliberately on 2026-07-30 — do NOT re-add them here. See AGENTS.md.
+# NOTE: pi-context, todos.ts, pi-web-access, pi-tasks and
+# @tomooshi/condensed-milk-pi were removed deliberately — do NOT re-add them
+# here. See AGENTS.md.
 # pi-web-access was still listed above until 2026-08-05, directly contradicting
 # this comment: any fresh `install.sh` run silently reinstalled the package the
 # rest of the setup assumes is gone, and its `web_search` collides with ours.

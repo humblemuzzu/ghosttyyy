@@ -41,7 +41,6 @@ disable one, delete it or move it out of `extensions/`.
 | `session-breakdown.ts` | `/session-breakdown` — visual analytics (sessions/day, cost, tokens, model breakdown) |
 | `md-export.ts` | `/md` — exports the current session branch to readable markdown (clipboard or file) |
 | `notify.ts` | Desktop notification when the agent finishes (OSC 777) |
-| `todos.ts` | `todo` tool + `/todos` — file-based todo manager with TUI |
 | `command-palette/` | `Ctrl+Shift+P` command-palette overlay |
 | `subagent-inspector/` | `Ctrl+Shift+A` / `/subagents` — drill into a sub-agent's live transcript |
 | `local-model.ts` | `/local` — start/stop the llama.cpp router |
@@ -67,7 +66,7 @@ it replaced `edit`/`write`, and pi's natives are hidden at session start.
 - `delegate` — full resumable sub-agent (parent model) for parallel independent work
 - `read_web_page` — web page reader + optional Q&A child
 - `read_session` / `search_sessions` — past-session reader / search
-- `screenshot`, `web_search` (Parallel AI), `agent_message`, `redo_edit`, `todo` (from the `todos.ts` extension)
+- `screenshot`, `web_search` (Parallel AI), `agent_message`, `redo_edit`
 
 **New GitHub tools** (GitHub API): `read_github`, `search_github`, `list_directory_github`,
 `glob_github`, `list_repositories`, `commit_search`, `diff`
@@ -119,7 +118,7 @@ fallback only** — not in the active `packages`. See `AGENTS.md` → "pi-claude
 `c-sqr` (cursor — strict quality review), `mat-cr2axis` / `mat-design` / `mat-tdd` (matt pocock).
 Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
 (`find-skills` + `userinterface-wiki` are pi-package-managed symlinks, auto-created on install;
-`context-management` comes from pi-context, 3 `autoresearch-*` from pi-autoresearch — 29 total.)
+3 `autoresearch-*` from pi-autoresearch — 29 total.)
 
 ### Settings
 - Default provider/model: `anthropic` / `claude-opus-5`
@@ -131,12 +130,12 @@ Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
 - Blocks force push
 - Blocks `rm` (use `trash` instead)
 
-### Pi Packages (8, active)
-`pi-context`, `pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`,
+### Pi Packages (7, active)
+`pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`,
 `pi-autoresearch`, `pi-tool-display` (config'd), `pi-codex-goal`, `pi-mcp-adapter`.
 See `AGENTS.md` → "Packages (npm)" for versions, purposes, and which are patched.
-(`pi-web-access`, `pi-tasks`, `@tomooshi/condensed-milk-pi`, `@sting8k/pi-vcc`, `pi-computer-use`,
-`pi-gpt-config`, `pi-ask` were removed — do not reinstall.)
+(`pi-context`, `todos.ts`, `pi-web-access`, `pi-tasks`, `@tomooshi/condensed-milk-pi`,
+`@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask` were removed — do not reinstall.)
 
 ## Directory Structure
 
@@ -151,14 +150,14 @@ pi-setup/
 ├── pi-sub-bar-settings.json    # sub-bar widget layout
 ├── pi-sub-core-settings.json   # sub-core provider/refresh config
 ├── verify-patches.sh           # Read-only audit of every patch/config
-├── extensions/                 # 12 extensions + tools/ suite
+├── extensions/                 # extensions + tools/ suite
 │   ├── editor/                 # Custom TUI editor
 │   ├── command-palette/        # Ctrl+Shift+P palette
 │   ├── subagent-inspector/     # Ctrl+Shift+A sub-agent transcript inspector
 │   ├── tools/                  # 29 custom tools + shared lib/
 │   ├── pi-tool-display/        # config.json (all tool overrides false — required)
 │   ├── system-prompt.ts  mentions.ts  session-name.ts  session-breakdown.ts
-│   ├── md-export.ts  notify.ts  todos.ts  local-model.ts
+│   ├── md-export.ts  notify.ts  local-model.ts
 │   └── kimi-code-token.mjs     # Kimi Code OAuth helper (not an extension)
 ├── agents/                     # 9 agent prompt markdown files
 ├── themes/                     # gruvbox.json, nightowl.json

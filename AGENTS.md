@@ -137,7 +137,6 @@ not `mcpScript`; skills must not contain `mcp-scripting`.
 |---|---|---|---|
 | `@earendil-works/pi-coding-agent` | 0.84.2 | pi itself | 3 core patches |
 | `@benvargas/pi-claude-code-use` | **1.0.5 (held)** | Claude Max OAuth payload shim | no |
-| `pi-context` | 2.1.2 | checkpoint / timeline / compact | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
 | `pi-autoresearch` | 1.6.2 | experiment loop (git install) | no |
@@ -155,12 +154,13 @@ package (git-installed, wiped on update).
 
 ### Removed — do not reinstall
 
-`pi-web-access` (web_search 100% dead), `pi-tasks` (array params arrived
-JSON-stringified, every gated tool unreachable), `@tomooshi/condensed-milk-pi`
-(**reported failed git commands as successes**; `verify-patches.sh` fails loudly
-if a copy reappears), plus `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`,
-`pi-ask`, `pi-grok-cli`, `pi-claude-bridge`, `lsp-pi`, `pi-powerline-footer`,
-`pi-anycopy`.
+`pi-context` (agent checkpoint/timeline/compact spam; built-in `/compact`
+covers real need), `todos.ts` (file-based todo tool + TUI, unused), `pi-web-access`
+(web_search 100% dead), `pi-tasks` (array params arrived JSON-stringified, every
+gated tool unreachable), `@tomooshi/condensed-milk-pi` (**reported failed git
+commands as successes**; `verify-patches.sh` fails loudly if a copy reappears),
+plus `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask`, `pi-grok-cli`,
+`pi-claude-bridge`, `lsp-pi`, `pi-powerline-footer`, `pi-anycopy`.
 
 ### One install, no duplicates
 
@@ -217,7 +217,7 @@ uses `command`/`args`, HTTP uses `url` + optional `headers`/`auth`.
 
 ---
 
-## Extensions (14, all in `extensions/`)
+## Extensions (13, all in `extensions/`)
 
 pi auto-discovers every `.ts` here — there is **no** disabled state. To disable,
 delete or move out. From a subdirectory pi loads **only `index.ts`**, which is
@@ -230,7 +230,6 @@ why tests can live beside an extension without being loaded.
 | `session-name.ts` | auto session naming (haiku, deliberately) |
 | `session-breakdown.ts` | `/session-breakdown` |
 | `notify.ts` | OSC 777 desktop notifications |
-| `todos.ts` | file-based todos |
 | `md-export.ts` | `/md` session → markdown |
 | `command-palette/` | Ctrl+Shift+P |
 | `editor/` | custom box-drawing editor, labels, clipboard image paste |
@@ -251,8 +250,7 @@ anti-comment rules. So the rules live in two places that survive that:
 - **`context` hook** re-appends `agents/rules.amp.md` before **every** model
   call, stripping its own prior copy first (it is a deep copy per turn, so
   without the strip the block accumulates). Edit the rules in that .md, never
-  in the extension. The SCOPE line's todo clause is swapped out for children
-  whose `--tools` lack `todo`.
+  in the extension.
 - **`tool_call` hook** blocks `apply_patch` when a change adds a comment run
   over 12 lines **or** more than 0.5 comment lines per line of code. Two
   triggers because one misses the other: a ratio check cannot see a 30-line
@@ -562,8 +560,8 @@ work — always timeout it.
 
 ## Skills
 
-**30 loadable by name**: 24 in `~/.config/agents/skills/` + `find-skills` +
-`userinterface-wiki` + `context-management` + 3 `autoresearch-*`.
+**29 loadable by name**: 24 in `~/.config/agents/skills/` + `find-skills` +
+`userinterface-wiki` + 3 `autoresearch-*`.
 `mcp-scripting` is deliberately suppressed.
 
 Six are external ports with author prefixes — **`s-` shadcn, `c-` cursor,
@@ -612,7 +610,7 @@ pi-setup/
 ├── port-harness/           # screenshot / permission / tier verification
 ├── agents/                 # 10 prompt templates
 ├── themes/  config-skills/  pi-skills/
-└── extensions/             # all 13 extensions incl. tools/ (29 tools + lib/)
+└── extensions/             # all 12 extensions incl. tools/ (29 tools + lib/)
 ```
 
 ---
@@ -639,7 +637,7 @@ pi-setup/
    function` in `providers{}`, `reading 'enabled'` in `providerOrder[]`) — only
    at refresh time, so boot looks clean.
 6. **pi-tool-display** → verify `config.json` still exists. The rest
-   (pi-context, pi-token-burden, pi-codex-goal, pi-autoresearch, pi-mcp-adapter)
+   (pi-token-burden, pi-codex-goal, pi-autoresearch, pi-mcp-adapter)
    are unpatched; check only for new tool/skill name collisions.
 
 Per-version record: `pi-setup/pi-migrations.md`. Read it before `pi update`.

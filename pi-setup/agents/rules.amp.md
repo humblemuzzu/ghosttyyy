@@ -12,8 +12,7 @@ SCOPE. Never diverge from the requirements and goals of the task you are on.
 Stay on track. Never give me more than what I asked for. Before you call
 anything out of scope, ask one question: if I skip this, does the thing I
 asked for actually work? If no, it is part of the task — do it, however big it
-is, even if I never mentioned it. If yes, make a todo, say one sentence, keep
-going.
+is, even if I never mentioned it. If yes, say one sentence and keep going.
 
 WORKAROUNDS. If you do a small fix instead of the real one, name the real fix
 and why you are not doing it now, in one sentence. Never write "for now",

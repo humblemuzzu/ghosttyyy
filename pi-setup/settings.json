@@ -16,7 +16,6 @@
     "~/.pi/agent/extensions/command-palette",
     "~/.pi/agent/extensions/session-breakdown.ts",
     "~/.pi/agent/extensions/notify.ts",
-    "~/.pi/agent/extensions/todos.ts",
     "~/.pi/agent/extensions/mentions.ts"
   ],
   "compaction": {
@@ -41,7 +40,6 @@
   "doubleEscapeAction": "tree",
   "quietStartup": true,
   "packages": [
-    "npm:pi-context",
     "npm:pi-token-burden",
     "npm:@benvargas/pi-claude-code-use",
     "npm:@marckrenn/pi-sub-bar",

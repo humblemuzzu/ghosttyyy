@@ -19,15 +19,10 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readAgentPrompt } from "../tools/lib/pi-spawn";
-import { parseToolList, SUB_AGENT_TOOLS_ENV } from "../tools/lib/sub-agent-prompt";
 import { DEFAULT_THRESHOLDS, judge, type Thresholds } from "./comment-gate";
 
 const CUSTOM_TYPE = "guardrails:rules";
 const GATED_TOOL = "apply_patch";
-
-/** The todo half of the SCOPE rule, dropped for children that have no todo tool. */
-const TODO_CLAUSE = "Make a todo, say one sentence, keep going.";
-const TODO_CLAUSE_WITHOUT_TOOL = "Say one sentence and keep going.";
 
 function envNum(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -44,23 +39,8 @@ function thresholds(): Thresholds {
 	};
 }
 
-/**
- * The rules text for this process, sub-agent wording included.
- *
- * A child is told to file a todo only when it actually has the tool. Naming a
- * tool a session does not have is how an agent burns a turn on a failed call.
- */
 function resolveRules(): string {
-	const body = readAgentPrompt("rules.amp.md").trim();
-	if (!body) return "";
-
-	const childTools = process.env[SUB_AGENT_TOOLS_ENV]?.trim();
-	if (!childTools) return body;
-
-	const tools = parseToolList(childTools);
-	if (tools.length === 0 || tools.includes("todo")) return body;
-
-	return body.replace(TODO_CLAUSE, TODO_CLAUSE_WITHOUT_TOOL);
+	return readAgentPrompt("rules.amp.md").trim();
 }
 
 export default function guardrailsExtension(pi: ExtensionAPI): void {

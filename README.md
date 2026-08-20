@@ -345,11 +345,10 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 
 ---
 
-## 📦 Packages (8 active)
+## 📦 Packages (7 active)
 
 | Package | Purpose | Patched? |
 |---------|---------|----------|
-| `pi-context` | Context management: `context_checkpoint`, `context_timeline`, `context_compact` | No |
 | `pi-token-burden` | Token usage tracking and display | No |
 | `@benvargas/pi-claude-code-use` | Claude Max subscription via OAuth payload rewrite | No |
 | `@marckrenn/pi-sub-bar` | Usage widget in status bar | No (**config**) |
@@ -358,11 +357,11 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | `pi-codex-goal` | Codex-style `/goal` — autonomous multi-turn objectives | No |
 | `pi-mcp-adapter` | On-demand MCP gateway — single `mcp` proxy tool | No (**config**) |
 
-**Removed (do not reinstall):** `pi-web-access` (dead `web_search` on every provider, replaced by our Parallel AI tool), `pi-tasks` (array params broken), `@tomooshi/condensed-milk-pi` (reported failed git commands as successes), `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask`. See `pi-setup/pi-migrations.md`.
+**Removed (do not reinstall):** `pi-context` (checkpoint/timeline/compact), `todos.ts` (file todo tool), `pi-web-access` (dead `web_search` on every provider, replaced by our Parallel AI tool), `pi-tasks` (array params broken), `@tomooshi/condensed-milk-pi` (reported failed git commands as successes), `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask`. See `pi-setup/pi-migrations.md`.
 
 ---
 
-## 🧩 Extensions (12 active)
+## 🧩 Extensions (11 active)
 
 | Extension | Purpose |
 |-----------|---------|
@@ -372,14 +371,13 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | `session-name.ts` | Auto-generates short session titles via Haiku |
 | `session-breakdown.ts` | `/session-breakdown` analytics |
 | `notify.ts` | Desktop notifications via OSC 777 |
-| `todos.ts` | File-based todo manager with full TUI |
 | `md-export.ts` | `/md` — session JSONL → markdown export |
 | `command-palette/` | Ctrl+Shift+P fuzzy command overlay |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
 | `local-model.ts` | `/local` — start/stop the llama.cpp router |
 | `tools/` | 29 custom tools (see below) |
 
-**Removed:** `tool-harness.ts` (replaced by piSpawn's native `--tools` allowlists), `handoff.ts`, `btw.ts`, `opencode-zen.ts`, `crof.ts`, `brain-loader.ts`. pi auto-discovers every `.ts`/dir in `~/.pi/agent/extensions/` — to disable one, delete it or move it out.
+**Removed:** `todos.ts`, `tool-harness.ts` (replaced by piSpawn's native `--tools` allowlists), `handoff.ts`, `btw.ts`, `opencode-zen.ts`, `crof.ts`, `brain-loader.ts`. pi auto-discovers every `.ts`/dir in `~/.pi/agent/extensions/` — to disable one, delete it or move it out.
 
 ---
 
@@ -435,7 +433,7 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ### Other tools
 
-`read_web_page`, `read_session`, `search_sessions`, `web_search` (Parallel AI), `screenshot`, `agent_message`, `todo`, `mcp`, plus GitHub (×7 — read, search, list-dir, list-repos, glob, commit-search, diff).
+`read_web_page`, `read_session`, `search_sessions`, `web_search` (Parallel AI), `screenshot`, `agent_message`, `mcp`, plus GitHub (×7 — read, search, list-dir, list-repos, glob, commit-search, diff).
 
 **Removed:** `look-at` (low quality). `pi-web-access` was removed 2026-07-30 — `web_search` is now our self-contained Parallel AI tool.
 
@@ -469,9 +467,9 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ---
 
-## 🧠 Skills (30 loadable)
+## 🧠 Skills (29 loadable)
 
-24 config-level (`~/.config/agents/skills/`): `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `find-skills`, `userinterface-wiki`, `context-management` (pi-context) and 3 `autoresearch-*` at pi level.
+24 config-level (`~/.config/agents/skills/`): `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `find-skills`, `userinterface-wiki`, and 3 `autoresearch-*` at pi level.
 
 ---
 
