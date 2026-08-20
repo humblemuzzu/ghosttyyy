@@ -458,7 +458,8 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `anthropic` | claude-opus-5 (default), claude-opus-4-6/4-7/4-8 (1M context) | **Primary** — Claude Max via pi-claude-code-use |
+| `xai` | grok-4.5 (default · high), grok-4.6 | **Primary** — Grok OAuth |
+| `anthropic` | claude-opus-5, claude-opus-4-6/4-7/4-8 (1M context) | Claude Max via pi-claude-code-use |
 | `deepseek` | deepseek-v4-pro, deepseek-v4-flash | 1M context, thinking mode |
 | `kimi-code` | kimi-for-coding (K2.7 Code) | Kimi Code subscription OAuth |
 | `sakana` | fugu, fugu-ultra | Multi-agent orchestration (Responses API) |
@@ -477,8 +478,8 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ```json
 {
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5",
+  "defaultProvider": "xai",
+  "defaultModel": "grok-4.5",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }

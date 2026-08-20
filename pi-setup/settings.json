@@ -3,8 +3,8 @@
   "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
-  "defaultProvider": "anthropic",
-  "defaultModel": "claude-opus-5",
+  "defaultProvider": "xai",
+  "defaultModel": "grok-4.5",
   "skills": [
     "~/.config/agents/skills"
   ],
@@ -22,6 +22,8 @@
     "enabled": true
   },
   "enabledModels": [
+    "xai/grok-4.5:high",
+    "xai/grok-4.6",
     "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-8",
     "anthropic/claude-opus-4-6",

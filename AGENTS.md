@@ -39,13 +39,14 @@ continuing to add.
 
 ```
 pi CLI (v0.84.2) — @earendil-works/pi-coding-agent
-  ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth   [DEFAULT]
+  ├─ xai (native)                               → Grok OAuth         [DEFAULT]
+  ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
   ├─ kimi-code (custom) + kimi-code-token.mjs   → Kimi Code sub
   ├─ deepseek, sakana, openai-codex             → API keys in ~/.zshrc
   └─ llama-local                                → llama.cpp, /local
 ```
 
-Default: `anthropic` / `claude-opus-5`, thinking `high`, theme gruvbox,
+Default: `xai` / `grok-4.5`, thinking `high`, theme gruvbox,
 `compaction.enabled: true`.
 
 **`PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER=1` is REQUIRED** (set in `~/.zshrc`).
@@ -507,6 +508,7 @@ control chars into a single-line string.
 
 | Provider | Models |
 |---|---|
+| `xai` | `grok-4.5` (default), `grok-4.6` (built-in catalog) |
 | `anthropic` | `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx override) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` (1M ctx) |
 | `kimi-code` | `kimi-for-coding` (K2.7, 262K) |

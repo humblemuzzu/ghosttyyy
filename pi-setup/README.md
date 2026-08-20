@@ -100,7 +100,8 @@ fallback only** — not in the active `packages`. See `AGENTS.md` → "pi-claude
 
 | Provider | Access |
 |---|---|
-| `anthropic` (default, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-opus-4-6/4-7/4-8` have 1M context overrides) |
+| `xai` (default, `grok-4.5`) | Grok OAuth (`/login xai`); `grok-4.6` also in favorites |
+| `anthropic` (`claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-opus-4-6/4-7/4-8` have 1M context overrides) |
 | `deepseek` (`deepseek-v4-pro/flash`) | `$DEEPSEEK_API_KEY`, 1M context |
 | `kimi-code` (`kimi-for-coding`, K2.7) | Kimi Code subscription OAuth (`kimi-code-token.mjs`) |
 | `sakana` (`fugu`, `fugu-ultra`) | `$SAKANA_API_KEY`, $20/mo, OpenAI Responses API |
@@ -121,7 +122,7 @@ Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
 3 `autoresearch-*` from pi-autoresearch — 29 total.)
 
 ### Settings
-- Default provider/model: `anthropic` / `claude-opus-5`
+- Default provider/model: `xai` / `grok-4.5` (thinking high)
 - Theme: gruvbox · Thinking: high · Compaction: **enabled** (pi's native LLM compaction)
 - Steering/follow-up: all · Quiet startup
 
@@ -142,7 +143,7 @@ See `AGENTS.md` → "Packages (npm)" for versions, purposes, and which are patch
 ```
 pi-setup/
 ├── install.sh                  # One-command installer (deploys + re-applies patches)
-├── settings.json               # Pi settings (provider: anthropic, model: claude-opus-5)
+├── settings.json               # Pi settings (provider: xai, model: grok-4.5)
 ├── keybindings.json            # Custom keybindings
 ├── models.json                 # Custom providers + context-window overrides
 ├── permissions.json            # Tool permission rules
