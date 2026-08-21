@@ -61,7 +61,8 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		// PARENT PATH — unchanged.
+		if (ctx.model?.provider === "llama-local") return;
+
 		const interpolated = interpolatePromptVars(body, ctx.cwd, {
 			sessionId: ctx.sessionManager.getSessionId(),
 			identity: IDENTITY,

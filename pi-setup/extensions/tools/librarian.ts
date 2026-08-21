@@ -113,7 +113,7 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 			"- Name the repositories in `repository` (as owner/repo or a full URL)\n" +
 			"- Provide context about what you're trying to achieve\n" +
 			"- The Librarian explores thoroughly before providing comprehensive answers\n" +
-			"- The Librarian's answer is research, not a reply. Use it to answer the user in your own words, at your own length.\n\n" +
+			"- When getting an answer from the Librarian, show it to the user in full, do not summarize it.\n\n" +
 			'Example: librarian({ repository: ["xai-org/grok-build"], query: "how are sub-agent results rendered in the TUI?" })',
 
 		parameters: Type.Object({

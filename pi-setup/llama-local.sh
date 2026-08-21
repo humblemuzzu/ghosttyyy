@@ -19,7 +19,7 @@ set -euo pipefail
 MODELS_DIR="${LLAMA_MODELS_DIR:-$HOME/models}"
 PORT="${LLAMA_PORT:-8080}"
 CTX="${LLAMA_CTX:-65536}"
-DEFAULT_MODEL="${LLAMA_DEFAULT_MODEL:-LFM2.5-2.6B}"
+DEFAULT_MODEL="${LLAMA_DEFAULT_MODEL:-Qwen3.8-27B-Uncensored}"
 SESSION="llama"
 
 # Auto-sleep frees the weights + KV cache after this many idle seconds

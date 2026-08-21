@@ -236,8 +236,8 @@ why tests can live beside an extension without being loaded.
 | `editor/` | custom box-drawing editor, labels, clipboard image paste |
 | `deepseek-peak/` | `/deepseek` + peak/off-peak clock in the editor border |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — sub-agent transcripts |
-| `local-model.ts` | `/local` llama.cpp router |
-| `guardrails/` | re-injects `agents/rules.amp.md` per turn + blocks comment-heavy edits |
+| `local-model.ts` | `/local` llama.cpp router; bare system prompt for `llama-local` only |
+| `guardrails/` | re-injects `rules.amp.md` per turn (skipped for `llama-local`) + comment gate |
 | `tools/` | 29 custom tools |
 
 `kimi-code-token.mjs` also lives here but is a helper script, not an extension.
@@ -514,7 +514,7 @@ control chars into a single-line string.
 | `kimi-code` | `kimi-for-coding` (K2.7, 262K) |
 | `openai-codex` | `gpt-5.5`, `gpt-5.6-sol` |
 | `sakana` | `fugu`, `fugu-ultra` (1M, text+image) |
-| `llama-local` | `LFM2.5-2.6B` Q6_K, 64K active |
+| `llama-local` | `Qwen3.8-27B-Uncensored` Q4_K_M (default load), `LFM2.5-2.6B` Q6_K |
 
 ### Sub-agent models
 
@@ -547,9 +547,11 @@ argument), and `[f(a), f(b)]` parses as one mangled call producing valid JSON.
 Check `llama-server --version` first if local tool calling goes strange.
 
 `/local [start|stop|restart|unload|status|logs]`. No auto-start, deliberate.
-`before_agent_start` returns `undefined` unless `ctx.model?.provider ===
-"llama-local"` — **do not widen this**; every other model keeps the default
-prompt byte-identical.
+For `llama-local` only: Amp system prompt and guardrails rules inject are
+skipped; `local-model.ts` **replaces** the system prompt with a short bare
+tool crib (~200 tok). Every other provider is untouched — **do not widen the
+`provider === "llama-local"` gates**. Sub-agents (`PI_SUBAGENT_TOOLS` set) keep
+the short child prompt, not the bare parent one.
 
 Gotchas: it's `ctx.hasUI`, not `ctx.canPrompt` (which is `undefined`, i.e. falsy
 inside a real TUI); a model must be in `enabledModels` or `/model` can't see it;

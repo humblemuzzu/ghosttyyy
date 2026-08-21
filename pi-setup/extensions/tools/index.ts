@@ -154,8 +154,9 @@ export default function (pi: ExtensionAPI) {
 		return { content: scrubbed };
 	});
 
-	// inject secret names into system prompt so the agent knows what's available
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (ctx.model?.provider === "llama-local") return;
+
 		const secrets = await loadSecrets();
 		if (secrets.length === 0) return;
 

@@ -46,19 +46,13 @@ function resolveRules(): string {
 export default function guardrailsExtension(pi: ExtensionAPI): void {
 	if (process.env.PI_GUARDRAILS_OFF === "1") return;
 
-	pi.on("context", async (event) => {
-		/*
-		 * Previous injections are stripped before the current one is added.
-		 * The handler receives a deep copy of the whole conversation, so
-		 * without this the block accumulates once per turn.
-		 */
+	pi.on("context", async (event, ctx) => {
 		const messages = event.messages.filter(
 			(message: { customType?: string }) => message.customType !== CUSTOM_TYPE,
 		);
 
-		// Read per call, not once at load: a boot-time constant means every rules
-		// edit needs a restart, and a stale block is indistinguishable from one
-		// the model ignored.
+		if (ctx.model?.provider === "llama-local") return { messages };
+
 		const rules = resolveRules();
 		if (!rules) return { messages };
 

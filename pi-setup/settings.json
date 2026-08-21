@@ -35,7 +35,8 @@
     "openai-codex/gpt-5.5",
     "sakana/fugu",
     "sakana/fugu-ultra",
-    "llama-local/LFM2.5-2.6B"
+    "llama-local/LFM2.5-2.6B",
+    "llama-local/Qwen3.8-27B-Uncensored"
   ],
   "steeringMode": "all",
   "followUpMode": "all",

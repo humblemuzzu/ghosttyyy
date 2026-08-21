@@ -6,57 +6,43 @@
  * script was later deleted and took the whole extension down with it. So this
  * version embeds the server command — there is nothing on disk it can lose.
  *
- * SYSTEM PROMPT SAFETY (the important bit):
- * The `before_agent_start` hook returns `undefined` for every model that is not
- * `PROVIDER_ID`. pi chains that hook, and a handler returning nothing leaves the
- * prompt exactly as it was. So the local-model rules below are appended ONLY when
- * the local model is the active model — every other model (claude, kimi, codex,
- * deepseek, sakana …) gets the default prompt, byte for byte, untouched.
+ * SYSTEM PROMPT (llama-local only):
+ * before_agent_start REPLACES the full assembled prompt with BARE_SYSTEM_PROMPT
+ * when provider is llama-local. Every other provider gets undefined → prompt
+ * unchanged. Sub-agent children (PI_SUBAGENT_TOOLS set) are left alone so the
+ * short tool-list prompt from system-prompt.ts still applies.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { execSync } from "child_process";
 import * as os from "os";
+import { SUB_AGENT_TOOLS_ENV } from "./tools/lib/sub-agent-prompt";
 
-// ── config (env-overridable, same names as pi-setup/llama-local.sh) ──────────
 const PROVIDER_ID = "llama-local";
 const PORT = Number(process.env.LLAMA_PORT || 8080);
 const MODELS_DIR = process.env.LLAMA_MODELS_DIR || `${os.homedir()}/models`;
 const CTX = Number(process.env.LLAMA_CTX || 65536);
 const SLEEP_IDLE = Number(process.env.LLAMA_SLEEP_IDLE || 300);
-const DEFAULT_MODEL = process.env.LLAMA_DEFAULT_MODEL || "LFM2.5-2.6B";
+const DEFAULT_MODEL = process.env.LLAMA_DEFAULT_MODEL || "Qwen3.8-27B-Uncensored";
 const TMUX_SESSION = "llama";
 const LOG_FILE = "/tmp/llama-server.log";
 const BASE = `http://127.0.0.1:${PORT}`;
 
-// ── local-model behaviour rules ──────────────────────────────────────────────
-// Only ever appended when PROVIDER_ID is the active model. Each rule targets a
-// failure this model actually showed under test on 2026-08-05:
-//   - 9 apply_patch calls with 2 verification runs (FizzBuzz, 9m36s)
-//   - 10-call patch loop on a one-line fix (507s, vs 23s median)
-//   - bash arguments handed to apply_patch after a quoted command in the prompt
-const LOCAL_MODEL_RULES = `
+const BARE_SYSTEM_PROMPT = `You are a local coding agent on the user's machine. Be brief. Use tools when needed. Do not claim work without a tool call. Two failures of the same tool → stop and report.
 
-## Local model operating rules
-
-You are running locally on the user's own machine. These rules override any
-general guidance about pace or thoroughness.
-
-1. **Never claim to have done something you did not do with a tool call.** Saying
-   "I've fixed it" or "running the test now" is not an action. Only a tool call is.
-2. **Read every tool error before reacting.** Do not re-send a call that just
-   failed with the same arguments — change something or stop.
-3. **Two failures of the same tool means STOP.** Report what failed, what the error
-   said, and what you would try next. Do not attempt a third time. Looping wastes
-   far more of the user's time than admitting you are stuck.
-4. **Verify after you change something, not after you change five things.** Edit,
-   then immediately run the check. An edit you have not verified is not done.
-5. **Do not compute expected values in your head.** If a test needs an expected
-   result, get it by running the code, not by reasoning about what it should be.
-6. **One tool per step.** Match arguments to the tool you are actually calling —
-   a shell command belongs in \`bash\`, never in a patch envelope.
-7. **Be direct.** No preamble, no narration of intent. Do the thing, then say what
-   you did in one or two sentences.
+Tools (schemas also in the API):
+- read — file or image path
+- bash — shell; timeout required
+- apply_patch — only file write/edit/batch tool
+- grep / find / ls — search and list
+- undo_edit / redo_edit — revert or redo last patch
+- format_file — prettier/biome
+- skill — load a named skill
+- web_search / read_web_page — web
+- screenshot — screen/window/url capture
+- github tools — read_github, search_github, list_directory_github, list_repositories, glob_github, commit_search, diff
+- finder / oracle / delegate / chad / librarian / code_review — sub-agents (slow on local; avoid unless asked)
+- read_session / search_sessions / agent_message — session history / mailbox
 `;
 
 // ── shell helpers ────────────────────────────────────────────────────────────
@@ -412,22 +398,10 @@ export default function localModelExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	// ── system prompt: ONLY for the local model, nothing else ────────────────
-	// Returning undefined leaves event.systemPrompt untouched for every other
-	// model. Do not widen this condition.
-	pi.on("before_agent_start", async (event: any, ctx: any) => {
+	pi.on("before_agent_start", async (_event: any, ctx: any) => {
 		if (ctx.model?.provider !== PROVIDER_ID) return;
-
-		const m = findModel(ctx.model?.id);
-		const meta = m?.meta;
-		const identity = meta
-			? `\n\n## Your identity\nYou are **${ctx.model.id}** (${fmtCount(meta.n_params ?? 0)} params, ${meta.ftype ?? "?"} quantised) ` +
-				`running locally on the user's Mac through llama.cpp, with a ${fmtNum(meta.n_ctx ?? CTX)}-token context window. ` +
-				`You are not Claude, GPT or any hosted model — do not claim to be one.\n`
-			: `\n\n## Your identity\nYou are **${ctx.model.id}** running locally through llama.cpp. ` +
-				`You are not Claude, GPT or any hosted model — do not claim to be one.\n`;
-
-		return { systemPrompt: event.systemPrompt + identity + LOCAL_MODEL_RULES };
+		if (process.env[SUB_AGENT_TOOLS_ENV]?.trim()) return;
+		return { systemPrompt: BARE_SYSTEM_PROMPT };
 	});
 
 	// ── status bar upkeep ────────────────────────────────────────────────────
