@@ -4,6 +4,7 @@ import chalk from "chalk";
 import { CONFIG_DIR_NAME } from "../config.js";
 import { loadThemeFromPath } from "../modes/interactive/theme/theme.js";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.js";
+import { stripBom } from "../utils/text.js";
 import { createEventBus } from "./event-bus.js";
 import { clearExtensionCache, createExtensionRuntime, loadExtensionFromFactory, loadExtensionsCached, } from "./extensions/loader.js";
 import { findGitPaths } from "./footer-data-provider.js";
@@ -19,7 +20,7 @@ function resolvePromptInput(input, description) {
     }
     if (existsSync(input)) {
         try {
-            return readFileSync(input, "utf-8");
+            return stripBom(readFileSync(input, "utf-8"));
         }
         catch (error) {
             console.error(chalk.yellow(`Warning: Could not read ${description} file ${input}: ${error}`));
@@ -39,7 +40,7 @@ function loadContextFileFromDir(dir) {
                 }
                 return {
                     path: filePath,
-                    content: readFileSync(filePath, "utf-8"),
+                    content: stripBom(readFileSync(filePath, "utf-8")),
                 };
             }
             catch (error) {

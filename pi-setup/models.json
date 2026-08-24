@@ -70,6 +70,30 @@
             "cacheRead": 0.028,
             "cacheWrite": 0.14
           }
+        },
+        {
+          "id": "deepseek-v4-flash-vision-exp",
+          "name": "👁 DeepSeek V4 Flash Vision Exp — 1M context, vision",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "contextWindow": 1048576,
+          "maxTokens": 393216,
+          "thinkingLevelMap": {
+            "minimal": "high",
+            "low": "high",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          },
+          "cost": {
+            "input": 0.14,
+            "output": 0.28,
+            "cacheRead": 0.028,
+            "cacheWrite": 0.14
+          }
         }
       ]
     },

@@ -12,6 +12,68 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## 0.84.3 (2026-08-24) — from 0.84.2; the bundled-runtime release
+
+**The one that changed the update procedure, not just the patches.** 0.84.3's
+`bin` field points at `dist/bundle/cli.js` (0.84.2's pointed at the modular
+`dist/cli.js`). The bundle inlines its own copies of resource-loader,
+keybindings, session-selector and pi-tui, and loads **zero** on-disk
+`dist/core/*` or `dist/modes/*` files — so after `pi update`, npm relinks the
+bin to the bundle and every core patch goes silently inert while
+`verify-patches.sh` still passes (it greps files that exist but are never
+loaded).
+
+**Fix, adopted as the standing procedure:** re-pin the bin to the modular
+entrypoint after every update —
+
+```bash
+ln -sfn ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /opt/homebrew/bin/pi
+```
+
+`dist/cli.js` still ships in 0.84.3 and loads the modular core, so all three
+patches + the width patch keep working; the only loss is the bundle's
+startup-speed win. `verify-patches.sh` gained an entrypoint check that FAILS
+loudly if the bin ever resolves to `dist/bundle/cli.js`.
+
+**Patch drift (stock 0.84.2 vs stock 0.84.3):**
+- `session-selector.js` — byte-identical. Deployed as-is.
+- `resource-loader.js` — added `stripBom` import + two call sites, **outside**
+  our patch region. RE-DERIVED onto fresh stock (suppression edit re-applied).
+- `keybindings.js` — added `stripBom` + `useWindowsKeybindings`/`windowsKeybindings`
+  machinery (macOS branches identical to 0.84.2 defaults), and `loadRawConfig`
+  now strips BOM + inline-guards (equivalent to our `isRecord` there). RE-DERIVED:
+  only the pin entry, `pinSession` migration and `toKeybindingsConfig` guard
+  re-added; upstream's stripBom/windowsKeybindings kept.
+- pi-tui bundled `^0.84.3` — width patch anchors all present; re-applied.
+  Post-patch `patched >= stock` verified on 28 tokens (never lowers a width);
+  the 6 DSR-measured vectors (हिंदी 4, क्त्र 3, বাংলা 5, 🖐 2, 日本語 6,
+  👨👩👧👦 2) match exactly.
+
+**Extension-migration verdict (asked for, investigated, answered):** the three
+core patches **cannot** be moved to extensions — no API seam. The loader's
+conflict diagnostics run during extension loading before any extension exists;
+the session picker (`SessionSelectorComponent`, constructed directly at
+`interactive-mode.js:4303`) has no override hook; pi-tui's `graphemeWidth` is a
+non-exported function inside the module. A tool-name conflict scan found zero
+live conflicts, so the resource-loader patch is a dormant safety net. Do not
+re-attempt this migration; the pin above is the supported path.
+
+**Also on 0.84.3:** `args.js` adds `--` end-of-options parsing and a
+Windows-only `powershell` tool — none of `--tools/--model/--provider/--mode/
+--thinking/--append-system-prompt` changed, so `pi-spawn.ts` is unaffected.
+`@mariozechner/*` compat aliases intact. No new macOS keybinding conflicts.
+`pi update` does not touch extensions, so pi-mcp-adapter stayed 2.27.0 and
+pi-claude-code-use stayed 1.0.5 (still held).
+
+**Verified live, not just by import audit:** `pi --version` 0.84.3 · headless
+session replied `UPDATE_OK_0843` · one real sub-agent spawn (`--tools
+read,grep,find,ls --model grok-4.5 --provider xai`) exit 0 with session JSON
+streaming · tool surface has `mcp`, no `mcpScript` · `verify-patches.sh`
+11/11 PASS. Rollback: `~/pi-update-backup-20260824_0842` (3 patched 0.84.2
+dist files, VERSION, auth.json, settings.json, mcp.json).
+
+---
+
 ## 2026-08-14 — duplicate-copy cleanup (~3.0 GB), same day as 0.84.2
 
 Not a version migration, but it belongs here because it changes **where packages

@@ -78,9 +78,48 @@ describe("window boundaries are half-open [start, end)", () => {
 		}
 	});
 
-	test("7 peak hours per day, 17 off-peak", () => {
+	test("7 peak hours per weekday, 17 off-peak", () => {
 		const total = PEAK_WINDOWS_UTC.reduce((sum, [s, e]) => sum + (e - s), 0);
 		expect(total).toBe(7);
+	});
+});
+
+describe("weekend rule — off-peak all day, Beijing time, from 2026-08-23", () => {
+	// 2026-08-20 is a Thursday (day=20 default in `at`); Beijing Sat 08-29 and
+	// Sun 08-23 both fall after the effective date.
+	test("a Saturday at a former peak hour is now off-peak", () => {
+		// Beijing Sat 08-29 10:00 = UTC 02:00, inside the old 01:00-04:00 window
+		expect(isPeakAt(new Date(Date.UTC(2026, 7, 29, 2)))).toBe(false);
+	});
+
+	test("a Sunday at a former peak hour is now off-peak", () => {
+		// Beijing Sun 08-23 10:00 = UTC 02:00
+		expect(isPeakAt(new Date(Date.UTC(2026, 7, 23, 2)))).toBe(false);
+	});
+
+	test("weekdays keep their windows after the weekend rule", () => {
+		// Beijing Mon 08-24 10:00 = UTC 02:00
+		expect(isPeakAt(new Date(Date.UTC(2026, 7, 24, 2)))).toBe(true);
+	});
+
+	test("Beijing Saturday before the effective date still peaks (old rule)", () => {
+		// Beijing Sat 08-22 10:00 = UTC 02:00 — before 08-23 00:00 Beijing
+		expect(isPeakAt(new Date(Date.UTC(2026, 7, 22, 2)))).toBe(true);
+	});
+
+	test("the whole Beijing weekend is off-peak, both windows", () => {
+		for (const h of [2, 7, 8, 13, 20]) {
+			// UTC Sat 08-29 hours map into Beijing Sat (16:00+8h offset)
+			expect(isPeakAt(new Date(Date.UTC(2026, 7, 29, h)))).toBe(false);
+		}
+	});
+
+	test("the longest gap is now Friday 10:00 UTC -> Monday 01:00 UTC (63h)", () => {
+		// Beijing Fri 08-28 18:00 = UTC 10:00; next peak is Beijing Mon 08-31 09:00 = UTC 01:00
+		const s = computeState(new Date(Date.UTC(2026, 7, 28, 10)));
+		expect(s.phase).toBe("off-peak");
+		expect(s.next).toBe("peak");
+		expect(s.msUntilChange).toBe(63 * HOUR);
 	});
 });
 
@@ -116,7 +155,9 @@ describe("countdown to the next transition", () => {
 		expect(computeState(d).msUntilChange).toBe(29_750);
 	});
 
-	test("the countdown never exceeds the longest gap", () => {
+	test("the countdown never exceeds the longest gap (63h over the weekend)", () => {
+		// Thursday is a weekday, so per-day gaps stay <= 15h; the weekend rule
+		// only extends the Friday-evening -> Monday-morning stretch.
 		for (let h = 0; h < 24; h++) {
 			for (const m of [0, 17, 33, 59]) {
 				const s = computeState(at(h, m));
@@ -124,6 +165,9 @@ describe("countdown to the next transition", () => {
 				expect(s.msUntilChange).toBeLessThanOrEqual(15 * HOUR);
 			}
 		}
+		// Friday 10:00 UTC is the new max — next peak is Monday 01:00 UTC
+		const fri = computeState(new Date(Date.UTC(2026, 7, 28, 10)));
+		expect(fri.msUntilChange).toBe(63 * HOUR);
 	});
 
 	test("walking a full day, every flip lands on a published boundary", () => {

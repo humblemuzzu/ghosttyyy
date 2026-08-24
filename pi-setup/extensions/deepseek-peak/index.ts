@@ -1,8 +1,9 @@
 /**
  * deepseek-peak — live peak/off-peak pricing indicator in the editor border.
  *
- * From 16:00 UTC on 2026-08-16 DeepSeek charges 2× during two daily UTC
- * windows. This puts the current phase, and the time until it flips, in the
+ * From 16:00 UTC on 2026-08-16 DeepSeek charges 2× during two weekday UTC
+ * windows (since 2026-08-23, weekends in Beijing time are all off-peak).
+ * This puts the current phase, and the time until it flips, in the
  * bottom-left slot of the custom editor's border — the prompt bar — so the
  * answer to "is deepseek cheap right now" is already on screen.
  *
@@ -77,12 +78,12 @@ function buildReport(now: Date, ctx: ExtensionContext | null): string {
 	}
 
 	lines.push(``);
-	lines.push(`   peak hours (2× price)`);
+	lines.push(`   peak hours (2× price) — weekdays only`);
 	PEAK_WINDOWS_UTC.forEach(([s, e], i) => {
 		const utc = `${String(s).padStart(2, "0")}:00–${String(e).padStart(2, "0")}:00 UTC`;
 		lines.push(`     ${utc}   =  ${windows[i]} ${tz}`);
 	});
-	lines.push(`   every other hour is off-peak.`);
+	lines.push(`   weekends (Beijing Sat/Sun) are entirely off-peak.`);
 
 	lines.push(``);
 	lines.push(`   $ per 1M tokens        cache-hit   cache-miss   output`);

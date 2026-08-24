@@ -22,7 +22,7 @@
     "resetTimeContainment": "blank",
     "statusIndicatorMode": "icon",
     "statusIconPack": "emoji",
-    "statusIconCustom": "\u2713\u26a0\u00d7?",
+    "statusIconCustom": "✓⚠×?",
     "statusProviderDivider": false,
     "statusDismissOk": true,
     "showProviderName": true,
@@ -34,7 +34,7 @@
     "showWindowTitle": true,
     "boldWindowTitle": true,
     "showUsageLabels": true,
-    "dividerCharacter": "\u2502",
+    "dividerCharacter": "│",
     "dividerColor": "dim",
     "dividerBlanks": 1,
     "showProviderDivider": true,
@@ -54,33 +54,33 @@
   },
   "providers": {
     "anthropic": {
-      "showStatus": true,
+      "showStatus": false,
       "windows": {
-        "show5h": true,
-        "show7d": true,
+        "show5h": false,
+        "show7d": false,
         "showExtra": false
       }
     },
     "copilot": {
-      "showStatus": true,
-      "showMultiplier": true,
-      "showRequestsLeft": true,
+      "showStatus": false,
+      "showMultiplier": false,
+      "showRequestsLeft": false,
       "quotaDisplay": "percentage",
       "windows": {
-        "showMonth": true
+        "showMonth": false
       }
     },
     "gemini": {
-      "showStatus": true,
+      "showStatus": false,
       "windows": {
-        "showPro": true,
-        "showFlash": true
+        "showPro": false,
+        "showFlash": false
       }
     },
     "antigravity": {
-      "showStatus": true,
-      "showCurrentModel": true,
-      "showScopedModels": true,
+      "showStatus": false,
+      "showCurrentModel": false,
+      "showScopedModels": false,
       "windows": {
         "showModels": true
       },
@@ -88,11 +88,11 @@
       "modelOrder": []
     },
     "codex": {
-      "showStatus": true,
+      "showStatus": false,
       "invertUsage": false,
       "windows": {
-        "showPrimary": true,
-        "showSecondary": true
+        "showPrimary": false,
+        "showSecondary": false
       }
     },
     "kiro": {
@@ -140,7 +140,7 @@
     "resetTimeContainment": "blank",
     "statusIndicatorMode": "icon",
     "statusIconPack": "emoji",
-    "statusIconCustom": "\u2713\u26a0\u00d7?",
+    "statusIconCustom": "✓⚠×?",
     "statusProviderDivider": false,
     "statusDismissOk": true,
     "showProviderName": true,
@@ -152,7 +152,7 @@
     "showWindowTitle": true,
     "boldWindowTitle": true,
     "showUsageLabels": true,
-    "dividerCharacter": "\u2502",
+    "dividerCharacter": "│",
     "dividerColor": "dim",
     "dividerBlanks": 1,
     "showProviderDivider": true,

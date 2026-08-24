@@ -15,6 +15,19 @@ FAIL=0
 pass() { printf '\033[32mPASS\033[0m  %s\n' "$1"; }
 fail() { printf '\033[31mFAIL\033[0m  %s\n    fix: %s\n' "$1" "$2"; FAIL=1; }
 
+# ── pi entrypoint: modular CLI, not the 0.84.3 bundled runtime ──
+# 0.84.3's bin is dist/bundle/cli.js, which inlines its own copies of
+# resource-loader, keybindings, session-selector and pi-tui. The bundle never
+# loads the on-disk files the checks below verify, so a bundle switch would
+# silently disable every core patch while this script still reports PASS.
+PI_BIN_TARGET="$(readlink "$(command -v pi)" 2>/dev/null || command -v pi)"
+if [[ "$PI_BIN_TARGET" != *"dist/bundle/cli.js" ]]; then
+    pass "pi entrypoint: modular CLI (dist/cli.js — patches load)"
+else
+    fail "pi entrypoint: bundled runtime — every core patch is inert" \
+         "ln -sfn ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /opt/homebrew/bin/pi && bash pi-setup/verify-patches.sh"
+fi
+
 # ── pi core: tool-conflict suppression (pi won't START without it) ──
 if [ -f "$PI_DIST/core/resource-loader.js" ] && \
    ! grep -q "for (const conflict of conflicts)" "$PI_DIST/core/resource-loader.js"; then

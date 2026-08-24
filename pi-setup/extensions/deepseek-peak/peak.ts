@@ -8,10 +8,16 @@
  * way this can be wrong is if the system clock itself is wrong, and a time API
  * would not fix that for any other program on the machine either.
  *
- * SOURCE OF THE NUMBERS (2026-08-13):
+ * SOURCE OF THE NUMBERS (2026-08-24):
  *   @deepseek_ai announcement — "New pricing takes effect at 16:00 UTC,
  *   Aug 16, 2026. Peak Hours: 01:00-04:00 and 06:00-10:00 UTC (all other
  *   hours are off-peak). Off-peak rates are 50% lower than peak."
+ *   Second announcement — "Effective 00:00 (Beijing Time) on Sunday, August
+ *   23, 2026: off-peak rates applying throughout the day on weekends
+ *   (Saturdays and Sundays, Beijing Time)." The pricing page now reads
+ *   "Peak Hours: 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday".
+ *   Beijing is UTC+8 (no DST), so the all-off-peak weekend runs Friday 16:00
+ *   UTC through Sunday 16:00 UTC; weekdays keep the two windows.
  *
  * Corroborated independently: those windows are Beijing (UTC+8) 09:00-12:00
  * and 14:00-18:00, i.e. Chinese office hours — 01+8=09, 04+8=12, 06+8=14,
@@ -28,12 +34,15 @@ export const PEAK_WINDOWS_UTC: ReadonlyArray<readonly [number, number]> = [
 /** 16:00 UTC, Aug 16 2026 — month is 0-indexed, so 7 = August. */
 export const EFFECTIVE_FROM_MS = Date.UTC(2026, 7, 16, 16, 0, 0, 0);
 
+/** 00:00 Beijing Sun Aug 23 2026 = 16:00 UTC Sat Aug 22 — weekends become all off-peak. */
+export const WEEKEND_OFFPEAK_FROM_MS = Date.UTC(2026, 7, 22, 16, 0, 0, 0);
+
 const MS_MIN = 60_000;
 const MS_HOUR = 60 * MS_MIN;
 const MS_DAY = 24 * MS_HOUR;
 
-/** window edges as ms-into-the-UTC-day, ascending. */
-const BOUNDARIES_MS: number[] = PEAK_WINDOWS_UTC.flatMap(([s, e]) => [s * MS_HOUR, e * MS_HOUR]).sort((a, b) => a - b);
+/** Beijing is UTC+8 with no DST — the weekend rule is defined in Beijing time. */
+const BEIJING_OFFSET_MS = 8 * MS_HOUR;
 
 export type Phase = "pre-launch" | "peak" | "off-peak";
 
@@ -57,7 +66,16 @@ function msOfUtcDay(now: Date): number {
 	);
 }
 
+/** Saturday (6) or Sunday (0) in Beijing time — off-peak all day since 2026-08-23. */
+function isBeijingWeekend(now: Date): boolean {
+	const day = new Date(now.getTime() + BEIJING_OFFSET_MS).getUTCDay();
+	return day === 0 || day === 6;
+}
+
 export function isPeakAt(now: Date): boolean {
+	if (now.getTime() >= WEEKEND_OFFPEAK_FROM_MS && isBeijingWeekend(now)) {
+		return false;
+	}
 	const t = msOfUtcDay(now);
 	return PEAK_WINDOWS_UTC.some(([s, e]) => t >= s * MS_HOUR && t < e * MS_HOUR);
 }
@@ -82,14 +100,16 @@ export function computeState(now: Date = new Date()): PeakState {
 		};
 	}
 
-	const t = msOfUtcDay(now);
 	const peak = isPeakAt(now);
-	// next edge today, else the first edge tomorrow (10:00 -> 01:00 is 15h off-peak)
-	const nextEdge = BOUNDARIES_MS.find((b) => b > t) ?? BOUNDARIES_MS[0] + MS_DAY;
+	// every boundary is on the hour, so scan forward until the phase flips
+	let nextMs = Math.floor(now.getTime() / MS_HOUR) * MS_HOUR + MS_HOUR;
+	while (isPeakAt(new Date(nextMs)) === peak) {
+		nextMs += MS_HOUR;
+	}
 
 	return {
 		phase: peak ? "peak" : "off-peak",
-		msUntilChange: nextEdge - t,
+		msUntilChange: nextMs - now.getTime(),
 		next: peak ? "off-peak" : "peak",
 		multiplier: peak ? 2 : 1,
 	};
