@@ -15,8 +15,8 @@ FAIL=0
 pass() { printf '\033[32mPASS\033[0m  %s\n' "$1"; }
 fail() { printf '\033[31mFAIL\033[0m  %s\n    fix: %s\n' "$1" "$2"; FAIL=1; }
 
-# ── pi entrypoint: modular CLI, not the 0.84.3 bundled runtime ──
-# 0.84.3's bin is dist/bundle/cli.js, which inlines its own copies of
+# ── pi entrypoint: modular CLI, not the bundled runtime ──
+# The npm package's bin is dist/bundle/cli.js, which inlines its own copies of
 # resource-loader, keybindings, session-selector and pi-tui. The bundle never
 # loads the on-disk files the checks below verify, so a bundle switch would
 # silently disable every core patch while this script still reports PASS.
@@ -46,17 +46,19 @@ else
          "cp pi-setup/pi-core-patches/{session-selector.js,keybindings.js} into dist (see AGENTS.md)"
 fi
 
-# ── pi core: compaction toolChoice guard (0.84.3 regression, breaks /compact) ──
-# 0.84.3 sends toolChoice:"none" on every summarization request, but the
-# summarization context carries no tools — xAI/OpenAI reject tool_choice without
-# tools with a 400, so /compact fails. Our patch only sets toolChoice when tools
-# exist. Without it, /compact dies with "A tool_choice was set on the request
-# but no tools were specified."
-if grep -q "context.tools?.length" "$PI_DIST/core/compaction/compaction.js" 2>/dev/null; then
-    pass "pi core: compaction toolChoice guard (0.84.3 /compact regression)"
+# ── pi core: compaction must be STOCK (0.84.4 fixed the toolChoice bug) ──
+# 0.84.3 sent toolChoice:"none" on every summarization request, which xAI/OpenAI
+# reject with a 400 when no tools are in the context — /compact died. Upstream
+# 0.84.4 removed toolChoice entirely and added getSummarizationFailure. The old
+# local patch (pi-setup/pi-core-patches/compaction.js) is RETIRED: re-applying
+# it would wipe the upstream fix. Do NOT copy a stored file over this one.
+if [ -f "$PI_DIST/core/compaction/compaction.js" ] && \
+   ! grep -q "toolChoice" "$PI_DIST/core/compaction/compaction.js" && \
+   grep -q "getSummarizationFailure" "$PI_DIST/core/compaction/compaction.js"; then
+    pass "pi core: compaction is stock (upstream toolChoice fix — /compact OK)"
 else
-    fail "pi core: compaction toolChoice guard missing — /compact will 400 on xAI/OpenAI" \
-         "cp pi-setup/pi-core-patches/compaction.js $PI_DIST/core/compaction/compaction.js"
+    fail "pi core: compaction drifted — 0.84.4 stock has no toolChoice and defines getSummarizationFailure" \
+         "npm install --prefix /opt/homebrew -g --force --ignore-scripts @earendil-works/pi-coding-agent@0.84.4"
 fi
 
 # ── pi-tui: conservative widths in ALL copies (TUI smears without it) ──

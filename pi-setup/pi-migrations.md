@@ -12,6 +12,53 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## 0.84.4 (2026-08-30) — from 0.84.3; upstream fixed the /compact bug, patch retired
+
+**`pi update` is broken on this machine.** The npm package declares
+`devEngines: { packageManager: bun }`; npm 10.9.4 hard-fails install/view/pack
+with EBADDEVENGINES, and `pi update` shells out to plain
+`npm install -g --ignore-scripts --min-release-age=0` (no `--force`), so it
+dies the same way. Working install (dry-run verified first):
+
+```bash
+npm install --prefix /opt/homebrew -g --force --ignore-scripts @earendil-works/pi-coding-agent@0.84.4
+```
+
+`--prefix /opt/homebrew` is required: `npm root -g` here is the nvm root, not
+the homebrew root pi runs from. `--force` is what bypasses the devEngines
+check.
+
+**Patch drift (stock 0.84.3 vs stock 0.84.4):**
+- `resource-loader.js`, `keybindings.js`, `session-selector.js`,
+  `dist/cli/args.js` — byte-identical. Stored patches re-applied as-is.
+- `compaction/compaction.js` — CHANGED: upstream REMOVED the
+  `toolChoice: "none"` we patched around in 0.84.3 (pi-mono #8649/#8638) and
+  added `getSummarizationFailure` (rejects incomplete `length` stops). The
+  stored patch is RETIRED and deleted from `pi-core-patches/` (recoverable from
+  git history and `~/pi-update-backup-20260830_0843`). Compaction is now STOCK;
+  verify-patches gained a guard that FAILS if `toolChoice` reappears in that
+  file or `getSummarizationFailure` goes missing. Do NOT copy a stored file
+  over compaction.js.
+- pi-tui bundled `^0.84.4` — width patch anchors present; re-applied to the
+  new copy (all other copies were already patched).
+
+**Also on 0.84.4:** terminal capability overrides, `ui_prompt_start`/`_end`
+extension events, RPC `clear_queue`, fullscreen selection copy, DeepSeek V4
+Flash Vision exp. Spawn CLI flags unchanged. `@mariozechner/*` compat aliases
+still present. `pi update` does not touch extensions; pi-mcp-adapter stayed
+2.27.0 and pi-claude-code-use stayed 1.0.5 (still held).
+
+**Verified live, not just by import audit:** `pi --version` 0.84.4 · modular
+bin re-pinned to `dist/cli.js` (npm relinks bin to the bundle on install) ·
+headless session replied `UPDATE_OK_0844` · one real sub-agent spawn
+(`--tools read,grep,find,ls --model grok-4.5 --provider xai`) exit 0 with
+session JSON streaming · tool surface has `mcp`, no `mcpScript` ·
+`verify-patches.sh` all PASS. Rollback: `~/pi-update-backup-20260830_0843`
+(3 patched 0.84.3 dist files, package.json, settings.json, mcp.json, auth.json,
+bin link).
+
+---
+
 ## 0.84.3 (2026-08-24) — from 0.84.2; the bundled-runtime release
 
 **The one that changed the update procedure, not just the patches.** 0.84.3's

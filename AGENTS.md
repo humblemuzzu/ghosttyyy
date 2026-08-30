@@ -38,7 +38,7 @@ continuing to add.
 ## Provider chain
 
 ```
-pi CLI (v0.84.2) — @earendil-works/pi-coding-agent
+pi CLI (v0.84.4) — @earendil-works/pi-coding-agent
   ├─ xai (native)                               → Grok OAuth         [DEFAULT]
   ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
   ├─ kimi-code (custom) + kimi-code-token.mjs   → Kimi Code sub
@@ -136,7 +136,7 @@ not `mcpScript`; skills must not contain `mcp-scripting`.
 
 | Package | Ver | Purpose | Patched |
 |---|---|---|---|
-| `@earendil-works/pi-coding-agent` | 0.84.2 | pi itself | 3 core patches |
+| `@earendil-works/pi-coding-agent` | 0.84.4 | pi itself | 3 core patches |
 | `@benvargas/pi-claude-code-use` | **1.0.5 (held)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
@@ -621,6 +621,11 @@ pi-setup/
 
 ## Update workflow
 
+0. **`pi update` fails on this machine** — the npm package declares
+   `devEngines: bun`, npm 10.9.4 errors with EBADDEVENGINES, and pi's updater
+   shells out without `--force`. Install with
+   `npm install --prefix /opt/homebrew -g --force --ignore-scripts @earendil-works/pi-coding-agent@<ver>`
+   (`--prefix` because `npm root -g` is the nvm root, not homebrew).
 1. **`bash pi-setup/verify-patches.sh`** — always first.
 2. **Also grep our own CLI call sites.** An import-level audit cannot see a
    change in how pi interprets the **arguments we pass it**, and `pi-spawn.ts`
