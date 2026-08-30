@@ -46,6 +46,19 @@ else
          "cp pi-setup/pi-core-patches/{session-selector.js,keybindings.js} into dist (see AGENTS.md)"
 fi
 
+# ── pi core: compaction toolChoice guard (0.84.3 regression, breaks /compact) ──
+# 0.84.3 sends toolChoice:"none" on every summarization request, but the
+# summarization context carries no tools — xAI/OpenAI reject tool_choice without
+# tools with a 400, so /compact fails. Our patch only sets toolChoice when tools
+# exist. Without it, /compact dies with "A tool_choice was set on the request
+# but no tools were specified."
+if grep -q "context.tools?.length" "$PI_DIST/core/compaction/compaction.js" 2>/dev/null; then
+    pass "pi core: compaction toolChoice guard (0.84.3 /compact regression)"
+else
+    fail "pi core: compaction toolChoice guard missing — /compact will 400 on xAI/OpenAI" \
+         "cp pi-setup/pi-core-patches/compaction.js $PI_DIST/core/compaction/compaction.js"
+fi
+
 # ── pi-tui: conservative widths in ALL copies (TUI smears without it) ──
 if node "$SCRIPT_DIR/pi-core-patches/apply-pi-tui-width-patch.mjs" --check >/dev/null 2>&1; then
     pass "pi-tui: width patch present in ALL installed copies"

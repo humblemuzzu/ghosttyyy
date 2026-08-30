@@ -36,7 +36,8 @@
     "sakana/fugu",
     "sakana/fugu-ultra",
     "llama-local/LFM2.5-2.6B",
-    "llama-local/Qwen3.8-27B-Uncensored"
+    "llama-local/Qwen3.8-27B-Uncensored",
+    "crof/glm-5.3-flash"
   ],
   "steeringMode": "all",
   "followUpMode": "all",

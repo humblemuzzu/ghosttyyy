@@ -228,6 +228,47 @@
           }
         }
       ]
+    },
+    "crof": {
+      "baseUrl": "https://crof.ai/v1",
+      "api": "openai-completions",
+      "apiKey": "$CROF_API_KEY",
+      "headers": {
+        "User-Agent": "pi-coding-agent"
+      },
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": true,
+        "supportsUsageInStreaming": true,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "openai"
+      },
+      "models": [
+        {
+          "id": "glm-5.3-flash",
+          "name": "GLM 5.3 Flash — 1M ctx, Crof",
+          "reasoning": true,
+          "input": [
+            "text"
+          ],
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high"
+          },
+          "cost": {
+            "input": 0.07,
+            "output": 0.22,
+            "cacheRead": 0.01,
+            "cacheWrite": 0
+          }
+        }
+      ]
     }
   }
 }

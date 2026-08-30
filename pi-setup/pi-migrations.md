@@ -72,6 +72,22 @@ streaming · tool surface has `mcp`, no `mcpScript` · `verify-patches.sh`
 11/11 PASS. Rollback: `~/pi-update-backup-20260824_0842` (3 patched 0.84.2
 dist files, VERSION, auth.json, settings.json, mcp.json).
 
+**Post-install regression found same day — /compact 400s on xAI/OpenAI.**
+0.84.3 added `toolChoice: "none"` unconditionally to every compaction
+summarization request (`completeSummarization`, `dist/core/compaction/
+compaction.js`), but the summarization context carries no tools, and the
+Responses adapter serializes `toolChoice` → `tool_choice` whenever set
+(`pi-ai/dist/api/openai-responses.js:239-240`). xAI and OpenAI reject
+`tool_choice` without `tools` ("Invalid request content: A tool_choice was
+set on the request but no tools were specified."), so `/compact` died with
+"Compaction failed: Summarization failed: OpenAI API error (400)". Reproduced
+live against `api.x.ai` before fixing. **Fix: fourth core patch**
+(`pi-setup/pi-core-patches/compaction.js`) — `toolChoice` is now only set when
+`context.tools?.length` is non-empty, which is never for summarization.
+Deployed, module-verified (no toolChoice in requestOptions for a tool-less
+context), and `verify-patches.sh` gained a guard for it (now 12 checks).
+When upstream fixes this, drop the patch and re-verify /compact.
+
 ---
 
 ## 2026-08-14 — duplicate-copy cleanup (~3.0 GB), same day as 0.84.2
