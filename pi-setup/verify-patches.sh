@@ -69,6 +69,14 @@ else
          "node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs"
 fi
 
+# ── anthropic client version: Claude Max gates models on the claimed Claude Code version ──
+if node "$SCRIPT_DIR/pi-core-patches/apply-anthropic-client-version.mjs" --check >/dev/null 2>&1; then
+    pass "pi core: anthropic client version >= 2.1.251 (new Claude models reachable on Max OAuth)"
+else
+    fail "pi core: anthropic client version too old — new models 400 with claude_code_version_too_old" \
+         "node pi-setup/pi-core-patches/apply-anthropic-client-version.mjs"
+fi
+
 # ── condensed-milk: REMOVED 2026-07-30 ──
 # Uninstalled deliberately. It required three local patches (\$-prefix strip, cmd
 # param support, and a guard against compressing failed calls) and still produced

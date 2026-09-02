@@ -84,6 +84,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 | `resource-loader.js` | pi core `dist/core/` | suppresses extension tool-conflict boot errors (safety net) |
 | `session-selector.js` + `keybindings.js` | pi core | session pinning, `Ctrl+B` in `/resume`. Pins in `~/.pi/agent/pinned-sessions.json` (user data, never wiped) |
 | **pi-tui width patch** | **every** installed pi-tui copy | conservative grapheme widths. Without it the TUI smears on Indic/exotic unicode. **Every package bundles its own pi-tui**, so any install brings a fresh unpatched copy |
+| **anthropic client version** | **every** `pi-ai` copy of `anthropic-messages` | Claude Max OAuth gates model access on the Claude Code client version pi claims. New releases 400 `claude_code_version_too_old` until bumped (fable-5-1 needed ≥ 2.1.251). Found in homebrew pi-ai **and** `~/.pi/agent/extensions/tools/node_modules` copies |
 | pi-sub grok provider | `@marckrenn/pi-sub-*` | wiped by every `pi install` / `pi update --extensions` |
 | pi-tool-display `config.json` | `~/.pi/agent/extensions/pi-tool-display/` | all tool overrides `false` — otherwise it replaces our custom tools |
 | pi-mcp-adapter settings | `~/.pi/agent/mcp.json` | `scriptMode: false`, skills `[]` |
@@ -98,6 +99,9 @@ cp pi-setup/pi-core-patches/keybindings.js      $PI/dist/core/keybindings.js
 
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs           # all copies
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check   # audit
+
+node pi-setup/pi-core-patches/apply-anthropic-client-version.mjs           # all pi-ai copies
+node pi-setup/pi-core-patches/apply-anthropic-client-version.mjs --check   # audit
 
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
 
@@ -509,7 +513,7 @@ control chars into a single-line string.
 | Provider | Models |
 |---|---|
 | `xai` | `grok-4.5` (default), `grok-4.6` (built-in catalog) |
-| `anthropic` | `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx override) |
+| `anthropic` | `claude-fable-5-1` (custom), `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx override) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` (1M ctx) |
 | `kimi-code` | `kimi-for-coding` (K2.7, 262K) |
 | `openai-codex` | `gpt-5.5`, `gpt-5.6-sol` |

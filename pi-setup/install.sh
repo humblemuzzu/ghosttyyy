@@ -253,7 +253,15 @@ if [ -d "$PI_CORE_DIST" ] && [ -d "$SCRIPT_DIR/pi-core-patches" ]; then
     else
         warn "apply-pi-tui-width-patch.mjs missing — TUI smears on exotic unicode without it"
     fi
-    ok "pi core patches applied (resource-loader + session pinning + pi-tui widths)"
+    # anthropic client version: Anthropic gates Claude Max model access by the
+    # Claude Code version pi claims; new models 400 until it is bumped.
+    if [ -f "$SCRIPT_DIR/pi-core-patches/apply-anthropic-client-version.mjs" ]; then
+        node "$SCRIPT_DIR/pi-core-patches/apply-anthropic-client-version.mjs" || \
+            warn "anthropic client version patch failed — new Claude models 400 on Claude Max OAuth"
+    else
+        warn "apply-anthropic-client-version.mjs missing"
+    fi
+    ok "pi core patches applied (resource-loader + session pinning + pi-tui widths + anthropic client version)"
 else
     warn "pi core dist or patch files missing — apply pi-core-patches manually"
 fi

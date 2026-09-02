@@ -24,6 +24,7 @@
   "enabledModels": [
     "xai/grok-4.5:high",
     "xai/grok-4.6",
+    "anthropic/claude-fable-5-1",
     "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-8",
     "anthropic/claude-opus-4-6",
