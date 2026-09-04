@@ -30,11 +30,11 @@
       "fetchStatus": false
     },
     "grok": {
-      "enabled": "auto",
+      "enabled": true,
       "fetchStatus": false
     },
     "zai": {
-      "enabled": "auto",
+      "enabled": true,
       "fetchStatus": false
     }
   },

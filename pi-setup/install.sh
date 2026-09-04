@@ -89,11 +89,6 @@ mkdir -p "$CONFIG_SKILLS"
 # 2026-08-14 cleanup removed ~3 GB of such copies from both global roots. Do not
 # reintroduce a global install here; it will not be loaded and it will bring an
 # UNPATCHED pi-tui copy back onto the machine (see the width-patch section).
-#
-# If the legacy bridge is ever genuinely needed again:
-#   npm --prefix /opt/homebrew install -g pi-claude-bridge
-#   cp "$SCRIPT_DIR/claude-bridge-patches/index.ts" /opt/homebrew/lib/node_modules/pi-claude-bridge/index.ts
-#   (cd /opt/homebrew/lib/node_modules/pi-claude-bridge && npm install cc-session-io@latest)
 
 # ── Extensions ──
 info "Installing extensions..."
@@ -191,8 +186,7 @@ ok "Pi package configs installed (sub-bar, sub-core)"
 
 # ── Pi packages (npm, discovered by pi at runtime) ──
 info "Installing pi packages..."
-# Mirror of settings.json "packages" (source of truth). pi-claude-bridge is NOT
-# here — it's a legacy fallback installed globally above, not an active package.
+# Mirror of settings.json "packages" (source of truth). pi-claude-bridge removed.
 packages=(
     "npm:pi-token-burden"
     "npm:@benvargas/pi-claude-code-use"
@@ -214,13 +208,6 @@ for pkg in "${packages[@]}"; do
 done
 ok "Pi packages installed (${#packages[@]} packages)"
 
-# ── pi-claude-bridge patches: REMOVED 2026-08-14 ──
-# The bridge itself was removed from the machine in the duplicate-copy cleanup
-# (it was 411 MB of unloadable package in a root pi never reads). Its patched
-# source is still kept at pi-setup/claude-bridge-patches/ for reference, and the
-# exact reinstall+patch commands are in the "Global npm packages" block above.
-# This block warned on every single run once the bridge was gone, which trains
-# people to ignore installer warnings.
 
 # ── condensed-milk: REMOVED 2026-07-30, nothing to patch ──
 # It needed three local patches and still silently corrupted data: its
@@ -253,15 +240,13 @@ if [ -d "$PI_CORE_DIST" ] && [ -d "$SCRIPT_DIR/pi-core-patches" ]; then
     else
         warn "apply-pi-tui-width-patch.mjs missing — TUI smears on exotic unicode without it"
     fi
-    # anthropic client version: Anthropic gates Claude Max model access by the
-    # Claude Code version pi claims; new models 400 until it is bumped.
-    if [ -f "$SCRIPT_DIR/pi-core-patches/apply-anthropic-client-version.mjs" ]; then
-        node "$SCRIPT_DIR/pi-core-patches/apply-anthropic-client-version.mjs" || \
-            warn "anthropic client version patch failed — new Claude models 400 on Claude Max OAuth"
-    else
-        warn "apply-anthropic-client-version.mjs missing"
+    # pi-server: 0.85.0 modular cli.js imports it but the npm package forgets
+    # the dependency — every command crashes without it.
+    if [ -f "$SCRIPT_DIR/pi-core-patches/install-pi-server.sh" ]; then
+        bash "$SCRIPT_DIR/pi-core-patches/install-pi-server.sh" || \
+            warn "pi-server install failed — pi may not start (see AGENTS.md)"
     fi
-    ok "pi core patches applied (resource-loader + session pinning + pi-tui widths + anthropic client version)"
+    ok "pi core patches applied (resource-loader + session pinning + pi-tui widths + pi-server)"
 else
     warn "pi core dist or patch files missing — apply pi-core-patches manually"
 fi
@@ -308,11 +293,11 @@ echo "│   Installed:                            │"
 echo "│   • custom extensions                   │"
 echo "│   • 28 custom tools               │"
 echo "│   • 2 themes (gruvbox active)           │"
-echo "│   • 23 config skills                    │"
+echo "│   • 24 config skills                    │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core configs           │"
-echo "│   • 8 pi packages                       │"
+echo "│   • 7 pi packages                       │"
 echo "│   • pi core patched (conflict + pins)   │"
 echo "│   • pi-tool-display configured          │"
 echo "│                                         │"

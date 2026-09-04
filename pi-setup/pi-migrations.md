@@ -12,6 +12,68 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## 0.85.0 (2026-09-04) — from 0.84.4; fable 5.1 official, client-version patch retired
+
+Install (same devEngines workaround): `npm install --prefix /opt/homebrew -g
+--force --ignore-scripts @earendil-works/pi-coding-agent@0.85.0`.
+
+**New landmine: `@earendil-works/pi-server` is undeclared.** 0.85.0's modular
+`dist/cli.js` statically imports `dist/experimental/server.js`, which imports
+`@earendil-works/pi-server` (lines 10-11) — a package upstream ships on npm
+(0.85.0, devEngines null) but forgets to list in package.json (deps, optional,
+peer all absent). The bundle inlines it; our modular re-pin crashes every command
+with ERR_MODULE_NOT_FOUND. npm install into the package dir fails here (arborist
+"Cannot read properties of null (reading 'edgesOut')"), so the fix is a new
+`pi-core-patches/install-pi-server.sh` that curls the matching-version tarball into
+`$PI/node_modules/@earendil-works/pi-server` (its deps chord/pi-agent-core/pi-protocol
+are already pi's own). verify-patches guards on `dist/experimental/server.js` — NOT
+cli.js, which references it only as `./experimental/server.js`.
+
+**Patch drift (stock 0.84.4 vs stock 0.85.0, registry tarballs):**
+- resource-loader.js, keybindings.js, session-selector.js — byte-identical.
+- args.js — two added env-var doc lines (PI_SERVER_DIR/PI_SERVER_ID) only;
+  --tools/--model/--provider untouched → pi-spawn.ts unaffected.
+- bin = dist/bundle/cli.js again → re-pin to dist/cli.js (verify-patches guards).
+- pi-tui 0.85.0 — width-patch anchors present; re-applied.
+
+**fable 5.1 is official now.** pi-ai 0.85.0 `dist/providers/data/anthropic.json`
+carries claude-fable-5-1: 1M ctx, 128k maxTokens, thinkingLevelMap off/xhigh/max,
+cost 10/50/0.25/12.5, compat + `supportsMidConvoEffort` (the new persistent-effort
+feature) — i.e. our old custom models.json entry plus the new flag. claudeCodeVersion
+also bumped upstream 2.1.75 → 2.1.251.
+
+**Retired the anthropic client-version patch.** `apply-anthropic-client-version.mjs`
+deleted; its install.sh/verify-patches.sh/AGENTS.md wiring removed. Dropped the
+custom fable block from models.json (modelOverrides kept); enabledModels entry stays.
+Two vendored tools copies reverted to stock 2.1.75 (backed up).
+
+**Verified:** `pi --version` 0.85.0 · verify-patches.sh all PASS · headless
+`--provider anthropic --model claude-fable-5-1` replied OFFICIAL_0850 (official
+catalog + stock 2.1.251 on Max OAuth — the old patch's whole reason is gone).
+Rollback: ~/pi-update-backup-20260904_1818.
+
+---
+
+## Packages (2026-09-04) — post-0.85.0, pi-mcp-adapter 2.27.0 → 2.32.1, pi-autoresearch 1.6.2 → 1.7.0
+
+Updated the two packages with newer releases (`pi update --extension`, never
+`--extensions` — pi-claude-code-use stays held at 1.0.5):
+
+- **pi-mcp-adapter 2.27.0 → 2.32.1.** Big restructure (TS source at package root,
+  new UI/app-bridge layer). Both suppressions survive: the mcpScript gate is still
+  `earlyConfig.settings?.scriptMode !== false` (index.ts:971) and the `mcp` proxy
+  is still the second registration (index.ts:1020). mcp.json keeps scriptMode:false
+  and settings.json keeps the `{source, skills:[]}` object form, so the tool surface
+  is `mcp` + no `mcpScript`, and `mcp-scripting` stays filtered.
+- **pi-autoresearch 1.6.2 → 1.7.0** (git, main @4182079). The ctrl+shift+r shortcut
+  config (pi-autoresearch.json) is untouched by the git update.
+
+Width patcher found no fresh unpatched pi-tui in either. verify-patches.sh all
+PASS; headless boot replied PKG_OK. Nothing else had a newer release (token-burden
+0.6.5, tool-display 0.5.0, codex-goal 0.2.0, sub-bar 1.5.0 all current).
+
+---
+
 ## 0.84.4 (2026-08-30) — from 0.84.3; upstream fixed the /compact bug, patch retired
 
 **`pi update` is broken on this machine.** The npm package declares

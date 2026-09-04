@@ -93,15 +93,12 @@ custom bridge/provider needed.
 /model anthropic/claude-opus-5
 ```
 
-`pi-claude-bridge` (the old Claude Code Agent SDK bridge) is installed globally as a **legacy
-fallback only** — not in the active `packages`. See `AGENTS.md` → "pi-claude-bridge".
-
 ### Providers / Models
 
 | Provider | Access |
 |---|---|
 | `xai` (default, `grok-4.5`) | Grok OAuth (`/login xai`); `grok-4.6` also in favorites |
-| `anthropic` (`claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` is a custom models.json entry; `claude-opus-4-6/4-7/4-8` have 1M context overrides) |
+| `anthropic` (`claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context overrides) |
 | `deepseek` (`deepseek-v4-pro/flash`) | `$DEEPSEEK_API_KEY`, 1M context |
 | `kimi-code` (`kimi-for-coding`, K2.7) | Kimi Code subscription OAuth (`kimi-code-token.mjs`) |
 | `sakana` (`fugu`, `fugu-ultra`) | `$SAKANA_API_KEY`, $20/mo, OpenAI Responses API |
@@ -164,7 +161,6 @@ pi-setup/
 ├── themes/                     # gruvbox.json, nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
 ├── config-skills/              # 24 skills (→ ~/.config/agents/skills/)
-├── claude-bridge-patches/      # Patched pi-claude-bridge (legacy fallback, inactive)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
 └── README.md                   # This file
 ```

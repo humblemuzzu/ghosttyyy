@@ -102,7 +102,7 @@
       }
     },
     "grok": {
-      "showStatus": false,
+      "showStatus": true,
       "windows": {
         "showWeek": true,
         "showBuild": true,
@@ -110,7 +110,7 @@
       }
     },
     "zai": {
-      "showStatus": false,
+      "showStatus": true,
       "windows": {
         "showTokens": true,
         "showMonthly": true

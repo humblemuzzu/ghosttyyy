@@ -38,7 +38,7 @@ continuing to add.
 ## Provider chain
 
 ```
-pi CLI (v0.84.4) — @earendil-works/pi-coding-agent
+pi CLI (v0.85.0) — @earendil-works/pi-coding-agent
   ├─ xai (native)                               → Grok OAuth         [DEFAULT]
   ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
   ├─ kimi-code (custom) + kimi-code-token.mjs   → Kimi Code sub
@@ -84,7 +84,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 | `resource-loader.js` | pi core `dist/core/` | suppresses extension tool-conflict boot errors (safety net) |
 | `session-selector.js` + `keybindings.js` | pi core | session pinning, `Ctrl+B` in `/resume`. Pins in `~/.pi/agent/pinned-sessions.json` (user data, never wiped) |
 | **pi-tui width patch** | **every** installed pi-tui copy | conservative grapheme widths. Without it the TUI smears on Indic/exotic unicode. **Every package bundles its own pi-tui**, so any install brings a fresh unpatched copy |
-| **anthropic client version** | **every** `pi-ai` copy of `anthropic-messages` | Claude Max OAuth gates model access on the Claude Code client version pi claims. New releases 400 `claude_code_version_too_old` until bumped (fable-5-1 needed ≥ 2.1.251). Found in homebrew pi-ai **and** `~/.pi/agent/extensions/tools/node_modules` copies |
+| **`pi-server` dependency** | `$PI/node_modules/@earendil-works/pi-server` | 0.85.0 modular `dist/cli.js` imports it but the npm package forgets to declare it — every command crashes without it. Wiped on update; re-drop via `install-pi-server.sh` |
 | pi-sub grok provider | `@marckrenn/pi-sub-*` | wiped by every `pi install` / `pi update --extensions` |
 | pi-tool-display `config.json` | `~/.pi/agent/extensions/pi-tool-display/` | all tool overrides `false` — otherwise it replaces our custom tools |
 | pi-mcp-adapter settings | `~/.pi/agent/mcp.json` | `scriptMode: false`, skills `[]` |
@@ -100,8 +100,7 @@ cp pi-setup/pi-core-patches/keybindings.js      $PI/dist/core/keybindings.js
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs           # all copies
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check   # audit
 
-node pi-setup/pi-core-patches/apply-anthropic-client-version.mjs           # all pi-ai copies
-node pi-setup/pi-core-patches/apply-anthropic-client-version.mjs --check   # audit
+bash pi-setup/pi-core-patches/install-pi-server.sh                   # 0.85.0 upstream-forgot dep
 
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
 
@@ -140,14 +139,14 @@ not `mcpScript`; skills must not contain `mcp-scripting`.
 
 | Package | Ver | Purpose | Patched |
 |---|---|---|---|
-| `@earendil-works/pi-coding-agent` | 0.84.4 | pi itself | 3 core patches |
+| `@earendil-works/pi-coding-agent` | 0.85.0 | pi itself | 3 core patches |
 | `@benvargas/pi-claude-code-use` | **1.0.5 (held)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
-| `pi-autoresearch` | 1.6.2 | experiment loop (git install) | no |
+| `pi-autoresearch` | 1.7.0 | experiment loop (git install) | no |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
 | `pi-codex-goal` | 0.2.0 | `/goal` | no |
-| `pi-mcp-adapter` | 2.25.0 | one `mcp` proxy tool, lazy servers | **config** |
+| `pi-mcp-adapter` | 2.32.1 | one `mcp` proxy tool, lazy servers | **config** |
 
 **pi-claude-code-use held at 1.0.5** deliberately; 2.x's only new ≥0.84 feature
 needs registered MCP aliases, which we never have.
@@ -513,7 +512,7 @@ control chars into a single-line string.
 | Provider | Models |
 |---|---|
 | `xai` | `grok-4.5` (default), `grok-4.6` (built-in catalog) |
-| `anthropic` | `claude-fable-5-1` (custom), `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx override) |
+| `anthropic` | `claude-fable-5-1`, `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx override) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` (1M ctx) |
 | `kimi-code` | `kimi-for-coding` (K2.7, 262K) |
 | `openai-codex` | `gpt-5.5`, `gpt-5.6-sol` |
@@ -613,12 +612,11 @@ pi-setup/
 ├── pi-sub-bar-settings.json  pi-sub-core-settings.json
 ├── pi-core-patches/        # 3 core patches + apply-pi-tui-width-patch.mjs
 ├── pi-sub-patches/         # grok provider (5 files)
-├── claude-bridge-patches/  # legacy, uninstalled
 ├── render-repro/           # TUI smear harness (tmux + Ghostty + DSR)
 ├── port-harness/           # screenshot / permission / tier verification
 ├── agents/                 # 10 prompt templates
 ├── themes/  config-skills/  pi-skills/
-└── extensions/             # all 12 extensions incl. tools/ (29 tools + lib/)
+└── extensions/             # all 13 extensions incl. tools/ (29 tools + lib/)
 ```
 
 ---
@@ -638,9 +636,10 @@ pi-setup/
    error that reads like an auth failure. Whenever a release mentions model
    resolution, provider selection, tool filtering or CLI arguments: open
    `pi-spawn.ts`, then actually call one sub-agent before declaring it clean.
-3. **pi core update** → re-apply the 3 core patches + the width patch. Check the
-   changelog for tool-API changes (we override built-ins). The `@mariozechner/*`
-   compat aliases will eventually be removed — then rename imports everywhere.
+3. **pi core update** → re-apply the 3 core patches + the width patch + the
+   `pi-server` drop (`install-pi-server.sh`). Check the changelog for tool-API
+   changes (we override built-ins). The `@mariozechner/*` compat aliases will
+   eventually be removed — then rename imports everywhere.
 4. **Any `pi install` / package update** → re-run the width patcher (every
    package bundles a fresh unpatched pi-tui).
 5. **pi-sub-* update** → re-apply the grok patch. Valid upstream providers are

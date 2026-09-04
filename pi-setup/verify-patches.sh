@@ -69,12 +69,15 @@ else
          "node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs"
 fi
 
-# ── anthropic client version: Claude Max gates models on the claimed Claude Code version ──
-if node "$SCRIPT_DIR/pi-core-patches/apply-anthropic-client-version.mjs" --check >/dev/null 2>&1; then
-    pass "pi core: anthropic client version >= 2.1.251 (new Claude models reachable on Max OAuth)"
+# ── pi-server: 0.85.0 modular cli.js imports it but upstream forgot the dep ──
+PI_PKG="$(dirname "$PI_DIST")"
+if ! grep -q "@earendil-works/pi-server" "$PI_DIST/experimental/server.js" 2>/dev/null; then
+    pass "pi core: pi-server not needed (not imported by this pi)"
+elif [ -d "$PI_PKG/node_modules/@earendil-works/pi-server" ]; then
+    pass "pi core: pi-server present"
 else
-    fail "pi core: anthropic client version too old — new models 400 with claude_code_version_too_old" \
-         "node pi-setup/pi-core-patches/apply-anthropic-client-version.mjs"
+    fail "pi core: @earendil-works/pi-server missing — every command crashes (ERR_MODULE_NOT_FOUND)" \
+         "bash pi-setup/pi-core-patches/install-pi-server.sh"
 fi
 
 # ── condensed-milk: REMOVED 2026-07-30 ──

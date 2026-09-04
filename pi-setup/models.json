@@ -11,36 +11,7 @@
         "claude-opus-4-6": {
           "contextWindow": 1000000
         }
-      },
-      "models": [
-        {
-          "id": "claude-fable-5-1",
-          "name": "Claude Fable 5.1 — 1M context, long-horizon agentic",
-          "reasoning": true,
-          "input": [
-            "text",
-            "image"
-          ],
-          "contextWindow": 1000000,
-          "maxTokens": 128000,
-          "thinkingLevelMap": {
-            "off": null,
-            "xhigh": "xhigh",
-            "max": "max"
-          },
-          "cost": {
-            "input": 10,
-            "output": 50,
-            "cacheRead": 0.25,
-            "cacheWrite": 12.5
-          },
-          "compat": {
-            "forceAdaptiveThinking": true,
-            "supportsTemperature": false,
-            "supportsStrictTools": true
-          }
-        }
-      ]
+      }
     },
     "deepseek": {
       "baseUrl": "https://api.deepseek.com/v1",

@@ -418,7 +418,7 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			// for this class of sub-agent rather than merely unnecessary.
 		} else if (config.parentModel) {
 			const parentProvider = config.parentModel.split("/")[0]?.toLowerCase() ?? "";
-			const anthropicProviders = ["anthropic", "claude-bridge"];
+			const anthropicProviders = ["anthropic"];
 			// no provider prefix means the default provider is being used —
 			// check if that's anthropic by looking at the model name
 			const isClaudeModel = (id: string) =>
