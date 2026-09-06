@@ -8,7 +8,7 @@
  *     `@earendil-works/*` -> `@mariozechner/*`
  *   - his DI wrapper / config plumbing dropped; tool lists are consts here,
  *     matching how finder/oracle/librarian are written in this repo
- *   - OUR model inheritance is KEPT and his omission fixed (see MODEL below)
+ *   - model pinned to xai/grok-4.5 high (see MODEL below)
  *   - `description` is optional with a derived fallback (see PARAMS below)
  *
  * WHAT IT ADDS OVER `Task`
@@ -18,10 +18,9 @@
  * `--no-session`, so every child was a dead end.
  *
  * MODEL
- * upstream passes no model at all, which on our setup would silently fall back
- * to settings' defaultProvider rather than the model the parent is actually
- * using. we pass `parentModel` so the child inherits the parent's
- * provider+auth route (see pi-spawn's resolution block).
+ * pinned to xai/grok-4.5 at high thinking, the same model chad runs. the
+ * default provider auths it whatever session spawned the child, so a delegate
+ * never depends on the parent's provider (see pi-spawn's pinModel).
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -37,6 +36,10 @@ import {
 	subAgentResult,
 	type SingleResult,
 } from "./lib/sub-agent-render";
+
+/** provider-qualified: `pinModel` passes it through untouched (pi 0.84 #7327). */
+const MODEL = "xai/grok-4.5";
+const THINKING = "high";
 
 /*
  * `apply_patch` rather than edit/write: those tools no longer exist, and pi's
@@ -171,10 +174,6 @@ export function createDelegateTool(): ToolDefinition {
 				/* graceful — provenance only */
 			}
 
-			// inherit the parent's model so the child uses the same provider and
-			// auth route rather than settings' defaultProvider.
-			const parentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
-
 			const singleResult: SingleResult = {
 				agent: "delegate",
 				task: description,
@@ -186,8 +185,9 @@ export function createDelegateTool(): ToolDefinition {
 			const result = await piSpawn({
 				cwd: ctx.cwd,
 				task: prompt.value,
-				model: parentModel,
-				parentModel,
+				model: MODEL,
+				pinModel: true,
+				thinkingLevel: THINKING,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				signal,

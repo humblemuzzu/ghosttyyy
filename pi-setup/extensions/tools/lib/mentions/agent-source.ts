@@ -42,7 +42,7 @@ const agents: Record<AgentMentionKind, AgentDef> = {
   },
   chad: {
     tool: "chad",
-    description: "read-only deep research subagent — cheap enough to swarm",
+    description: "read-only deep research subagent — built to swarm",
   },
 };
 

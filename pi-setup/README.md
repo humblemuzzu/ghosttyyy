@@ -45,9 +45,6 @@ disable one, delete it or move it out of `extensions/`.
 | `subagent-inspector/` | `Ctrl+Shift+A` / `/subagents` — drill into a sub-agent's live transcript |
 | `local-model.ts` | `/local` — start/stop the llama.cpp router |
 
-`kimi-code-token.mjs` also lives here but is a helper script (OAuth token refresher called by the
-`kimi-code` provider), not a loaded extension.
-
 ### Custom Tools (28)
 
 The `tools/` extension replaces pi's built-ins and adds new tools:
@@ -98,10 +95,8 @@ custom bridge/provider needed.
 | Provider | Access |
 |---|---|
 | `xai` (default, `grok-4.5`) | Grok OAuth (`/login xai`); `grok-4.6` also in favorites |
-| `anthropic` (`claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context overrides) |
+| `anthropic` (`claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context natively) |
 | `deepseek` (`deepseek-v4-pro/flash`) | `$DEEPSEEK_API_KEY`, 1M context |
-| `kimi-code` (`kimi-for-coding`, K2.7) | Kimi Code subscription OAuth (`kimi-code-token.mjs`) |
-| `sakana` (`fugu`, `fugu-ultra`) | `$SAKANA_API_KEY`, $20/mo, OpenAI Responses API |
 | `openai-codex`, `kimi-coding` | pi built-in providers |
 | `llama-local` (`LFM2.5-2.6B`) | local llama.cpp router, managed via `/local` |
 
@@ -155,8 +150,7 @@ pi-setup/
 │   ├── tools/                  # 29 custom tools + shared lib/
 │   ├── pi-tool-display/        # config.json (all tool overrides false — required)
 │   ├── system-prompt.ts  mentions.ts  session-name.ts  session-breakdown.ts
-│   ├── md-export.ts  notify.ts  local-model.ts
-│   └── kimi-code-token.mjs     # Kimi Code OAuth helper (not an extension)
+│   └── md-export.ts  notify.ts  local-model.ts
 ├── agents/                     # 9 agent prompt markdown files
 ├── themes/                     # gruvbox.json, nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)

@@ -36,6 +36,10 @@ export const KEYBINDINGS = {
         defaultKeys: "shift+tab",
         description: "Cycle thinking level",
     },
+    "app.thinking.save": {
+        defaultKeys: "ctrl+s",
+        description: "Save thinking level",
+    },
     "app.model.cycleForward": {
         defaultKeys: "ctrl+p",
         description: "Cycle to next model",

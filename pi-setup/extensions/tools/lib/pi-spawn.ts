@@ -241,11 +241,11 @@ export interface PiSpawnConfig {
 	 * the inheritance rule below exists for ONE reason: finder/oracle/librarian
 	 * name claude models, and a non-anthropic parent has no route to serve them,
 	 * so copying the parent is the only thing that can work. that reasoning does
-	 * not apply to a sub-agent whose model is self-sufficient on its own provider
-	 * key — `chad` is deepseek because deepseek IS the tool, not because the
-	 * parent happens to be on it.
+	 * not apply to a sub-agent pinned to a model its own provider serves
+	 * regardless of the parent — `chad` and `delegate` run xai/grok-4.5, not
+	 * whatever the parent happens to be on.
 	 *
-	 * a pinned model must already be provider-qualified ("deepseek/deepseek-v4-flash").
+	 * a pinned model must already be provider-qualified ("xai/grok-4.5").
 	 * it is passed through untouched, so a bare id would hit pi 0.84's ambiguity
 	 * error (#7327) rather than resolving to the wrong provider silently.
 	 */
@@ -408,7 +408,7 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 
 	// resolve model: use the tool's designated model when the parent provider
 	// is Anthropic (can serve Claude models directly). when the parent is on a
-	// non-Anthropic provider (deepseek, kimi-code, sakana, etc), inherit the
+	// non-Anthropic provider (kimi-coding, llama-local, etc), inherit the
 	// parent model since Claude subagent models would require separate API access.
 	if (config.model) {
 		let resolvedModel = config.model;
@@ -429,8 +429,8 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 				|| (!parentProvider.includes("/") && isClaudeModel(parentModelId))
 				|| (parentProvider === "" && isClaudeModel(parentModelId));
 
-			// when parent is non-Anthropic (deepseek, kimi-code, sakana, etc), inherit
-			// parent model so subagents don't need separate Claude API access
+			// when parent is non-Anthropic (kimi-coding, llama-local, etc),
+			// inherit parent model so subagents don't need separate Claude API access
 			if (!isAnthropicParent) {
 				resolvedModel = config.parentModel;
 			} else {

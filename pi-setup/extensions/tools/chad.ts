@@ -1,5 +1,5 @@
 /**
- * chad — a read-only deep research sub-agent, pinned to deepseek-v4-flash.
+ * chad — a read-only deep research sub-agent, pinned to xai/grok-4.5.
  *
  * WHAT IT IS FOR
  *
@@ -9,12 +9,11 @@
  *
  * WHY IT IS PINNED (and why that needed a change in pi-spawn)
  *
- * deepseek-v4-flash is $0.14/$0.28 per M with a 1M window. that is what makes a
- * swarm affordable — roughly 35x cheaper on input than opus — so the model is
- * not an implementation detail here, it IS the tool. `pinModel` exists for
- * exactly that: piSpawn otherwise copies the parent's model whenever the parent
- * is not anthropic, which would silently turn a chad launched from a kimi or
- * sakana session into a kimi or sakana agent.
+ * a swarm must run on the same model whatever session spawned it. grok-4.5 is
+ * the model this setup runs on, and `pinModel` exists for exactly that:
+ * piSpawn otherwise copies the parent's model whenever the parent is not
+ * anthropic, which would silently turn a chad launched from a kimi or
+ * llama-local session into a kimi or llama-local agent.
  *
  * WHY IT IS READ-ONLY
  *
@@ -29,14 +28,6 @@
  * child also runs under the read-only bash policy (lib/read-only-bash.ts),
  * enforced in its own process, not requested in its prompt.
  *
- * NOT INHERITED FROM delegate
- *
- * `collectSubAgentImages` is deliberately absent. deepseek is text-only
- * (`input: ["text"]`), so a chad that opens a PNG sees a placeholder — pi-ai
- * downgrades it. the pixels would still be sitting in the child's messages and
- * would land in the PARENT's context, which can see them: an expensive image
- * arriving with no comment on it, because the agent that fetched it was blind.
- * a chad returns prose.
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -46,6 +37,7 @@ import { requireParam, resolveParam } from "./lib/params";
 import { piSpawn, resolveAliases, zeroUsage, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
 import {
 	applySessionMeta,
+	collectSubAgentImages,
 	getFinalOutput,
 	renderAgentTree,
 	subAgentResult,
@@ -57,27 +49,22 @@ import {
  * bare id would hit pi 0.84's "ambiguous across providers" error (#7327)
  * instead of quietly resolving somewhere else.
  */
-const MODEL = "deepseek/deepseek-v4-flash";
+const MODEL = "xai/grok-4.5";
 const THINKING = "high";
-/** the env var that carries this provider's auth. checked before spawning. */
-const API_KEY_ENV = "DEEPSEEK_API_KEY";
 
 /*
  * NO mutation tool of any kind: no apply_patch, no format_file, no undo_edit.
  * `bash` is present but runs under the read-only policy (readOnlyBash below).
  *
- * `screenshot` is out because deepseek has no vision. `oracle`, `finder` and
- * `librarian` are out because piSpawn hands a child the parent's model when the
- * parent is not anthropic — inside a chad they would all be deepseek, and a
- * deepseek "opus" is not an oracle. the seven github tools are here directly
- * for the same reason: nesting a librarian would spawn a whole extra process to
- * reach tools chad can just call. `chad` and `delegate` are out because a
- * swarm that can spawn swarms is a fork bomb.
+ * `screenshot` is in — grok sees images. `oracle`/`finder`/`librarian` are out
+ * because nesting one would run chad's pinned model: a whole extra process for
+ * tools chad can call itself. the seven github tools are here directly for the
+ * same reason. `chad`/`delegate` are out — a swarm that spawns swarms is a fork bomb.
  */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
 const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash", "skill",
-	"web_search", "read_web_page",
+	"web_search", "read_web_page", "screenshot",
 	"read_github", "search_github", "list_directory_github",
 	"list_repositories", "glob_github", "commit_search", "diff",
 ];
@@ -128,10 +115,10 @@ export function createChadTool(config: ChadConfig = {}): ToolDefinition {
 		name: "chad",
 		label: "Chad",
 		description:
-			"Deep read-only research agent. Runs on a cheap 1M-context model, so several " +
-			"can be launched at once for genuinely parallel research.\n\n" +
+			"Deep read-only research agent. Runs on xai/grok-4.5 at high thinking, so " +
+			"several can be launched at once for genuinely parallel research.\n\n" +
 			"Tools: read, grep, find, ls, bash (read-only), skill, web_search, read_web_page, " +
-			"and the seven GitHub tools.\n\n" +
+			"screenshot, and the seven GitHub tools.\n\n" +
 			"IT CANNOT CHANGE ANYTHING. There is no apply_patch and bash is restricted to " +
 			"read-only commands. Use it to find out; use delegate to do.\n\n" +
 			"When to use chad:\n" +
@@ -182,27 +169,6 @@ export function createChadTool(config: ChadConfig = {}): ToolDefinition {
 			const prompt = requireParam(params, PROMPT_PARAMS, "chad");
 			if ("error" in prompt) return prompt.error as any;
 
-			/*
-			 * preflight the credential rather than spawning into an auth failure.
-			 * a swarm makes this worth doing: eight children each taking ~10s to
-			 * die on the same missing key is eight confusing errors instead of one
-			 * clear one, and the pi-side message reads like a model problem.
-			 */
-			if (!process.env[API_KEY_ENV]?.trim()) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text:
-								`chad runs on ${MODEL}, and ${API_KEY_ENV} is not set in this environment.\n\n` +
-								`Export it (it lives in ~/.zshrc alongside the other provider keys) and start a ` +
-								`new session, or use delegate, which inherits your own model.`,
-						},
-					],
-					isError: true,
-				} as any;
-			}
-
 			const description =
 				resolveParam(params, DESCRIPTION_PARAMS) ?? deriveDescription(prompt.value);
 			const continueId = resolveParam(params, ["continueId", "continue_id", "sessionId"]);
@@ -227,7 +193,7 @@ export function createChadTool(config: ChadConfig = {}): ToolDefinition {
 				task: prompt.value,
 				model: MODEL,
 				// pinned: NOT parentModel. see PiSpawnConfig.pinModel — inheriting
-				// here would make a chad launched from kimi or sakana that model.
+				// here would make a chad launched from kimi or llama-local that model.
 				pinModel: true,
 				thinkingLevel: THINKING,
 				readOnlyBash: true,
@@ -279,7 +245,12 @@ export function createChadTool(config: ChadConfig = {}): ToolDefinition {
 				);
 			}
 
-			return subAgentResult(withRoutingMetadata(output, singleResult), singleResult, false);
+			return subAgentResult(
+				withRoutingMetadata(output, singleResult),
+				singleResult,
+				false,
+				collectSubAgentImages(result.messages),
+			);
 		},
 
 		renderCall(args: any, theme: any, context: any) {

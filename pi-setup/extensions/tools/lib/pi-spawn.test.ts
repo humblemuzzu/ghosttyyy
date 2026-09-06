@@ -88,7 +88,7 @@ async function launch(config: Record<string, unknown>): Promise<Launch> {
 }
 
 describe("pinModel: the model survives every parent", () => {
-	const PINNED = "deepseek/deepseek-v4-flash";
+	const PINNED = "xai/grok-4.5";
 
 	test("anthropic parent — pinned model is used verbatim", async () => {
 		const run = await launch({
@@ -104,9 +104,7 @@ describe("pinModel: the model survives every parent", () => {
 		// config.parentModel`, turning a chad launched from a kimi session into
 		// a kimi agent with nothing failing anywhere.
 		for (const parentModel of [
-			"kimi-code/kimi-for-coding",
-			"sakana/fugu-ultra",
-			"deepseek/deepseek-v4-pro",
+			"kimi-coding/kimi-for-coding",
 			"llama-local/LFM2.5-2.6B",
 		]) {
 			const run = await launch({ model: PINNED, pinModel: true, parentModel });
@@ -126,9 +124,9 @@ describe("inheritance is unchanged for everyone else", () => {
 	test("non-anthropic parent still overrides a claude model", async () => {
 		const run = await launch({
 			model: "claude-sonnet-5",
-			parentModel: "kimi-code/kimi-for-coding",
+			parentModel: "kimi-coding/kimi-for-coding",
 		});
-		expect(run.valueOf("--model")).toBe("kimi-code/kimi-for-coding");
+		expect(run.valueOf("--model")).toBe("kimi-coding/kimi-for-coding");
 	});
 
 	test("anthropic parent still provider-qualifies a bare id", async () => {
@@ -143,7 +141,7 @@ describe("inheritance is unchanged for everyone else", () => {
 describe("thinkingLevel", () => {
 	test("is passed as its own flag", async () => {
 		const run = await launch({
-			model: "deepseek/deepseek-v4-flash",
+			model: "xai/grok-4.5",
 			pinModel: true,
 			thinkingLevel: "high",
 		});
@@ -151,7 +149,7 @@ describe("thinkingLevel", () => {
 	});
 
 	test("is absent when not asked for, so the child keeps its own default", async () => {
-		const run = await launch({ model: "deepseek/deepseek-v4-flash", pinModel: true });
+		const run = await launch({ model: "xai/grok-4.5", pinModel: true });
 		expect(run.args).not.toContain("--thinking");
 	});
 });
@@ -159,7 +157,7 @@ describe("thinkingLevel", () => {
 describe("readOnlyBash", () => {
 	test("sets the env var the child's bash tool reads", async () => {
 		const run = await launch({
-			model: "deepseek/deepseek-v4-flash",
+			model: "xai/grok-4.5",
 			pinModel: true,
 			readOnlyBash: true,
 			builtinTools: ["read", "bash"],
@@ -176,7 +174,7 @@ describe("readOnlyBash", () => {
 describe("tool allowlist still reaches the child both ways", () => {
 	test("--tools and PI_SUBAGENT_TOOLS are fed by the same list", async () => {
 		const run = await launch({
-			model: "deepseek/deepseek-v4-flash",
+			model: "xai/grok-4.5",
 			pinModel: true,
 			builtinTools: ["read", "grep"],
 			extensionTools: ["read", "web_search", "glob"],

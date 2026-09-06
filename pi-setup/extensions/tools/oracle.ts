@@ -38,10 +38,7 @@ const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
  * references when local information is insufficient — the agent prompt already
  * instructs this ("Use web tools only when local information is insufficient
  * or a current reference is needed"), so these tools now fulfil that line.
- *
- * NOTE: what comes back to the parent is the oracle's PROSE about the image —
- * `getFinalOutput` keeps text parts only, so the pixels stay inside the child.
- * To see a screenshot yourself, call the tool directly.
+ * Screenshots return to the parent via `collectSubAgentImages` (most recent 2).
  */
 const EXTENSION_TOOLS = [
 	"read", "grep", "find", "ls", "bash",

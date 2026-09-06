@@ -35,16 +35,15 @@ describe("chad allowlist: read-only by construction", () => {
 	test("has the research toolset", () => {
 		for (const tool of [
 			"read", "grep", "find", "ls", "bash", "skill",
-			"web_search", "read_web_page",
+			"web_search", "read_web_page", "screenshot",
 		]) {
 			expect(allowlist).toContain(tool);
 		}
 	});
 
 	test("has the seven github tools directly, rather than nesting a librarian", () => {
-		// a nested librarian would inherit deepseek (piSpawn copies the parent
-		// model for non-anthropic parents), i.e. a whole extra process to reach
-		// tools chad can call itself.
+		// a nested librarian would run chad's pinned model anyway — a whole
+		// extra process to reach tools chad can call itself.
 		for (const tool of [
 			"read_github", "search_github", "list_directory_github",
 			"list_repositories", "glob_github", "commit_search", "diff",
@@ -53,14 +52,7 @@ describe("chad allowlist: read-only by construction", () => {
 		}
 	});
 
-	test("excludes screenshot — deepseek is text-only", () => {
-		// pi-ai downgrades images to "(tool image omitted)" for a model whose
-		// `input` lacks "image", so a screenshot here is a tool call that can
-		// never return anything the agent can read.
-		expect(allowlist).not.toContain("screenshot");
-	});
-
-	test("excludes the sub-agents that would degrade to deepseek", () => {
+	test("excludes the sub-agents — nesting one is a process for tools chad already has", () => {
 		for (const tool of ["oracle", "finder", "librarian", "code_review"]) {
 			expect(allowlist).not.toContain(tool);
 		}
@@ -97,7 +89,7 @@ describe("chad description tells the parent what it is", () => {
 	});
 
 	test("names its own tools", () => {
-		for (const tool of ["web_search", "read_web_page", "bash", "GitHub"]) {
+		for (const tool of ["web_search", "read_web_page", "screenshot", "bash", "GitHub"]) {
 			expect(chad.description).toContain(tool);
 		}
 	});
@@ -139,26 +131,3 @@ describe("chad schema", () => {
 	});
 });
 
-describe("chad refuses to spawn without its provider key", () => {
-	test("returns a clear error instead of spawning into an auth failure", async () => {
-		const chad = createChadTool() as any;
-		const saved = process.env.DEEPSEEK_API_KEY;
-		delete process.env.DEEPSEEK_API_KEY;
-		try {
-			const result = await chad.execute(
-				"call-1",
-				{ prompt: "anything" },
-				undefined,
-				undefined,
-				{ cwd: process.cwd() } as any,
-			);
-			expect(result.isError).toBe(true);
-			expect(result.content[0].text).toContain("DEEPSEEK_API_KEY");
-			// the way out has to be in the message, not in the reader's head
-			expect(result.content[0].text).toContain("delegate");
-		} finally {
-			if (saved === undefined) delete process.env.DEEPSEEK_API_KEY;
-			else process.env.DEEPSEEK_API_KEY = saved;
-		}
-	});
-});

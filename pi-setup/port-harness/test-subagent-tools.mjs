@@ -34,13 +34,13 @@ const CASES = {
   chad: {
     builtinTools: ["read", "grep", "find", "ls", "bash"],
     extensionTools: ["read", "grep", "find", "ls", "bash", "skill",
-      "web_search", "read_web_page",
+      "web_search", "read_web_page", "screenshot",
       "read_github", "search_github", "list_directory_github",
       "list_repositories", "glob_github", "commit_search", "diff"],
     // chad is defined by its model and its read-only bash; a probe that
     // dropped these would pass while testing a different agent.
     pinModel: true,
-    model: "deepseek/deepseek-v4-flash",
+    model: "xai/grok-4.5",
     thinkingLevel: "high",
     readOnlyBash: true,
   },

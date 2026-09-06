@@ -401,17 +401,16 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | **finder** | claude-sonnet-5 | Concept-based parallel code search (8+ searches/turn, read-only) |
 | **oracle** | claude-opus-4-6 | Architecture review, complex planning (read + bash + web + screenshot) |
 | **code_review** | claude-sonnet-5 | Structured 2-phase diff review with XML output |
-| **delegate** | inherits parent | Full resumable sub-agent for parallel independent work |
-| **chad** | `deepseek-v4-flash` **pinned** | Read-only deep research, built to swarm — 5–8 at once, one question each |
+| **delegate** | `xai/grok-4.5` **pinned** | Full resumable sub-agent for parallel independent work |
+| **chad** | `xai/grok-4.5` **pinned** | Read-only deep research, built to swarm — 5–8 at once, one question each |
 | **librarian** | claude-sonnet-5 | Cross-repo GitHub exploration (7 GitHub tools) |
 
-On a non-Anthropic parent (deepseek/kimi/sakana/llama), every sub-agent inherits
+On a non-Anthropic parent (kimi/llama), finder/oracle/librarian inherit
 the parent model — the Claude labels above apply on the default Anthropic route.
 
-**`chad` is the exception, deliberately.** Its model is pinned whatever you are
-running, because the model IS the tool: deepseek-v4-flash costs $0.14/$0.28 per M
-with a 1M window, which is what makes eight concurrent researchers reasonable.
-It cannot change anything — no `apply_patch`, and its bash runs under an
+**`chad` and `delegate` are pinned, deliberately.** Both run `xai/grok-4.5` at
+high thinking whatever session spawned them — the model the setup itself is on.
+chad cannot change anything — no `apply_patch`, and its bash runs under an
 allowlist that refuses writes, redirection, `sed -i`, interpreters and every git
 subcommand that mutates. Reach for `chad` to find out, `delegate` to do.
 
@@ -461,8 +460,7 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 | `xai` | grok-4.5 (default · high), grok-4.6 | **Primary** — Grok OAuth |
 | `anthropic` | claude-opus-5, claude-opus-4-6/4-7/4-8 (1M context) | Claude Max via pi-claude-code-use |
 | `deepseek` | deepseek-v4-pro, deepseek-v4-flash | 1M context, thinking mode |
-| `kimi-code` | kimi-for-coding (K2.7 Code) | Kimi Code subscription OAuth |
-| `sakana` | fugu, fugu-ultra | Multi-agent orchestration (Responses API) |
+| `kimi-coding` | k3 (1M), k3-256k, kimi-for-coding (K2.7) | Kimi Code OAuth (native) |
 | `llama-local` | LFM2.5-2.6B | Local llama.cpp router, managed via `/local` |
 | `openai-codex` | gpt-5.5 | OpenAI Codex OAuth |
 

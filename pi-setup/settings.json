@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.85.0",
+  "lastChangelogVersion": "0.85.1",
   "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
@@ -44,7 +44,7 @@
   "quietStartup": true,
   "packages": [
     "npm:pi-token-burden",
-    "npm:@benvargas/pi-claude-code-use",
+    "npm:@benvargas/pi-claude-code-use@1.0.5",
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",

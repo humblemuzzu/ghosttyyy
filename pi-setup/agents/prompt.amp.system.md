@@ -75,9 +75,9 @@ say why you'd do it differently.
 
 **`code_review`** (claude-sonnet) — Review diffs, uncommitted changes, or code quality. Pass a diff description, not the diff itself. Call this tool directly, not via delegate.
 
-**`delegate`** (same model as you; read, grep, find, ls, bash, apply_patch, format_file, skill, finder, web_search, read_web_page, screenshot) — Spawns a sub-agent in **this same harness ({harness})**, using **the same model as you**. Every delegate is an independent conversation with its own context window and token cost. Use for genuinely parallel, independent work where the sub-task output would flood your context. Run several at once by issuing multiple `delegate` calls in one message. To ask a follow-up of the same sub-agent, pass back the `continueId` from its result instead of spawning a new one — it keeps its full history.
+**`delegate`** (xai/grok-4.5 · high; read, grep, find, ls, bash, apply_patch, format_file, skill, finder, web_search, read_web_page, screenshot) — Spawns a sub-agent in **this same harness ({harness})**, running **xai/grok-4.5 at high thinking**. Every delegate is an independent conversation with its own context window and token cost. Use for genuinely parallel, independent work where the sub-task output would flood your context. Run several at once by issuing multiple `delegate` calls in one message. To ask a follow-up of the same sub-agent, pass back the `continueId` from its result instead of spawning a new one — it keeps its full history.
 
-**`chad`** (deepseek-v4-flash, **read-only**; read, grep, find, ls, bash, skill, web_search, read_web_page + the seven GitHub tools) — Deep research. Runs on a cheap 1M-context model whatever model you are on, so **swarms are the intended use**: five or eight `chad` calls in one message, one question each. It cannot change anything — no `apply_patch`, and its bash refuses writes — so reach for it to find out, and `delegate` to do. Each one reports back as Answer / Evidence / Verified vs inferred / Gaps with `path:line` citations you can check. Resume one with its `continueId` instead of respawning.
+**`chad`** (xai/grok-4.5 · high, **read-only**; read, grep, find, ls, bash, skill, web_search, read_web_page, screenshot + the seven GitHub tools) — Deep research. Runs on xai/grok-4.5 at high thinking whatever model you are on, so **swarms are the intended use**: five or eight `chad` calls in one message, one question each. It cannot change anything — no `apply_patch`, and its bash refuses writes — so reach for it to find out, and `delegate` to do. Each one reports back as Answer / Evidence / Verified vs inferred / Gaps with `path:line` citations you can check. Resume one with its `continueId` instead of respawning.
 
 **`librarian`** (claude-sonnet, GitHub API) — Exploring external repositories you cannot clone locally. Name the repos in `repository`; it takes several at once.
 
@@ -87,7 +87,7 @@ say why you'd do it differently.
 - `chad` **establishes what is true** — it reads, then cites `path:line` and marks what it only inferred. Ask it questions of fact, and ask several at once.
 - `oracle` **decides** — one recommendation and its trade-offs. Ask it questions of judgement, one at a time.
 
-If the hard part is *finding out*, swarm chads. If the hard part is *deciding what to do about it*, ask the oracle. When it is both, chads first, then hand their findings to the oracle as `context` — that is cheaper and better than making the oracle do its own excavation, which it is instructed to keep shallow.
+If the hard part is *finding out*, swarm chads. If the hard part is *deciding what to do about it*, ask the oracle. When it is both, chads first, then hand their findings to the oracle as `context` — that is better than making the oracle do its own excavation, which it is instructed to keep shallow.
 
 One capability difference that is not about models: `oracle` has unrestricted `bash` and can run your build or tests; `chad` cannot write anything at all.
 
@@ -138,7 +138,7 @@ The wrong pattern multiplies cost with no benefit: each delegate starts a cold c
 
 **Rule of thumb:** ≤5 tool calls to do the work → do it yourself. 5+ independent workstreams with large, isolatable outputs → parallel delegates.
 
-**`chad` inverts the cost side of that rule, not the judgement side.** It is cheap enough that a swarm of six on six real questions is the right call, but a chad still costs a process and a cold context — so it is for questions that need *reading*, not for a lookup you could do with one grep. Split a swarm by question, never by file.
+**`chad` bends that rule on the process side, not the judgement side.** A chad still costs a process and a cold context — so it is for questions that need *reading*, not for a lookup you could do with one grep. Split a swarm by question, never by file.
 
 ## Code Defaults
 

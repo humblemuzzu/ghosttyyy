@@ -38,11 +38,11 @@ continuing to add.
 ## Provider chain
 
 ```
-pi CLI (v0.85.0) — @earendil-works/pi-coding-agent
+pi CLI (v0.85.1) — @earendil-works/pi-coding-agent
   ├─ xai (native)                               → Grok OAuth         [DEFAULT]
   ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
-  ├─ kimi-code (custom) + kimi-code-token.mjs   → Kimi Code sub
-  ├─ deepseek, sakana, openai-codex             → API keys in ~/.zshrc
+  ├─ kimi-coding (native)                       → Kimi Code OAuth (/login)
+  ├─ deepseek, openai-codex (native)            → API keys in ~/.zshrc
   └─ llama-local                                → llama.cpp, /local
 ```
 
@@ -84,7 +84,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 | `resource-loader.js` | pi core `dist/core/` | suppresses extension tool-conflict boot errors (safety net) |
 | `session-selector.js` + `keybindings.js` | pi core | session pinning, `Ctrl+B` in `/resume`. Pins in `~/.pi/agent/pinned-sessions.json` (user data, never wiped) |
 | **pi-tui width patch** | **every** installed pi-tui copy | conservative grapheme widths. Without it the TUI smears on Indic/exotic unicode. **Every package bundles its own pi-tui**, so any install brings a fresh unpatched copy |
-| **`pi-server` dependency** | `$PI/node_modules/@earendil-works/pi-server` | 0.85.0 modular `dist/cli.js` imports it but the npm package forgets to declare it — every command crashes without it. Wiped on update; re-drop via `install-pi-server.sh` |
+| ~~`pi-server` dependency~~ | ~~`$PI/node_modules/@earendil-works/pi-server`~~ | **0.85.0-only landmine, retired.** 0.85.0's modular `dist/cli.js` imported it but the npm package forgot the dep — every command crashed. 0.85.1 removed the experimental server import entirely (`dist/experimental/` gone), so nothing needs it. Keep `install-pi-server.sh` only for rollback to 0.85.0 |
 | pi-sub grok provider | `@marckrenn/pi-sub-*` | wiped by every `pi install` / `pi update --extensions` |
 | pi-tool-display `config.json` | `~/.pi/agent/extensions/pi-tool-display/` | all tool overrides `false` — otherwise it replaces our custom tools |
 | pi-mcp-adapter settings | `~/.pi/agent/mcp.json` | `scriptMode: false`, skills `[]` |
@@ -100,7 +100,7 @@ cp pi-setup/pi-core-patches/keybindings.js      $PI/dist/core/keybindings.js
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs           # all copies
 node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check   # audit
 
-bash pi-setup/pi-core-patches/install-pi-server.sh                   # 0.85.0 upstream-forgot dep
+bash pi-setup/pi-core-patches/install-pi-server.sh                   # 0.85.0-ONLY (rollback); 0.85.1+ removed the import
 
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
 
@@ -139,17 +139,18 @@ not `mcpScript`; skills must not contain `mcp-scripting`.
 
 | Package | Ver | Purpose | Patched |
 |---|---|---|---|
-| `@earendil-works/pi-coding-agent` | 0.85.0 | pi itself | 3 core patches |
-| `@benvargas/pi-claude-code-use` | **1.0.5 (held)** | Claude Max OAuth payload shim | no |
+| `@earendil-works/pi-coding-agent` | 0.85.1 | pi itself | 3 core patches |
+| `@benvargas/pi-claude-code-use` | **1.0.5 (pinned `@1.0.5`)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
 | `pi-autoresearch` | 1.7.0 | experiment loop (git install) | no |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
-| `pi-codex-goal` | 0.2.0 | `/goal` | no |
+| `pi-codex-goal` | 0.2.1 | `/goal` | no |
 | `pi-mcp-adapter` | 2.32.1 | one `mcp` proxy tool, lazy servers | **config** |
 
-**pi-claude-code-use held at 1.0.5** deliberately; 2.x's only new ≥0.84 feature
-needs registered MCP aliases, which we never have.
+**pi-claude-code-use pinned `@1.0.5`** in settings.json and install.sh, so even
+`pi update --extensions` skips it; 2.x's only new ≥0.84 feature needs
+registered MCP aliases, which we never have.
 
 **`pi-autoresearch` shortcut is pinned to `ctrl+shift+r`** in
 `pi-setup/extensions/pi-autoresearch.json` — pi-tui 0.84.2 took `ctrl+shift+f`
@@ -243,8 +244,6 @@ why tests can live beside an extension without being loaded.
 | `guardrails/` | re-injects `rules.amp.md` per turn (skipped for `llama-local`) + comment gate |
 | `tools/` | 29 custom tools |
 
-`kimi-code-token.mjs` also lives here but is a helper script, not an extension.
-
 ### guardrails — behaviour rules the model cannot forget or ignore
 
 A system prompt stops governing behaviour after roughly eight turns, and
@@ -315,7 +314,7 @@ time. They now agree, and the agreement is the point.
 | `finder` | `finder.ts` | concept search sub-agent |
 | `oracle` | `oracle.ts` | architecture, hard bugs, verdicts |
 | `delegate` | `delegate.ts` | resumable peer sub-agent (`continueId`) |
-| `chad` | `chad.ts` | read-only research, pinned deepseek, built to swarm |
+| `chad` | `chad.ts` | read-only research, pinned xai/grok-4.5, built to swarm |
 | `librarian` | `librarian.ts` | external repos via GitHub API |
 | `agent_message` | `agent-message.ts` | inter-session mailbox (`setupAgentMessage(pi)`) |
 | `web_search` | `web-search.ts` | Parallel AI Search |
@@ -396,11 +395,9 @@ retries, self-clears at `maxTimeoutSec()` + slack).
 
 ### chad — read-only, pinned, swarmable
 
-`pinModel: true` + `--thinking high` pins `deepseek/deepseek-v4-flash` whatever
-the parent runs. The model **is** the tool: cheap 1M context is what makes eight
-at once reasonable, so inheriting the parent would silently destroy it. Note
-DeepSeek peak pricing (see `/deepseek`) makes a peak-hour swarm ~4.7× more
-expensive on output.
+`pinModel: true` + `--thinking high` pins `xai/grok-4.5` whatever the parent
+runs — the model the setup itself is on. `delegate` is pinned the same way, so
+both agents run grok-4.5 at high thinking from any session.
 
 `readOnlyBash: true` sets `PI_BASH_READ_ONLY=1`; `lib/read-only-bash.ts` is an
 **allowlist** (~60 read commands, git gated per-subcommand, quote-aware scanner
@@ -418,14 +415,13 @@ unwinnable; an allowlist fails closed and names what it refused.
 - Accepted hole, stated: any allowed binary talked into writing by a flag form
   not yet listed. This is a guardrail on our own agent, not a sandbox.
 
-**Tool surface:** 15 — read, grep, find, ls, bash, skill, web_search,
-read_web_page + the 7 github tools. No `apply_patch`/`format_file`/`undo_edit`
-(the point), no `screenshot` (deepseek is text-only; images become
-`(tool image omitted)`), no `oracle`/`finder`/`librarian` (a child inherits
-deepseek, so it'd be deepseek talking to itself), **no `chad`/`delegate`** — a
-swarm that spawns swarms is a fork bomb (8 → 64 → 512). **The spawn graph is
-acyclic and pinned by `tool-contract.test.ts`:** the only agent→agent edge is
-`delegate → finder`, depth ≤ 2.
+**Tool surface:** 16 — read, grep, find, ls, bash, skill, web_search,
+read_web_page, screenshot + the 7 github tools. No `apply_patch`/`format_file`/
+`undo_edit` (the point), no `oracle`/`finder`/`librarian` (a child would run
+chad's own pinned model — a process for tools chad already has), **no
+`chad`/`delegate`** — a swarm that spawns swarms is a fork bomb (8 → 64 → 512).
+**The spawn graph is acyclic and pinned by `tool-contract.test.ts`:** the only
+agent→agent edge is `delegate → finder`, depth ≤ 2.
 
 ### chad vs oracle
 
@@ -460,7 +456,7 @@ constant in all three and re-run `lib/vision.test.ts`.**
   both throw `UnusableImageError` before `planView`. Truncation = missing IEND,
   PNG only. `read.ts`'s raw-bytes fallback must skip this class.
 - Sub-agent screenshots reach the caller: `collectSubAgentImages` pulls the **2
-  most recent** images out of oracle/delegate/code_review results.
+  most recent** images out of oracle/delegate/code_review/chad results.
 - Area-average downscale, not Lanczos — UI is all hard edges. Bounds are clamped;
   an out-of-bounds read silently stores 0 (a black pixel, no error).
 - macOS: every tab is its own `NSWindow`; use `CGWindowListCopyWindowInfo` option
@@ -512,11 +508,10 @@ control chars into a single-line string.
 | Provider | Models |
 |---|---|
 | `xai` | `grok-4.5` (default), `grok-4.6` (built-in catalog) |
-| `anthropic` | `claude-fable-5-1`, `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx override) |
+| `anthropic` | `claude-fable-5-1`, `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx) |
 | `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` (1M ctx) |
-| `kimi-code` | `kimi-for-coding` (K2.7, 262K) |
+| `kimi-coding` | `k3` (1M), `k3-256k`, `kimi-for-coding` (K2.7) |
 | `openai-codex` | `gpt-5.5`, `gpt-5.6-sol` |
-| `sakana` | `fugu`, `fugu-ultra` (1M, text+image) |
 | `llama-local` | `Qwen3.8-27B-Uncensored` Q4_K_M (default load), `LFM2.5-2.6B` Q6_K |
 
 ### Sub-agent models
@@ -529,18 +524,9 @@ else → inherit the parent** (a kimi session can't use Claude).
 | finder, librarian, code_review | `claude-sonnet-5` |
 | oracle | `claude-opus-4-6` |
 | read_session, read_web_page | `claude-sonnet-5` |
-| **delegate** | *none — inherits `parentModel`.* A peer must match you. Do not add a `MODEL` const |
-| **chad** | `deepseek/deepseek-v4-flash` **pinned**, provider-qualified (`pinModel` skips `qualifyModel`) |
+| **delegate** | `xai/grok-4.5` **pinned** (`pinModel`), `--thinking high` |
+| **chad** | `xai/grok-4.5` **pinned**, provider-qualified (`pinModel` skips `qualifyModel`) |
 | session-name | haiku, deliberately (one line, every session) |
-
-### Sakana (config-only, `models.json`)
-
-`https://api.sakana.ai/v1`, `api: openai-responses`, Bearer `$SAKANA_API_KEY`.
-pi hardcodes `store: false` and never sends `previous_response_id`, matching
-Sakana's stateless API. **The trap:** with effort unset pi sends `effort: "none"`,
-which Sakana rejects — hence `thinkingLevelMap` maps `off: null` and every other
-level to `high`/`xhigh`. `maxTokens` 32768 is a flagged guess. If reasoning 4xx's
-on `encrypted_content`, fall back to `openai-completions`.
 
 ### Local models
 
@@ -636,9 +622,10 @@ pi-setup/
    error that reads like an auth failure. Whenever a release mentions model
    resolution, provider selection, tool filtering or CLI arguments: open
    `pi-spawn.ts`, then actually call one sub-agent before declaring it clean.
-3. **pi core update** → re-apply the 3 core patches + the width patch + the
-   `pi-server` drop (`install-pi-server.sh`). Check the changelog for tool-API
-   changes (we override built-ins). The `@mariozechner/*` compat aliases will
+3. **pi core update** → re-apply the 3 core patches + the width patch (the
+   `pi-server` drop is 0.85.0-only — 0.85.1+ removed the import; see
+   `pi-migrations.md`). Check the changelog for tool-API changes (we override
+   built-ins). The `@mariozechner/*` compat aliases will
    eventually be removed — then rename imports everywhere.
 4. **Any `pi install` / package update** → re-run the width patcher (every
    package bundles a fresh unpatched pi-tui).

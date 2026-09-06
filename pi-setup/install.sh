@@ -15,7 +15,7 @@
 #   ~/.pi/agent/skills/         — pi-level skills
 #   ~/.pi/agent/settings.json   — settings (anthropic default, gruvbox theme, compaction on, etc.)
 #   ~/.pi/agent/keybindings.json
-#   ~/.pi/agent/models.json     — model context window overrides
+#   ~/.pi/agent/models.json     — custom providers (llama-local, crof)
 #   ~/.pi/agent/permissions.json
 #   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
@@ -150,7 +150,7 @@ if [ -f "$SCRIPT_DIR/models.json" ]; then
     info "Installing model overrides..."
     backup_if_exists "$PI_AGENT/models.json"
     cp "$SCRIPT_DIR/models.json" "$PI_AGENT/models.json"
-    ok "Model overrides installed (Opus 1M context window)"
+    ok "Custom providers installed (llama-local, crof)"
 fi
 
 # ── Keybindings ──
@@ -189,7 +189,7 @@ info "Installing pi packages..."
 # Mirror of settings.json "packages" (source of truth). pi-claude-bridge removed.
 packages=(
     "npm:pi-token-burden"
-    "npm:@benvargas/pi-claude-code-use"
+    "npm:@benvargas/pi-claude-code-use@1.0.5"
     "npm:@marckrenn/pi-sub-bar"
     "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"

@@ -12,6 +12,38 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## 0.85.1 (2026-09-06) — from 0.85.0; experimental server removed, keybindings re-derived
+
+Install (same devEngines workaround): `npm install --prefix /opt/homebrew -g
+--force --ignore-scripts @earendil-works/pi-coding-agent@0.85.1`.
+
+**Patch drift (stock 0.85.0 vs stock 0.85.1, registry tarballs):**
+- resource-loader.js, session-selector.js — byte-identical → stored patches copied clean.
+- keybindings.js — DIFFERS: upstream added `app.thinking.save` (ctrl+s) near
+  line 38. Our three hunks (`app.session.pin` block, `pinSession` mapping,
+  `isRecord` guard) untouched. Re-derived: inserted the upstream block into the
+  stored patch; diff vs stock 0.85.1 shows exactly our hunks, nothing else.
+- args.js — two env-var doc lines removed (PI_SERVER_DIR/PI_SERVER_ID) only;
+  no --tools/--model/--provider change → pi-spawn unaffected.
+
+**pi-server landmine RETIRED.** 0.85.1 removed the whole experimental server
+layer: dist/experimental/ is gone, modular dist/cli.js is `setupCli(); main()`,
+and nothing imports `@earendil-works/pi-server`. install-pi-server.sh is
+0.85.0-only now; verify-patches auto-reports "not needed".
+
+pi-tui 0.85.1 — utils.js byte-identical to 0.85.0, width-patch anchor present;
+re-applied. bin still dist/bundle/cli.js stock → re-pinned to dist/cli.js.
+
+**Verified:** pi --version 0.85.1 · verify-patches.sh all PASS · headless boot
+replied UPDATED_OK. Rollback: ~/pi-update-backup-0.85.0-20260906-194608.
+
+Packages (same run): pi-codex-goal 0.2.0 → 0.2.1 (`pi update --extension
+npm:pi-codex-goal`) — packaging only (npm artifact ships precompiled
+dist/index.js; git installs still load src/index.ts; tools/prompts unchanged).
+pi-claude-code-use untouched at 1.0.5 (held deliberately).
+
+---
+
 ## 0.85.0 (2026-09-04) — from 0.84.4; fable 5.1 official, client-version patch retired
 
 Install (same devEngines workaround): `npm install --prefix /opt/homebrew -g
