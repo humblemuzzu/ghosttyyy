@@ -4,7 +4,7 @@
  * cheerio strips chrome (nav, footer, scripts), finds main content area,
  * converts to clean markdown. ~95% size reduction on typical pages.
  *
- * `prompt` spawns a claude-sonnet-5 sub-agent that receives page content
+ * `prompt` spawns an xai/grok-4.6 high sub-agent that receives page content
  * and returns AI-generated prose (36/1202 calls use this pattern).
  * `start_index`/`max_length` provide character-level pagination (~16 calls).
  * `raw` skips conversion entirely (1 call).
@@ -29,7 +29,8 @@ const MAX_REDIRECTS = 5;
 // matches the sub-agent tier (see AGENTS.md "Sub-agent Models"). only used for
 // the optional `prompt` path, where the question is answered against fetched
 // page content; the plain fetch path spawns no model at all.
-const PROMPT_MODEL = "claude-sonnet-5";
+const PROMPT_MODEL = "xai/grok-4.6";
+const PROMPT_THINKING = "high";
 
 const DEFAULT_PROMPT_SYSTEM = `Analyze web page content and answer questions. Be concise, answer from provided content only. No filler.`;
 
@@ -211,7 +212,8 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 					cwd: ctx.cwd,
 					task,
 					model: PROMPT_MODEL,
-					parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+					pinModel: true,
+					thinkingLevel: PROMPT_THINKING,
 					builtinTools: ["read"],
 					extensionTools: [],
 					systemPromptBody: promptSystem,

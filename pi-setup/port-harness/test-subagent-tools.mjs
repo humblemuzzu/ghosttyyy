@@ -40,7 +40,7 @@ const CASES = {
     // chad is defined by its model and its read-only bash; a probe that
     // dropped these would pass while testing a different agent.
     pinModel: true,
-    model: "xai/grok-4.5",
+    model: "xai/grok-4.6",
     thinkingLevel: "high",
     readOnlyBash: true,
   },

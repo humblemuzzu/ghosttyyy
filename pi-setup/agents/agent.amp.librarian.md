@@ -1,7 +1,7 @@
 ---
 name: librarian
 description: Codebase research and understanding agent
-model: claude-sonnet-5
+model: xai/grok-4.6
 tools: [read_github, search_github, list_directory_github, list_repositories, glob_github, commit_search, diff]
 ---
 

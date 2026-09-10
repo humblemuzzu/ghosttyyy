@@ -2,7 +2,7 @@
  * read_session tool — extract relevant context from a pi session via sub-agent.
  *
  * loads a full session tree (all branches), renders it as structured markdown,
- * then spawns a claude-sonnet-5 sub-agent to extract only the information
+ * then spawns an xai/grok-4.6 high sub-agent to extract only the information
  * relevant to the stated goal. the agent sees the complete tree — including
  * abandoned branches — so it can understand decision points and context.
  *
@@ -24,7 +24,8 @@ import { headTailChars } from "./lib/output-buffer";
 // matches the sub-agent tier (see AGENTS.md "Sub-agent Models"). extracting the
 // relevant thread out of a long, branching session is a comprehension job, not a
 // summarisation one — the cheap tier tended to return the wrong branch.
-const MODEL = "claude-sonnet-5";
+const MODEL = "xai/grok-4.6";
+const THINKING = "high";
 const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
 /**
  * sub-agent (delegate) conversations live outside pi's session directory so
@@ -361,7 +362,8 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 				cwd: ctx.cwd,
 				task,
 				model: MODEL,
-				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+				pinModel: true,
+				thinkingLevel: THINKING,
 				builtinTools: ["read"],
 				extensionTools: [],
 				systemPromptBody: systemPrompt,

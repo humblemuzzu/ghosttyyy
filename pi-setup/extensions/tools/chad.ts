@@ -1,5 +1,5 @@
 /**
- * chad — a read-only deep research sub-agent, pinned to xai/grok-4.5.
+ * chad — a read-only deep research sub-agent, pinned to xai/grok-4.6.
  *
  * WHAT IT IS FOR
  *
@@ -9,7 +9,7 @@
  *
  * WHY IT IS PINNED (and why that needed a change in pi-spawn)
  *
- * a swarm must run on the same model whatever session spawned it. grok-4.5 is
+ * a swarm must run on the same model whatever session spawned it. grok-4.6 is
  * the model this setup runs on, and `pinModel` exists for exactly that:
  * piSpawn otherwise copies the parent's model whenever the parent is not
  * anthropic, which would silently turn a chad launched from a kimi or
@@ -49,7 +49,7 @@ import {
  * bare id would hit pi 0.84's "ambiguous across providers" error (#7327)
  * instead of quietly resolving somewhere else.
  */
-const MODEL = "xai/grok-4.5";
+const MODEL = "xai/grok-4.6";
 const THINKING = "high";
 
 /*
@@ -115,7 +115,7 @@ export function createChadTool(config: ChadConfig = {}): ToolDefinition {
 		name: "chad",
 		label: "Chad",
 		description:
-			"Deep read-only research agent. Runs on xai/grok-4.5 at high thinking, so " +
+			"Deep read-only research agent. Runs on xai/grok-4.6 at high thinking, so " +
 			"several can be launched at once for genuinely parallel research.\n\n" +
 			"Tools: read, grep, find, ls, bash (read-only), skill, web_search, read_web_page, " +
 			"screenshot, and the seven GitHub tools.\n\n" +

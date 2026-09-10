@@ -1,11 +1,11 @@
 /**
- * finder tool — fast parallel code search via a claude-sonnet-5 sub-agent.
+ * finder tool — fast parallel code search via an xai/grok-4.6 sub-agent.
  *
  * replaces the generic subagent(agent: "finder", task: ...) pattern
  * with a dedicated tool. the model calls
  * finder(query: "...") instead of routing through the dispatcher.
  *
- * spawns `pi --mode json` with claude-sonnet-5, constrained to
+ * spawns `pi --mode json` with xai/grok-4.6 high, constrained to
  * read-only tools (read, grep, find, ls). the finder agent
  * maximizes parallelism (8+ tool calls per turn) and completes
  * within ~3 turns.
@@ -23,7 +23,8 @@ import { requireParam } from "./lib/params";
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const FINDER_PARAM_NAMES = ["query", "task", "prompt", "description", "search"] as const;
 
-const MODEL = "claude-sonnet-5";
+const MODEL = "xai/grok-4.6";
+const THINKING = "high";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 const EXTENSION_TOOLS = ["read", "grep", "find", "ls"];
 
@@ -100,7 +101,8 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 				cwd: ctx.cwd,
 				task: queryText,
 				model: MODEL,
-				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+				pinModel: true,
+				thinkingLevel: THINKING,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				systemPromptBody: config.systemPrompt,

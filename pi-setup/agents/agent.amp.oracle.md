@@ -1,7 +1,7 @@
 ---
 name: oracle
 description: Expert technical advisor with advanced reasoning
-model: claude-opus-4-6
+model: xai/grok-4.6
 tools: [read, grep, find, ls, bash, web_search, read_web_page, screenshot]
 ---
 

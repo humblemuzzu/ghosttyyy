@@ -242,10 +242,10 @@ export interface PiSpawnConfig {
 	 * name claude models, and a non-anthropic parent has no route to serve them,
 	 * so copying the parent is the only thing that can work. that reasoning does
 	 * not apply to a sub-agent pinned to a model its own provider serves
-	 * regardless of the parent — `chad` and `delegate` run xai/grok-4.5, not
+	 * regardless of the parent — sub-agents here run xai/grok-4.6, not
 	 * whatever the parent happens to be on.
 	 *
-	 * a pinned model must already be provider-qualified ("xai/grok-4.5").
+	 * a pinned model must already be provider-qualified ("xai/grok-4.6").
 	 * it is passed through untouched, so a bare id would hit pi 0.84's ambiguity
 	 * error (#7327) rather than resolving to the wrong provider silently.
 	 */

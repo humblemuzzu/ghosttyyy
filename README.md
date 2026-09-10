@@ -398,19 +398,17 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 
 | Tool | Model | Purpose |
 |------|-------|---------|
-| **finder** | claude-sonnet-5 | Concept-based parallel code search (8+ searches/turn, read-only) |
-| **oracle** | claude-opus-4-6 | Architecture review, complex planning (read + bash + web + screenshot) |
-| **code_review** | claude-sonnet-5 | Structured 2-phase diff review with XML output |
-| **delegate** | `xai/grok-4.5` **pinned** | Full resumable sub-agent for parallel independent work |
-| **chad** | `xai/grok-4.5` **pinned** | Read-only deep research, built to swarm — 5–8 at once, one question each |
-| **librarian** | claude-sonnet-5 | Cross-repo GitHub exploration (7 GitHub tools) |
+| **finder** | `xai/grok-4.6` **pinned** · high | Concept-based parallel code search (8+ searches/turn, read-only) |
+| **oracle** | `xai/grok-4.6` **pinned** · high | Architecture review, complex planning (read + bash + web + screenshot) |
+| **code_review** | `xai/grok-4.6` **pinned** · high | Structured 2-phase diff review with XML output |
+| **delegate** | `xai/grok-4.6` **pinned** · xhigh | Full resumable sub-agent for parallel independent work |
+| **chad** | `xai/grok-4.6` **pinned** · high | Read-only deep research, built to swarm — 5–8 at once, one question each |
+| **librarian** | `xai/grok-4.6` **pinned** · high | Cross-repo GitHub exploration (7 GitHub tools) |
 
-On a non-Anthropic parent (kimi/llama), finder/oracle/librarian inherit
-the parent model — the Claude labels above apply on the default Anthropic route.
+Sub-agents are **pinned** to Grok, deliberately — they do not inherit the parent.
 
-**`chad` and `delegate` are pinned, deliberately.** Both run `xai/grok-4.5` at
-high thinking whatever session spawned them — the model the setup itself is on.
-chad cannot change anything — no `apply_patch`, and its bash runs under an
+**All research/work sub-agents run `xai/grok-4.6`.** Most use high thinking;
+`delegate` uses xhigh. chad cannot change anything — no `apply_patch`, and its bash runs under an
 allowlist that refuses writes, redirection, `sed -i`, interpreters and every git
 subcommand that mutates. Reach for `chad` to find out, `delegate` to do.
 
@@ -457,9 +455,9 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `xai` | grok-4.5 (default · high), grok-4.6 | **Primary** — Grok OAuth |
+| `xai` | grok-4.6 (default · high), grok-4.5 | **Primary** — Grok OAuth |
 | `anthropic` | claude-opus-5, claude-opus-4-6/4-7/4-8 (1M context) | Claude Max via pi-claude-code-use |
-| `deepseek` | deepseek-v4-pro, deepseek-v4-flash | 1M context, thinking mode |
+| `deepseek` | deepseek-flash (V4.1 Flash) | 1M context, vision, thinking mode |
 | `kimi-coding` | k3 (1M), k3-256k, kimi-for-coding (K2.7) | Kimi Code OAuth (native) |
 | `llama-local` | LFM2.5-2.6B | Local llama.cpp router, managed via `/local` |
 | `openai-codex` | gpt-5.5 | OpenAI Codex OAuth |
@@ -477,7 +475,7 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 ```json
 {
   "defaultProvider": "xai",
-  "defaultModel": "grok-4.5",
+  "defaultModel": "grok-4.6",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }

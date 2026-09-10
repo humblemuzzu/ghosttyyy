@@ -61,7 +61,8 @@ export function normalizeRepositories(input: unknown): string[] {
 		.filter((r) => r.length > 0);
 }
 
-const MODEL = "claude-sonnet-5";
+const MODEL = "xai/grok-4.6";
+const THINKING = "high";
 
 export interface LibrarianConfig {
 	systemPrompt?: string;
@@ -169,7 +170,8 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 				cwd: ctx.cwd,
 				task: fullTask,
 				model: MODEL,
-				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+				pinModel: true,
+				thinkingLevel: THINKING,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				systemPromptBody: config.systemPrompt,

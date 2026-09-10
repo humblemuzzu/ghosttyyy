@@ -1,7 +1,7 @@
 /**
- * code_review tool — structured diff review via a claude-sonnet-5 sub-agent.
+ * code_review tool — structured diff review via an xai/grok-4.6 sub-agent.
  *
- * spawns a claude-sonnet-5 sub-agent that:
+ * spawns an xai/grok-4.6 high sub-agent that:
  * 1. runs git diff (or other bash command) based on diff_description
  * 2. reads changed files for context
  * 3. produces XML <codeReview> report with per-comment severity/type
@@ -30,7 +30,8 @@ import { requireParam } from "./lib/params";
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const CODE_REVIEW_PARAM_NAMES = ["diff_description", "task", "query", "prompt", "description"] as const;
 
-const MODEL = "claude-sonnet-5";
+const MODEL = "xai/grok-4.6";
+const THINKING = "high";
 
 /** sub-agent needs bash (git diff), read/grep/find (context), web tools (docs lookup) */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
@@ -195,7 +196,8 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 				cwd: ctx.cwd,
 				task: fullTask,
 				model: MODEL,
-				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+				pinModel: true,
+				thinkingLevel: THINKING,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				systemPromptBody: systemPrompt,

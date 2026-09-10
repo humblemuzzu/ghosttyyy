@@ -46,7 +46,7 @@ pi CLI (v0.85.1) — @earendil-works/pi-coding-agent
   └─ llama-local                                → llama.cpp, /local
 ```
 
-Default: `xai` / `grok-4.5`, thinking `high`, theme gruvbox,
+Default: `xai` / `grok-4.6`, thinking `high`, theme gruvbox,
 `compaction.enabled: true`.
 
 **`PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER=1` is REQUIRED** (set in `~/.zshrc`).
@@ -143,9 +143,9 @@ not `mcpScript`; skills must not contain `mcp-scripting`.
 | `@benvargas/pi-claude-code-use` | **1.0.5 (pinned `@1.0.5`)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
-| `pi-autoresearch` | 1.7.0 | experiment loop (git install) | no |
+| `pi-autoresearch` | 1.8.1 | experiment loop (git install) | no |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
-| `pi-codex-goal` | 0.2.1 | `/goal` | no |
+| `pi-codex-goal` | 0.3.0 | `/goal` | no |
 | `pi-mcp-adapter` | 2.32.1 | one `mcp` proxy tool, lazy servers | **config** |
 
 **pi-claude-code-use pinned `@1.0.5`** in settings.json and install.sh, so even
@@ -314,7 +314,7 @@ time. They now agree, and the agreement is the point.
 | `finder` | `finder.ts` | concept search sub-agent |
 | `oracle` | `oracle.ts` | architecture, hard bugs, verdicts |
 | `delegate` | `delegate.ts` | resumable peer sub-agent (`continueId`) |
-| `chad` | `chad.ts` | read-only research, pinned xai/grok-4.5, built to swarm |
+| `chad` | `chad.ts` | read-only research, pinned xai/grok-4.6, built to swarm |
 | `librarian` | `librarian.ts` | external repos via GitHub API |
 | `agent_message` | `agent-message.ts` | inter-session mailbox (`setupAgentMessage(pi)`) |
 | `web_search` | `web-search.ts` | Parallel AI Search |
@@ -395,9 +395,9 @@ retries, self-clears at `maxTimeoutSec()` + slack).
 
 ### chad — read-only, pinned, swarmable
 
-`pinModel: true` + `--thinking high` pins `xai/grok-4.5` whatever the parent
-runs — the model the setup itself is on. `delegate` is pinned the same way, so
-both agents run grok-4.5 at high thinking from any session.
+`pinModel: true` + `--thinking high` pins `xai/grok-4.6` whatever the parent
+runs — the model the setup itself is on. Most sub-agents are pinned the same way;
+`delegate` uses `--thinking xhigh`.
 
 `readOnlyBash: true` sets `PI_BASH_READ_ONLY=1`; `lib/read-only-bash.ts` is an
 **allowlist** (~60 read commands, git gated per-subcommand, quote-aware scanner
@@ -429,8 +429,8 @@ agent→agent edge is `delegate → finder`, depth ≤ 2.
 deliberately shallow, and has unrestricted bash. `chad` returns **evidence**
 (cited, verified-vs-inferred, gaps), explores exhaustively, and can write
 nothing. Finding out → swarm chads; deciding → oracle; both → chads first, their
-findings into oracle's `context`. On a non-anthropic parent oracle inherits the
-parent model, so its advantage disappears and chad is the more predictable one.
+findings into oracle's `context`. Both are pinned to the same grok-4.6 model;
+the difference is contract (verdict vs evidence), not model.
 
 ### screenshot / vision budget
 
@@ -507,25 +507,24 @@ control chars into a single-line string.
 
 | Provider | Models |
 |---|---|
-| `xai` | `grok-4.5` (default), `grok-4.6` (built-in catalog) |
+| `xai` | `grok-4.6` (default), `grok-4.5` (built-in catalog) |
 | `anthropic` | `claude-fable-5-1`, `claude-opus-5`, `claude-opus-4-8/4-7/4-6` (1M ctx) |
-| `deepseek` | `deepseek-v4-pro`, `deepseek-v4-flash` (1M ctx) |
+| `deepseek` | `deepseek-flash` (V4.1 Flash, 1M ctx, vision) |
 | `kimi-coding` | `k3` (1M), `k3-256k`, `kimi-for-coding` (K2.7) |
 | `openai-codex` | `gpt-5.5`, `gpt-5.6-sol` |
 | `llama-local` | `Qwen3.8-27B-Uncensored` Q4_K_M (default load), `LFM2.5-2.6B` Q6_K |
 
 ### Sub-agent models
 
-`lib/pi-spawn.ts` resolves: **anthropic-ish parent → designated model; anything
-else → inherit the parent** (a kimi session can't use Claude).
+Research/work sub-agents are **pinned** to `xai/grok-4.6` via `pinModel: true`
+(provider-qualified id, so inheritance never rewrites them). `pi-spawn`'s
+anthropic-parent qualify path still exists for any unpinned caller.
 
 | agent | model |
 |---|---|
-| finder, librarian, code_review | `claude-sonnet-5` |
-| oracle | `claude-opus-4-6` |
-| read_session, read_web_page | `claude-sonnet-5` |
-| **delegate** | `xai/grok-4.5` **pinned** (`pinModel`), `--thinking high` |
-| **chad** | `xai/grok-4.5` **pinned**, provider-qualified (`pinModel` skips `qualifyModel`) |
+| finder, librarian, code_review, oracle, read_session, read_web_page | `xai/grok-4.6` **pinned**, `--thinking high` |
+| **delegate** | `xai/grok-4.6` **pinned** (`pinModel`), `--thinking xhigh` |
+| **chad** | `xai/grok-4.6` **pinned**, provider-qualified (`pinModel` skips `qualifyModel`) |
 | session-name | haiku, deliberately (one line, every session) |
 
 ### Local models

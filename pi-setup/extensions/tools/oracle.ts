@@ -1,5 +1,5 @@
 /**
- * oracle tool — expert technical advisor via a claude-opus-4-6 sub-agent.
+ * oracle tool — expert technical advisor via an xai/grok-4.6 sub-agent.
  *
  * replaces the generic subagent(agent: "oracle", task: ...) pattern
  * with a dedicated tool. the model calls
@@ -30,7 +30,8 @@ import { requireParam } from "./lib/params";
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const ORACLE_PARAM_NAMES = ["task", "query", "prompt", "question", "description"] as const;
 
-const MODEL = "claude-opus-4-6";
+const MODEL = "xai/grok-4.6";
+const THINKING = "high";
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
 /*
  * `screenshot` is here so the oracle can look at a rendering bug rather than
@@ -148,7 +149,8 @@ export function createOracleTool(config: OracleConfig = {}): ToolDefinition {
 				cwd: ctx.cwd,
 				task: fullTask,
 				model: MODEL,
-				parentModel: `${ctx.model?.provider ?? ""}/${ctx.model?.id ?? ""}`,
+				pinModel: true,
+				thinkingLevel: THINKING,
 				builtinTools: BUILTIN_TOOLS,
 				extensionTools: EXTENSION_TOOLS,
 				systemPromptBody: config.systemPrompt,

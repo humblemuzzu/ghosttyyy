@@ -1,7 +1,7 @@
 ---
 name: finder
 description: fast parallel code search agent — finds files and line ranges by concept, not exact match
-model: claude-sonnet-5
+model: xai/grok-4.6
 tools: [read, grep, find, ls]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: chad
 description: Deep read-only research agent — reads broadly, verifies everything, changes nothing
-model: xai/grok-4.5
+model: xai/grok-4.6
 tools: [read, grep, find, ls, bash, skill, web_search, read_web_page, screenshot, read_github, search_github, list_directory_github, list_repositories, glob_github, commit_search, diff]
 ---
 

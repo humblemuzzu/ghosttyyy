@@ -12,6 +12,26 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## Packages (2026-09-08) — pi-autoresearch 1.7.0 → 1.8.1, pi-codex-goal 0.2.1 → 0.3.0
+
+Updated only the two packages with newer releases (`pi update --extension`, never
+`--extensions` — pi-claude-code-use stays held at 1.0.5):
+
+- **pi-autoresearch 1.7.0 → 1.8.1** (git, main @703a8f1). 1.8.0 adds discard
+  revisit nudges + `asi.revisits_run` transcript badge; 1.8.1 fixes
+  `/autoresearch <goal>` kickoff so `sendUserMessage` expands the skill
+  (`expandPromptTemplates: true`, needs pi ≥ 0.84.2). Shortcut config
+  (`pi-autoresearch.json` → `ctrl+shift+r`) untouched by the git update.
+- **pi-codex-goal 0.2.1 → 0.3.0.** New explicit `token_budget` must be an integer
+  ≥ 500_000 (rejected, not raised); omitted budgets still unlimited; existing
+  saved budgets unchanged. Declares `engines.node: >=24.0.0` — installs under
+  node 22 with an EBADENGINE warning only; headless boot still fine.
+
+Width patcher: no fresh unpatched pi-tui. verify-patches.sh all PASS; headless
+boot replied PKG_OK. Nothing else had a newer release.
+
+---
+
 ## 0.85.1 (2026-09-06) — from 0.85.0; experimental server removed, keybindings re-derived
 
 Install (same devEngines workaround): `npm install --prefix /opt/homebrew -g

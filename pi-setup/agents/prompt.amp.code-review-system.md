@@ -1,6 +1,6 @@
 ---
 name: code-review
-model: claude-sonnet-5
+model: xai/grok-4.6
 tools: [read, grep, find, ls, bash, web_search, read_web_page, screenshot]
 rpc: true
 ---

@@ -90,7 +90,7 @@ export default function (pi: ExtensionAPI) {
 	// delegate replaced task.ts: same spawn, plus resumable children via
 	// continueId. Task always ran --no-session, so every child was a dead end.
 	pi.registerTool(createDelegateTool());
-	// chad is delegate's read-only counterpart, pinned to xai/grok-4.5 high.
+	// chad is delegate's read-only counterpart, pinned to xai/grok-4.6 high.
 	// it cannot change anything: no apply_patch, and its bash runs under the
 	// read-only policy in lib/read-only-bash.ts.
 	pi.registerTool(createChadTool({

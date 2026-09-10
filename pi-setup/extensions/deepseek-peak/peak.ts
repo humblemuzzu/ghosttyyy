@@ -8,16 +8,12 @@
  * way this can be wrong is if the system clock itself is wrong, and a time API
  * would not fix that for any other program on the machine either.
  *
- * SOURCE OF THE NUMBERS (2026-08-24):
- *   @deepseek_ai announcement — "New pricing takes effect at 16:00 UTC,
- *   Aug 16, 2026. Peak Hours: 01:00-04:00 and 06:00-10:00 UTC (all other
- *   hours are off-peak). Off-peak rates are 50% lower than peak."
- *   Second announcement — "Effective 00:00 (Beijing Time) on Sunday, August
- *   23, 2026: off-peak rates applying throughout the day on weekends
- *   (Saturdays and Sundays, Beijing Time)." The pricing page now reads
- *   "Peak Hours: 01:00-04:00 and 06:00-10:00 UTC, Monday through Friday".
- *   Beijing is UTC+8 (no DST), so the all-off-peak weekend runs Friday 16:00
- *   UTC through Sunday 16:00 UTC; weekdays keep the two windows.
+ * SOURCE OF THE NUMBERS (2026-09-10):
+ *   https://api-docs.deepseek.com/quick_start/pricing — DeepSeek-V4.1-Flash
+ *   (`deepseek-flash`) off-peak: cache-hit $0.003, cache-miss $0.15,
+ *   output $0.6 per 1M tokens. Peak = 2× off-peak. Peak hours still
+ *   01:00-04:00 and 06:00-10:00 UTC Mon–Fri; weekends (Beijing Sat/Sun)
+ *   remain all off-peak. V4 Pro retires 2026-09-14 12:00 Beijing.
  *
  * Corroborated independently: those windows are Beijing (UTC+8) 09:00-12:00
  * and 14:00-18:00, i.e. Chinese office hours — 01+8=09, 04+8=12, 06+8=14,
@@ -152,10 +148,9 @@ export function labelColor(state: PeakState, onDeepseek: boolean): "success" | "
 	return onDeepseek ? "error" : "warning";
 }
 
-/** $ per 1M tokens, from the announcement table. peak = 2× off-peak. */
+/** $ per 1M tokens off-peak (V4.1 Flash). peak = 2× off-peak. */
 export const PRICES = {
-	"v4-flash": { cacheHit: 0.007, cacheMiss: 0.22, output: 0.66 },
-	"v4-pro": { cacheHit: 0.022, cacheMiss: 0.66, output: 1.98 },
+	flash: { cacheHit: 0.003, cacheMiss: 0.15, output: 0.6 },
 } as const;
 
 /**

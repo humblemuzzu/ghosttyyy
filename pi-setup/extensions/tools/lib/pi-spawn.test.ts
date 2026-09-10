@@ -88,7 +88,7 @@ async function launch(config: Record<string, unknown>): Promise<Launch> {
 }
 
 describe("pinModel: the model survives every parent", () => {
-	const PINNED = "xai/grok-4.5";
+	const PINNED = "xai/grok-4.6";
 
 	test("anthropic parent — pinned model is used verbatim", async () => {
 		const run = await launch({
@@ -141,7 +141,7 @@ describe("inheritance is unchanged for everyone else", () => {
 describe("thinkingLevel", () => {
 	test("is passed as its own flag", async () => {
 		const run = await launch({
-			model: "xai/grok-4.5",
+			model: "xai/grok-4.6",
 			pinModel: true,
 			thinkingLevel: "high",
 		});
@@ -149,7 +149,7 @@ describe("thinkingLevel", () => {
 	});
 
 	test("is absent when not asked for, so the child keeps its own default", async () => {
-		const run = await launch({ model: "xai/grok-4.5", pinModel: true });
+		const run = await launch({ model: "xai/grok-4.6", pinModel: true });
 		expect(run.args).not.toContain("--thinking");
 	});
 });
@@ -157,7 +157,7 @@ describe("thinkingLevel", () => {
 describe("readOnlyBash", () => {
 	test("sets the env var the child's bash tool reads", async () => {
 		const run = await launch({
-			model: "xai/grok-4.5",
+			model: "xai/grok-4.6",
 			pinModel: true,
 			readOnlyBash: true,
 			builtinTools: ["read", "bash"],
@@ -174,7 +174,7 @@ describe("readOnlyBash", () => {
 describe("tool allowlist still reaches the child both ways", () => {
 	test("--tools and PI_SUBAGENT_TOOLS are fed by the same list", async () => {
 		const run = await launch({
-			model: "xai/grok-4.5",
+			model: "xai/grok-4.6",
 			pinModel: true,
 			builtinTools: ["read", "grep"],
 			extensionTools: ["read", "web_search", "glob"],

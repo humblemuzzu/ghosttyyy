@@ -56,11 +56,11 @@ it replaced `edit`/`write`, and pi's natives are hidden at session start.
 `format_file`, `skill`, `undo_edit` / `redo_edit` round out the replacements.
 
 **Dedicated sub-agents** (provider-aware auth via `pi-spawn`):
-- `finder` — Claude Sonnet concept-based code search (read-only)
-- `oracle` — Claude Opus technical advisor
-- `librarian` — Claude Sonnet GitHub repo explorer
-- `code_review` — two-phase Claude Sonnet review
-- `delegate` — full resumable sub-agent (parent model) for parallel independent work
+- `finder` — Grok 4.6 high concept-based code search (read-only)
+- `oracle` — Grok 4.6 high technical advisor
+- `librarian` — Grok 4.6 high GitHub repo explorer
+- `code_review` — two-phase Grok 4.6 high review
+- `delegate` — full resumable sub-agent (Grok 4.6 xhigh) for parallel independent work
 - `read_web_page` — web page reader + optional Q&A child
 - `read_session` / `search_sessions` — past-session reader / search
 - `screenshot`, `web_search` (Parallel AI), `agent_message`, `redo_edit`
@@ -94,9 +94,9 @@ custom bridge/provider needed.
 
 | Provider | Access |
 |---|---|
-| `xai` (default, `grok-4.5`) | Grok OAuth (`/login xai`); `grok-4.6` also in favorites |
+| `xai` (default, `grok-4.6`) | Grok OAuth (`/login xai`); `grok-4.5` also in favorites |
 | `anthropic` (`claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context natively) |
-| `deepseek` (`deepseek-v4-pro/flash`) | `$DEEPSEEK_API_KEY`, 1M context |
+| `deepseek` (`deepseek-flash` = V4.1 Flash) | `$DEEPSEEK_API_KEY`, 1M context, vision |
 | `openai-codex`, `kimi-coding` | pi built-in providers |
 | `llama-local` (`LFM2.5-2.6B`) | local llama.cpp router, managed via `/local` |
 
@@ -114,7 +114,7 @@ Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
 3 `autoresearch-*` from pi-autoresearch — 29 total.)
 
 ### Settings
-- Default provider/model: `xai` / `grok-4.5` (thinking high)
+- Default provider/model: `xai` / `grok-4.6` (thinking high)
 - Theme: gruvbox · Thinking: high · Compaction: **enabled** (pi's native LLM compaction)
 - Steering/follow-up: all · Quiet startup
 
@@ -135,7 +135,7 @@ See `AGENTS.md` → "Packages (npm)" for versions, purposes, and which are patch
 ```
 pi-setup/
 ├── install.sh                  # One-command installer (deploys + re-applies patches)
-├── settings.json               # Pi settings (provider: xai, model: grok-4.5)
+├── settings.json               # Pi settings (provider: xai, model: grok-4.6)
 ├── keybindings.json            # Custom keybindings
 ├── models.json                 # Custom providers + context-window overrides
 ├── permissions.json            # Tool permission rules

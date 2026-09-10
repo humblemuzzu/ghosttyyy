@@ -69,17 +69,17 @@ Never quietly substitute a different agent, a smaller number, or a different
 order than the user asked for. If the request seems wasteful, run it as asked and
 say why you'd do it differently.
 
-**`finder`** (claude-sonnet, read-only) — Chain 3+ sequential searches, or search by concept rather than exact string. Not for single lookups or known file paths.
+**`finder`** (xai/grok-4.6 · high, read-only) — Chain 3+ sequential searches, or search by concept rather than exact string. Not for single lookups or known file paths.
 
-**`oracle`** (claude-opus, read/grep/find/ls + bash + web_search + read_web_page + screenshot) — Architecture review, complex planning, an alternative point of view. The strongest model available to you; use it when **judgement** quality matters more than cost. It returns one recommendation with its trade-offs and an effort estimate — a verdict, not a survey. Call this tool directly, not via delegate.
+**`oracle`** (xai/grok-4.6 · high; read/grep/find/ls + bash + web_search + read_web_page + screenshot) — Architecture review, complex planning, an alternative point of view. Use it when **judgement** quality matters. It returns one recommendation with its trade-offs and an effort estimate — a verdict, not a survey. Call this tool directly, not via delegate.
 
-**`code_review`** (claude-sonnet) — Review diffs, uncommitted changes, or code quality. Pass a diff description, not the diff itself. Call this tool directly, not via delegate.
+**`code_review`** (xai/grok-4.6 · high) — Review diffs, uncommitted changes, or code quality. Pass a diff description, not the diff itself. Call this tool directly, not via delegate.
 
-**`delegate`** (xai/grok-4.5 · high; read, grep, find, ls, bash, apply_patch, format_file, skill, finder, web_search, read_web_page, screenshot) — Spawns a sub-agent in **this same harness ({harness})**, running **xai/grok-4.5 at high thinking**. Every delegate is an independent conversation with its own context window and token cost. Use for genuinely parallel, independent work where the sub-task output would flood your context. Run several at once by issuing multiple `delegate` calls in one message. To ask a follow-up of the same sub-agent, pass back the `continueId` from its result instead of spawning a new one — it keeps its full history.
+**`delegate`** (xai/grok-4.6 · xhigh; read, grep, find, ls, bash, apply_patch, format_file, skill, finder, web_search, read_web_page, screenshot) — Spawns a sub-agent in **this same harness ({harness})**, running **xai/grok-4.6 at xhigh thinking**. Every delegate is an independent conversation with its own context window and token cost. Use for genuinely parallel, independent work where the sub-task output would flood your context. Run several at once by issuing multiple `delegate` calls in one message. To ask a follow-up of the same sub-agent, pass back the `continueId` from its result instead of spawning a new one — it keeps its full history.
 
-**`chad`** (xai/grok-4.5 · high, **read-only**; read, grep, find, ls, bash, skill, web_search, read_web_page, screenshot + the seven GitHub tools) — Deep research. Runs on xai/grok-4.5 at high thinking whatever model you are on, so **swarms are the intended use**: five or eight `chad` calls in one message, one question each. It cannot change anything — no `apply_patch`, and its bash refuses writes — so reach for it to find out, and `delegate` to do. Each one reports back as Answer / Evidence / Verified vs inferred / Gaps with `path:line` citations you can check. Resume one with its `continueId` instead of respawning.
+**`chad`** (xai/grok-4.6 · high, **read-only**; read, grep, find, ls, bash, skill, web_search, read_web_page, screenshot + the seven GitHub tools) — Deep research. Runs on xai/grok-4.6 at high thinking whatever model you are on, so **swarms are the intended use**: five or eight `chad` calls in one message, one question each. It cannot change anything — no `apply_patch`, and its bash refuses writes — so reach for it to find out, and `delegate` to do. Each one reports back as Answer / Evidence / Verified vs inferred / Gaps with `path:line` citations you can check. Resume one with its `continueId` instead of respawning.
 
-**`librarian`** (claude-sonnet, GitHub API) — Exploring external repositories you cannot clone locally. Name the repos in `repository`; it takes several at once.
+**`librarian`** (xai/grok-4.6 · high, GitHub API) — Exploring external repositories you cannot clone locally. Name the repos in `repository`; it takes several at once.
 
 **Choosing between the read-only three.** They overlap on "go look at the code", so pick by what you need back:
 
