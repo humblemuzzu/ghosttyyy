@@ -146,7 +146,7 @@ not `mcpScript`; skills must not contain `mcp-scripting`.
 | `pi-autoresearch` | 1.8.1 | experiment loop (git install) | no |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
 | `pi-codex-goal` | 0.3.0 | `/goal` | no |
-| `pi-mcp-adapter` | 2.32.1 | one `mcp` proxy tool, lazy servers | **config** |
+| `pi-mcp-adapter` | 2.33.0 | one `mcp` proxy tool, lazy servers | **config** |
 
 **pi-claude-code-use pinned `@1.0.5`** in settings.json and install.sh, so even
 `pi update --extensions` skips it; 2.x's only new ≥0.84 feature needs

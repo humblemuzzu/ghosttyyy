@@ -12,6 +12,28 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## Packages (2026-09-12) — pi-mcp-adapter 2.32.1 → 2.33.0
+
+Updated only this package (`pi update --extension npm:pi-mcp-adapter`, never
+`--extensions` — pi-claude-code-use stays held at 1.0.5):
+
+- **pi-mcp-adapter 2.32.1 → 2.33.0.** OAuth/reliability plus `mcp({ action:
+  "install" })`, optional `directTools: "search"`, and opt-in `claudePlugins`.
+  Both suppressions survive: the mcpScript gate is still
+  `earlyConfig.settings?.scriptMode !== false` (index.ts:1124) and the `mcp`
+  proxy is still the second registration (index.ts:1380). mcp.json keeps
+  scriptMode:false and settings.json keeps the `{source, skills:[]}` object form
+  (same sha as before the update), so the tool surface is `mcp` + no
+  `mcpScript`, and `mcp-scripting` stays filtered. No `claudePlugins` in
+  mcp.json, so the new plugin-bundle loader is inert. Adapter ships no pi-tui.
+
+Width patcher: no fresh unpatched pi-tui. verify-patches.sh all PASS; headless
+boot replied PKG_OK with mcp yes / mcpScript no / mcp-scripting no. Nothing
+else moved (token-burden 0.6.5, tool-display 0.5.0, codex-goal 0.3.0, sub-bar
+1.5.0, claude-code-use 1.0.5).
+
+---
+
 ## Packages (2026-09-08) — pi-autoresearch 1.7.0 → 1.8.1, pi-codex-goal 0.2.1 → 0.3.0
 
 Updated only the two packages with newer releases (`pi update --extension`, never
