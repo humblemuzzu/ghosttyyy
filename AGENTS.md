@@ -648,7 +648,9 @@ Per-version record: `pi-setup/pi-migrations.md`. Read it before `pi update`.
 - **Don't set pi-tool-display overrides to `true`.**
 - **Don't reinstall condensed-milk-pi**, and don't add `claude-agent-sdk-pi` back.
 - **Don't run `install.sh` without checking what changed** — it overwrites live
-  tweaks (after backing them up).
+  tweaks (after backing them up). Exception: `pi-sub-bar-settings.json` and
+  `pi-sub-core-settings.json` are TUI-saved; install.sh must not overwrite
+  them when the live files exist.
 - **Don't simplify the pi-mcp-adapter package entry to the string form.**
 - **Don't use `--no-tools`** for sub-agents (see the port log).
 

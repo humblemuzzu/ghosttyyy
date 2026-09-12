@@ -6,7 +6,7 @@
   },
   "providers": {
     "anthropic": {
-      "enabled": "auto",
+      "enabled": false,
       "fetchStatus": true
     },
     "copilot": {
@@ -14,15 +14,15 @@
       "fetchStatus": false
     },
     "gemini": {
-      "enabled": "auto",
+      "enabled": false,
       "fetchStatus": true
     },
     "antigravity": {
-      "enabled": "auto",
+      "enabled": false,
       "fetchStatus": true
     },
     "codex": {
-      "enabled": "auto",
+      "enabled": true,
       "fetchStatus": true
     },
     "kiro": {
@@ -34,7 +34,7 @@
       "fetchStatus": false
     },
     "zai": {
-      "enabled": true,
+      "enabled": false,
       "fetchStatus": false
     }
   },

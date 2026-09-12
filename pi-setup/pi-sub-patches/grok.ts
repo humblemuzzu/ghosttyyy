@@ -298,17 +298,6 @@ function windowsFromBilling(config: BillingConfig): RateWindow[] {
 		});
 	}
 
-	for (const product of config.productUsage ?? []) {
-		// wire has used both "GrokBuild" (live) and "PRODUCT_GROK_BUILD" (proto fixture)
-		const name = (product.product ?? "").replace(/_/g, "").toLowerCase();
-		if (name !== "grokbuild" && name !== "productgrokbuild") continue;
-		if (typeof product.usagePercent !== "number") continue;
-		windows.push({
-			label: "Grok Build",
-			usedPercent: clampPercent(product.usagePercent),
-		});
-	}
-
 	const prepaid = config.prepaidBalance?.val;
 	if (typeof prepaid === "number" && Math.abs(prepaid) > 0) {
 		const dollars = (Math.abs(prepaid) / 100).toFixed(2);

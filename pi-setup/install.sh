@@ -18,8 +18,8 @@
 #   ~/.pi/agent/models.json     — custom providers (llama-local, crof)
 #   ~/.pi/agent/permissions.json
 #   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro, paper)
-#   ~/.pi/agent/pi-sub-bar-settings.json  — sub-bar widget layout
-#   ~/.pi/agent/pi-sub-core-settings.json — sub-core provider/refresh config
+#   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
+#   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
 #   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
 #   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
 #
@@ -174,12 +174,16 @@ if [ -f "$SCRIPT_DIR/mcp.json" ]; then
 fi
 
 # ── Pi package configs (sub-bar, sub-core) ──
-# pi-vcc was removed (using pi's native compaction). Its config is no longer deployed.
+# live copies are TUI-saved; only seed when missing
 info "Installing pi package configs..."
 for cfg in pi-sub-bar-settings.json pi-sub-core-settings.json; do
     if [ -f "$SCRIPT_DIR/$cfg" ]; then
-        backup_if_exists "$PI_AGENT/$cfg"
-        cp "$SCRIPT_DIR/$cfg" "$PI_AGENT/$cfg"
+        if [ -f "$PI_AGENT/$cfg" ]; then
+            warn "Keeping live $cfg — not overwriting"
+        else
+            cp "$SCRIPT_DIR/$cfg" "$PI_AGENT/$cfg"
+            ok "Seeded $cfg (no live copy)"
+        fi
     fi
 done
 ok "Pi package configs installed (sub-bar, sub-core)"

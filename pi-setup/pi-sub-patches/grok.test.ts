@@ -74,7 +74,7 @@ test("grok returns noCredentials when auth missing", async () => {
 	assert.equal(usage.error?.code, "NO_CREDENTIALS");
 });
 
-test("grok parses week window, build percent, and prepaid extra", async () => {
+test("grok parses week window and prepaid extra; productUsage is not a second bar", async () => {
 	const provider = new GrokProvider();
 	const home = "/home/test";
 	let seenUrl = "";
@@ -119,9 +119,11 @@ test("grok parses week window, build percent, and prepaid extra", async () => {
 	assert.equal(week?.usedPercent, 38.4);
 	assert.ok(week?.resetAt?.startsWith("2026-08-17"));
 
-	const build = usage.windows.find((w) => w.label === "Grok Build");
-	assert.ok(build);
-	assert.equal(build?.usedPercent, 38);
+	assert.equal(
+		usage.windows.some((w) => w.label === "Grok Build"),
+		false,
+	);
+	assert.equal(usage.windows.length, 2);
 
 	const extra = usage.windows.find((w) => w.label.startsWith("Extra"));
 	assert.ok(extra);
