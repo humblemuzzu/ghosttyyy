@@ -280,6 +280,13 @@ else
     warn "pi-sub packages or pi-sub-patches missing — grok usage provider not installed"
 fi
 
+# ── pi-sub-core stale-ctx guard ──
+if [ -f "$SUB_PATCH/apply-sub-core-stale-guard.mjs" ] && [ -d "$SUB_NM/pi-sub-core" ]; then
+    info "Applying pi-sub-core stale-ctx guard..."
+    node "$SUB_PATCH/apply-sub-core-stale-guard.mjs" || \
+        warn "pi-sub-core stale-ctx guard FAILED — a usage fetch outliving /resume will exit pi"
+fi
+
 # ── pi-tool-display config ──
 TOOL_DISPLAY_CONFIG="$PI_AGENT/extensions/pi-tool-display/config.json"
 if [ -f "$SCRIPT_DIR/extensions/pi-tool-display/config.json" ]; then

@@ -86,6 +86,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 | **pi-tui width patch** | **every** installed pi-tui copy | conservative grapheme widths. Without it the TUI smears on Indic/exotic unicode. **Every package bundles its own pi-tui**, so any install brings a fresh unpatched copy |
 | ~~`pi-server` dependency~~ | ~~`$PI/node_modules/@earendil-works/pi-server`~~ | **0.85.0-only landmine, retired.** 0.85.0's modular `dist/cli.js` imported it but the npm package forgot the dep — every command crashed. 0.85.1 removed the experimental server import entirely (`dist/experimental/` gone), so nothing needs it. Keep `install-pi-server.sh` only for rollback to 0.85.0 |
 | pi-sub grok provider | `@marckrenn/pi-sub-*` | wiped by every `pi install` / `pi update --extensions` |
+| pi-sub-core stale-ctx guard | `@marckrenn/pi-sub-core/index.ts` | same wipe. Without it a usage fetch that outlives `/new`, `/resume` or fork emits through the invalidated runtime, and pi exits (`uncaughtException`) — killed a session on 2026-09-12 |
 | pi-tool-display `config.json` | `~/.pi/agent/extensions/pi-tool-display/` | all tool overrides `false` — otherwise it replaces our custom tools |
 | pi-mcp-adapter settings | `~/.pi/agent/mcp.json` | `scriptMode: false`, skills `[]` |
 
@@ -107,6 +108,9 @@ cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-too
 # grok provider: 5 files from pi-setup/pi-sub-patches/ into
 # ~/.pi/agent/npm/node_modules/@marckrenn/{pi-sub-shared,pi-sub-core,pi-sub-bar}
 # — exact destinations are in install.sh
+
+node pi-setup/pi-sub-patches/apply-sub-core-stale-guard.mjs          # idempotent
+node pi-setup/pi-sub-patches/apply-sub-core-stale-guard.mjs --check  # audit
 ```
 
 `install.sh` applies all of these and runs `verify-patches.sh` last.
@@ -628,7 +632,7 @@ pi-setup/
    eventually be removed — then rename imports everywhere.
 4. **Any `pi install` / package update** → re-run the width patcher (every
    package bundles a fresh unpatched pi-tui).
-5. **pi-sub-* update** → re-apply the grok patch. Valid upstream providers are
+5. **pi-sub-* update** → re-apply the grok patch and the stale-ctx guard. Valid upstream providers are
    `anthropic copilot gemini antigravity codex kiro zai` + our `grok`; there is
    **no `kimi`, no `crofai`**. A provider named in `pi-sub-core-settings.json`
    with no factory breaks usage refresh (`PROVIDER_FACTORIES[name] is not a

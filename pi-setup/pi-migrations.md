@@ -12,6 +12,36 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## pi-sub-core stale-ctx guard (2026-09-12)
+
+No version changed. `/resume` exited pi with "This extension ctx is stale after
+session replacement or reload", thrown from `pi-sub-core/index.ts:120` under
+`controller.ts:143` — the emit *after* a usage fetch resolved.
+
+Chain: the 60s usage timer (or `turn_end`) starts a fetch → pi tears the outgoing
+session down (`agent-session-runtime.js:102-113`: abort → `session_shutdown` →
+dispose) → `dispose()` calls `_extensionRunner.invalidate()
+(`agent-session.js:595`) → the fetch resolves after that → `pi.events.emit` →
+`loader.js:367` `assertActive` → throw. `session_shutdown` clears the timers but
+cannot cancel a fetch already in flight, and the timer caller is a bare
+`void refresh(lastContext)` (`index.ts:215`), so the throw is an unhandled
+rejection → `uncaughtCrash` → `process.exit(1)`.
+
+Upstream is 1.5.0 (2026-03-25) with no fix, so it is ours:
+`pi-sub-patches/apply-sub-core-stale-guard.mjs` routes all 5 `pi.events.emit`
+sites in `index.ts` through a guarded `emitEvent` that no-ops once the runtime is
+stale and stops the refresh timers. `install.sh` applies it; `verify-patches.sh`
+audits it with `--check`.
+
+`pi-sub-bar` is not exposed to this path — its async session work compares
+`lastContext !== sessionContext` before every emit (`index.ts:1062-1082`).
+
+Do not vendor `pi-sub-core/index.ts` wholesale: upstream changes it every
+release and a stored copy would silently revert their fixes. The patcher fails
+loudly when the anchors move (it expects exactly 5 emit call sites).
+
+---
+
 ## Packages (2026-09-12) — pi-mcp-adapter 2.32.1 → 2.33.0
 
 Updated only this package (`pi update --extension npm:pi-mcp-adapter`, never

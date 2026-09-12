@@ -150,6 +150,14 @@ else
          "re-run pi-setup/install.sh (pi-sub-patches block) or cp pi-setup/pi-sub-patches/* into ~/.pi/agent/npm/node_modules/@marckrenn/"
 fi
 
+# ── pi-sub-core: stale-ctx guard ──
+if node "$SCRIPT_DIR/pi-sub-patches/apply-sub-core-stale-guard.mjs" --check >/dev/null 2>&1; then
+    pass "pi-sub-core: stale-ctx guard present"
+else
+    fail "pi-sub-core: stale-ctx guard missing (a fetch outliving /resume exits pi)" \
+         "node pi-setup/pi-sub-patches/apply-sub-core-stale-guard.mjs"
+fi
+
 # ── shiki-diff: pi-diff render pipeline (edit/write syntax-highlighted diffs) ──
 # The edit/write tools call @heyhuynhgiabuu/pi-diff's __testing render functions.
 # They fall back to the plain box renderer if this breaks, so it's non-fatal —
