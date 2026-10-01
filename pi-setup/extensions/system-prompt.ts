@@ -61,7 +61,7 @@ export default function (pi: ExtensionAPI) {
 			};
 		}
 
-		if (ctx.model?.provider === "llama-local") return;
+		if (ctx.model?.provider === "llama-local" || ctx.model?.provider === "llama.cpp") return;
 
 		const interpolated = interpolatePromptVars(body, ctx.cwd, {
 			sessionId: ctx.sessionManager.getSessionId(),

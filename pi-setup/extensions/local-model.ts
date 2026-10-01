@@ -6,11 +6,11 @@
  * script was later deleted and took the whole extension down with it. So this
  * version embeds the server command — there is nothing on disk it can lose.
  *
- * SYSTEM PROMPT (llama-local only):
+ * SYSTEM PROMPT (llama-local and llama.cpp):
  * before_agent_start REPLACES the full assembled prompt with BARE_SYSTEM_PROMPT
- * when provider is llama-local. Every other provider gets undefined → prompt
- * unchanged. Sub-agent children (PI_SUBAGENT_TOOLS set) are left alone so the
- * short tool-list prompt from system-prompt.ts still applies.
+ * when provider is llama-local or llama.cpp. Every other provider gets undefined
+ * → prompt unchanged. Sub-agent children (PI_SUBAGENT_TOOLS set) are left alone
+ * so the short tool-list prompt from system-prompt.ts still applies.
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
@@ -399,7 +399,7 @@ export default function localModelExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (_event: any, ctx: any) => {
-		if (ctx.model?.provider !== PROVIDER_ID) return;
+		if (ctx.model?.provider !== PROVIDER_ID && ctx.model?.provider !== "llama.cpp") return;
 		if (process.env[SUB_AGENT_TOOLS_ENV]?.trim()) return;
 		return { systemPrompt: BARE_SYSTEM_PROMPT };
 	});

@@ -12,6 +12,239 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## 0.99.2 (2026-10-01) — from 0.99.1; patched files unchanged, copied
+
+Install is still
+`npm install --prefix /opt/homebrew -g --force --ignore-scripts
+@earendil-works/pi-coding-agent@0.99.2` then re-pin `pi` → `dist/cli.js`.
+Do **not** `pi update` (EBADDEVENGINES) and do **not** `pi update --extensions`.
+`install.sh` copies patches and runs the width patcher; it does **not** install
+the npm package and does **not** re-pin the bin.
+
+**Patch drift (stock 0.99.1 vs stock 0.99.2, registry tarballs):**
+- resource-loader.js, session-selector.js, keybindings.js, args.js,
+  compaction.js — byte-identical → stored 0.99.1 patches copied clean.
+- dist/cli.js still 169 bytes (`setupCli(); main()`). bin still
+  dist/bundle/cli.js → re-pinned. npm install pointed the bin at the bundle;
+  verify-patches.sh:23-28 FAILS if that is left in place.
+- loader.js — three added guards (registerCommand name/handler, MCP namespace
+  clash for `-` vs `_`). Our extensions register named handlers; we do not
+  call `pi.registerMcpServer`.
+- compaction.js still has `getSummarizationFailure` and no `toolChoice`.
+- pi-tui 0.99.2 — width patcher applied to the fresh
+  `/opt/homebrew/.../pi-tui@0.99.2` copy; anchors intact.
+- Changelog is MCP exposure (codemode listing, `mcp_servers` section,
+  `oauth.clientName`, `auth.provider`). Built-in mcp stays off (`-builtin:mcp`);
+  the new section lives in `dist/extensions/mcp/` and is not loaded.
+
+verify-patches.sh 14/14 PASS. Headless `pi --mode json -p --model grok-4.6
+--provider xai` replied `UPDATE_0992` as `provider: xai`, `model: grok-4.6`.
+Rollback: `~/pi-update-backup-0.99.1-20261001-173545`.
+
+**leftover `~/.pi/agent/mcp.json` boot warning.** adapter 3.x
+`getLegacyMcpMigrationNotices` (`config.ts:229`) warns whenever that file has
+content and built-in MCP is off (`-builtin:mcp`). the suggested `mv` to
+`mcp-adapter.json` would duplicate `~/.config/mcp/mcp.json` (byte-identical, 19
+servers). retired the leftover; `install.sh` now removes it. do not recreate it
+as a built-in-MCP fallback.
+
+**anthropic extra-usage banner.** pi core
+`maybeWarnAboutAnthropicSubscriptionAuth` (`interactive-mode.js:4277`) fires on
+every switch to an anthropic model with OAuth (`sk-ant-oat`).
+`warnings.anthropicExtraUsage: false` is the upstream suppress
+(`docs/settings.md`). pi-claude-code-use already remaps custom tools so the
+banner is not a billing signal.
+
+---
+
+## pi-claude-code-use 1.0.5 → 2.2.1 (2026-10-01)
+
+`pi install npm:@benvargas/pi-claude-code-use@2.2.1` only. Not `pi update --extensions`.
+Pin `@2.2.1` in settings.json and install.sh. `PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER`
+removed from `~/.zshrc`, `pi-spawn.ts`, e2e/github tests. Must stay unset: 2.x
+auto-aliases non-core tools; that env skips remap and dual-names them.
+
+---
+
+## 0.99.1 (2026-09-30) — from 0.87.1; patches re-derived, not copied
+
+**There is no 0.88–0.98.** The registry jumps straight from 0.87.1 to 0.99.0, so
+0.99.0's changelog *is* the whole delta and 0.99.1 only adds `gpt-6.1-sol` as the
+OpenAI Codex default. One jump, not twelve.
+
+### New from upstream in this jump
+
+- Built-in extensions: `codemode`, `tool-search`, `mcp`, `llama.cpp`
+  (`dist/extensions/`, registered by name as `builtin:<name>`).
+- Extension tool APIs: `exposure` (`direct`/`model-only`/`codemode`/`deferred`/`hidden`),
+  `namespace`, `annotations`, `outputSchema`, `prepareLoadout()`, `ctx.executeTool()`.
+- `defaultTools` gained `+name` / `-name` entries; `extensions` gained `-builtin:<name>`.
+- Built-in `read`/`bash`/`edit`/`write` now declare
+  `constrainedSampling: { type: "json_schema", strict: "prefer" }`. Inactive for us:
+  our replacements set none, and `resolveJsonSchemaStrictSampling` short-circuits on
+  an absent config rather than throwing.
+- Theme engine gained `system` (new default), OKHSL colors and an `appearance` field;
+  additive, so the gruvbox theme file is untouched.
+- Node requirement is now `>=22.19.0` (machine runs 22.23.1).
+
+### Install
+
+```bash
+npm install --prefix /opt/homebrew -g --force --ignore-scripts \
+  @earendil-works/pi-coding-agent@0.99.1
+ln -sfn ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /opt/homebrew/bin/pi
+```
+
+The npm install repoints `/opt/homebrew/bin/pi` at `dist/bundle/cli.js` (the
+package's declared `bin`), which silently disables every core patch — re-pin it
+every time. `pi update` still fails with EBADDEVENGINES.
+
+### Patch drift (stock 0.87.1 vs stock 0.99.1, registry tarballs)
+
+- **session-selector.js — byte-identical** between the two stocks. The stored
+  patch copied clean; nothing to re-derive.
+- **keybindings.js — 2 lines** (one upstream `app.clipboard.pasteImage`
+  description string). Re-derived onto 0.99.1 stock: `app.session.pin`,
+  `pinSession` mapping, `isRecord` guard in `toKeybindingsConfig`.
+- **resource-loader.js — 196 changed lines**, but none inside our hunk;
+  `addExtensionConflictDiagnostics` still sits at :578 with the same conflict
+  loop. Re-derived onto 0.99.1 stock. The delta is now **code only** — the
+  4-line why-comment was dropped (the comment gate refuses changes that are
+  mostly commentary, and AGENTS.md already carries the reason).
+- **pi-tui 0.99.1** — `graphemeWidth` gained an upstream
+  `terminalSpacingMarkRegex` early return (some of what our patch had been doing).
+  Both patcher anchors survived (`zeroWidthRegex` → `return 0`; final `return width`)
+  and `eastAsianWidth` is still present, so the patcher applied to the fresh
+  `pi-tui@0.99.1` copy. Overcount stays smear-safe.
+
+### Extension surface
+
+- Built-in `mcp` is `replaceable: true`; pi-mcp-adapter registers `/mcp`, so the
+  built-in was skipped and pi warned about it. `-builtin:mcp` added to
+  `settings.json` `extensions` to make that deliberate and silence the warning.
+- Declared surface after the jump: **37 tools**, `mcp` present, `mcpScript` absent.
+- `pi-spawn.ts` passes `--mode/--model/--thinking/--tools` with values and folds the
+  provider into a qualified model id, so 0.99's CLI-argument changes miss us.
+
+### Verified
+
+`verify-patches.sh` 14/14 PASS. Headless `pi --mode json -p --model grok-4.6
+--provider xai` replied `UPDATE_0991` as `provider: xai`, `model: grok-4.6`.
+A `finder` sub-agent spawned a real child on 0.99.1 and returned cited line numbers.
+
+### Packages updated after the core jump
+
+A bare `pi install npm:<name>` cannot cross a caret boundary. `~/.pi/agent/npm/
+package.json` held `pi-codex-goal ^0.3.1` (a 0.x caret pins the minor) and
+`pi-mcp-adapter ^2.38.0` (a 2.x caret pins the major), so `pi install` landed
+2.38.0 and reported codex-goal as "up to date". Explicit versions are required:
+
+```bash
+pi install npm:pi-codex-goal@0.4.1
+pi install npm:pi-mcp-adapter@3.3.0
+```
+
+**pi-mcp-adapter 3.x moved its global config and no longer reads Pi's path.**
+`config.ts:16` resolves the generic global config to `~/.config/mcp/mcp.json`, and
+`state.ts:48` tracks "legacy mcp.json files the adapter ignores" — so
+`~/.pi/agent/mcp.json` is dead config to 3.x, and without the migration the `mcp`
+tool comes back with **zero servers, silently**. The body was copied verbatim: the
+`{ mcpServers, settings? }` shape is unchanged and `scriptMode` still exists
+(`types.ts:638`, still gates `mcpScript` at `index.ts:1529`). Only the path moved.
+`~/.pi/agent/mcp.json` was deliberately left in place as a fallback for the
+built-in extension. `install.sh` now deploys to `~/.config/mcp/mcp.json`.
+
+`directTools` still defaults **off** (`mcp-references.ts:72` needs an explicit
+`true`/`"search"`), so the one-`mcp`-proxy design and the 37-tool surface survive.
+
+Adapter 3.3.0 peer-declares `@earendil-works/pi-ai: ^0.84.1 || … || ^0.87.0` — that
+is, not 0.99. Nothing failed, but support is undeclared.
+
+Verified: 37 declared tools with `mcp` present and `mcpScript` absent,
+`mcp-scripting` absent from the loaded skills, and all 19 servers listed through
+3.3.0 at the new path. `pi install` did not disturb the pi-sub grok patch or the
+stale-ctx guard (verify-patches still 14/14), and the width patcher was re-run for
+the fresh package copies. `pi-claude-code-use` is still pinned `@1.0.5`.
+
+---
+
+## 0.87.1 (2026-09-23) — from 0.87.0; patched files unchanged, copied
+
+Catalog + default release. Install is still
+`npm install --prefix /opt/homebrew -g --force --ignore-scripts
+@earendil-works/pi-coding-agent@0.87.1` then re-pin `pi` → `dist/cli.js`.
+Do **not** `pi update` (EBADDEVENGINES) and do **not** `pi update --extensions`.
+
+**Patch drift (stock 0.87.0 vs stock 0.87.1, registry tarballs):**
+- resource-loader.js, session-selector.js, keybindings.js — byte-identical →
+  stored 0.87.0-derived patches copied clean.
+- args.js — `--mode` now errors on missing/invalid value. `pi-spawn.ts:406-407`
+  already passes `--mode json` / `--mode rpc` with a real value next to the flag.
+- model-resolver.js — one line: `xai: "grok-4.6"` → `xai: "grok-4.7"`.
+  settings.json still pins `defaultModel: grok-4.6`; catalog still lists 4.6.
+- compaction.js — turn-prefix summarization prompt only. `compaction.enabled: true`.
+- pi-tui 0.87.1 `dist/` byte-identical to 0.87.0. Width patcher applied to the
+  fresh `/opt/homebrew/.../pi-tui@0.87.1` copy; anchor intact.
+- pi-agent-core / chord — package.json only.
+- bin still dist/bundle/cli.js stock → re-pinned to dist/cli.js.
+
+**Not installed this jump:** `pi-codex-goal` 0.3.0→0.3.1 (docs/CI only, runtime
+unchanged) and `pi-mcp-adapter` 2.33.0→2.37.0 (scriptMode gate still
+`earlyConfig.settings?.scriptMode !== false` at index.ts:1507, `mcp` proxy still
+index.ts:1782; 2.35 also hides `mcp-scripting` when scriptMode is false). Check
+landed, packages left at current versions.
+
+verify-patches.sh 14/14 PASS. Headless `pi --mode json -p --model grok-4.6
+--provider xai --thinking high --tools read,grep,find,ls` replied
+`UPDATE_OK_0871` with `provider: xai`, `model: grok-4.6` (not 4.7).
+
+---
+
+## 0.87.0 (2026-09-22) — from 0.85.1; patches re-derived, not copied
+
+Jump is 0.85.1 → 0.87.0 (through 0.86.0 / 0.86.1). Install is still
+`npm install --prefix /opt/homebrew -g --force --ignore-scripts
+@earendil-works/pi-coding-agent@0.87.0` then re-pin `pi` → `dist/cli.js`.
+Do **not** `pi update` (EBADDEVENGINES) and do **not** copy the stored 0.85.1
+patch files over 0.87.
+
+**Patch drift (stock 0.85.1 vs stock 0.87.0, registry tarballs):**
+- resource-loader.js — DIFFERS outside our hunk: prompt-template load now keeps
+  diagnostics (`loaded.templates` / `deduped.diagnostics`). Conflict loop still
+  at `for (const conflict of conflicts)`. Re-derived: 0.87 stock + conflict
+  suppression only (detect, do not push to `errors`).
+- session-selector.js — LARGE: `selectionTouched`, progressive `--resume`
+  loading, `toggleScope` rewrite. Re-derived: 0.87 stock + pin helpers, hint,
+  `applyPinning`, 📌 prefix, Ctrl+B handler, `onTogglePin`. Copying the 0.85.1
+  stored file would wipe resume loading.
+- keybindings.js — one upstream string (`app.message.copy` description) plus
+  our three hunks (`app.session.pin`, `pinSession` mapping, `isRecord` guard).
+- args.js — `META_API_KEY` doc only. `--model` / `--provider` / `--tools` /
+  `--thinking` / `--mode` unchanged → pi-spawn fine.
+- bin still `dist/bundle/cli.js` → re-pin to `dist/cli.js`.
+- pi-tui 0.87.0 `graphemeWidth` still has our anchors (`zeroWidthRegex` return
+  0, `return width`) and also added spacing-mark / Indic counting. Width
+  patcher still applies (overcount is smear-safe). Dry-run on install.
+- pi-server still not imported. compaction still has `getSummarizationFailure`
+  and no `toolChoice`.
+
+**Extension changes in this jump (in-repo, before install):**
+- editor clipboard: `@mariozechner/clipboard` is gone. load
+  `dist/utils/clipboard-image.js` `readClipboardImage` from the running
+  `dist/cli.js`; keep `[image #N]`. unset `onPasteImage` if it cannot load.
+- editor `embedWorkingStatus: true` so compaction/retry status reaches
+  `super.render()`; `LabeledEditor` pulls it into the top border via
+  `workingStatusIndicator.renderInBorder`.
+- llama: keep `/local` + `llama-local`. gate `llama.cpp` too so `/llama`
+  cannot dump the amp prompt on a local model.
+- `cacheWarming: "off"` in settings.json (0.86 default is `streaming`).
+
+**Not done until the live install:** npm install, bin re-pin, copy the three
+re-derived files onto `$PI/dist`, width-patcher, deploy extensions, verify-patches,
+headless boot + one sub-agent spawn. Do **not** `pi update --extensions`.
+
+---
+
 ## pi-sub-core stale-ctx guard (2026-09-12)
 
 No version changed. `/resume` exited pi with "This extension ctx is stale after

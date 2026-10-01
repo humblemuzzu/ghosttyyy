@@ -155,7 +155,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		if (ctx.model?.provider === "llama-local") return;
+		if (ctx.model?.provider === "llama-local" || ctx.model?.provider === "llama.cpp") return;
 
 		const secrets = await loadSecrets();
 		if (secrets.length === 0) return;

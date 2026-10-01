@@ -17,7 +17,7 @@
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/models.json     — custom providers (llama-local, crof)
 #   ~/.pi/agent/permissions.json
-#   ~/.pi/agent/mcp.json        — pi-mcp-adapter global MCP servers (astro, paper)
+#   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
 #   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
 #   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
@@ -168,9 +168,15 @@ ok "Permissions installed"
 # ── MCP servers (pi-mcp-adapter global config) ──
 if [ -f "$SCRIPT_DIR/mcp.json" ]; then
     info "Installing global MCP config..."
-    backup_if_exists "$PI_AGENT/mcp.json"
-    cp "$SCRIPT_DIR/mcp.json" "$PI_AGENT/mcp.json"
+    mkdir -p "$HOME/.config/mcp"
+    backup_if_exists "$HOME/.config/mcp/mcp.json"
+    cp "$SCRIPT_DIR/mcp.json" "$HOME/.config/mcp/mcp.json"
     ok "Global MCP config installed (astro @ 127.0.0.1:8089, paper @ 127.0.0.1:29979)"
+fi
+if [ -f "$PI_AGENT/mcp.json" ]; then
+    backup_if_exists "$PI_AGENT/mcp.json"
+    rm -f "$PI_AGENT/mcp.json"
+    ok "Removed leftover $PI_AGENT/mcp.json (adapter reads ~/.config/mcp/mcp.json)"
 fi
 
 # ── Pi package configs (sub-bar, sub-core) ──
@@ -193,7 +199,7 @@ info "Installing pi packages..."
 # Mirror of settings.json "packages" (source of truth). pi-claude-bridge removed.
 packages=(
     "npm:pi-token-burden"
-    "npm:@benvargas/pi-claude-code-use@1.0.5"
+    "npm:@benvargas/pi-claude-code-use@2.2.1"
     "npm:@marckrenn/pi-sub-bar"
     "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"

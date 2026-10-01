@@ -523,31 +523,6 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		const spawnEnv: Record<string, string | undefined> = {
 			...process.env,
 			PI_READ_COMPACT: "1",
-			// pi-claude-code-use strips every tool whose name is not a Claude Code
-			// "core" name (read/write/edit/bash/grep/glob/skill/task/...) from the
-			// Anthropic payload whenever the model is anthropic + OAuth — see its
-			// filterAndRemapTools() rule 6, "unknown flat-named tool". that deletes
-			// ALL our custom tools from a sub-agent's request: read_github, finder,
-			// oracle, librarian, find, ls, format_file, undo_edit, search_sessions...
-			//
-			// with no tool definitions in the request, Claude falls back to emitting
-			// <function_calls> XML as plain TEXT and then fabricates the result. that
-			// is precisely why the librarian "answered" with invented build.zig.zon
-			// values instead of reading the file.
-			//
-			// proven with the package's own debug log (PI_CLAUDE_CODE_USE_DEBUG_LOG):
-			//   stage=before: ['read_github', 'Read', 'Bash']
-			//   stage=after:  ['Read', 'Bash']
-			//
-			// sub-agents exist to call our custom tools, so we opt out via the
-			// package's documented escape hatch. verified: read_github then makes a
-			// real tool call and returns the correct minimum_zig_version.
-			//
-			// only opt out when WE are supplying an explicit --tools allowlist. with
-			// no allowlist the child is unrestricted, and disabling the filter too
-			// would leave it ungated at both layers (every registered tool, incl.
-			// `mcp`, exposed to the model).
-			...(requestedTools.length > 0 ? { PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1" } : {}),
 			// tell the child which tools it ACTUALLY has, from the same array that
 			// becomes `--tools` above. system-prompt.ts reads this and gives the
 			// child a prompt naming exactly these tools instead of the parent's

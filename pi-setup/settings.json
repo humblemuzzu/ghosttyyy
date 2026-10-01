@@ -16,12 +16,16 @@
     "~/.pi/agent/extensions/command-palette",
     "~/.pi/agent/extensions/session-breakdown.ts",
     "~/.pi/agent/extensions/notify.ts",
-    "~/.pi/agent/extensions/mentions.ts"
+    "~/.pi/agent/extensions/mentions.ts",
+    "-builtin:mcp"
   ],
   "compaction": {
     "enabled": true
   },
+  "cacheWarming": "off",
   "enabledModels": [
+    "anthropic/claude-opus-5-5",
+    "anthropic/claude-sonnet-5-5",
     "deepseek/deepseek-flash",
     "openai-codex/gpt-5.6-sol",
     "openai-codex/gpt-5.6-terra",
@@ -37,7 +41,7 @@
   "quietStartup": true,
   "packages": [
     "npm:pi-token-burden",
-    "npm:@benvargas/pi-claude-code-use@1.0.5",
+    "npm:@benvargas/pi-claude-code-use@2.2.1",
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",
@@ -47,5 +51,8 @@
   "terminal": {
     "clearOnShrink": false,
     "showImages": false
+  },
+  "warnings": {
+    "anthropicExtraUsage": false
   }
 }

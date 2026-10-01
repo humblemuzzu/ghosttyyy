@@ -100,13 +100,6 @@ function runPi(prompt: string, opts?: { timeout?: number }): Promise<PiResult> {
 		let buffer = "";
 		const proc = nodeSpawn("pi", ["--mode", "json", "-p", "--no-session", prompt], {
 			cwd: CWD, shell: false, stdio: ["ignore", "pipe", "pipe"],
-			// mirrors lib/pi-spawn.ts: on anthropic+OAuth, pi-claude-code-use strips
-			// every tool whose name is not a Claude Code "core" name from the request
-			// payload. that removes read_github/search_github/librarian/... entirely,
-			// the model is handed zero tools, and it emits <function_calls> XML as
-			// plain text instead of calling anything — so these e2e assertions see 0
-			// tool calls. opt out via the package's documented escape hatch.
-			env: { ...process.env, PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER: "1" },
 		});
 		const timer = setTimeout(() => {
 			proc.kill("SIGTERM");

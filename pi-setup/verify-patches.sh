@@ -57,8 +57,8 @@ if [ -f "$PI_DIST/core/compaction/compaction.js" ] && \
    grep -q "getSummarizationFailure" "$PI_DIST/core/compaction/compaction.js"; then
     pass "pi core: compaction is stock (upstream toolChoice fix — /compact OK)"
 else
-    fail "pi core: compaction drifted — 0.84.4 stock has no toolChoice and defines getSummarizationFailure" \
-         "npm install --prefix /opt/homebrew -g --force --ignore-scripts @earendil-works/pi-coding-agent@0.84.4"
+    fail "pi core: compaction drifted — stock since 0.84.4 has no toolChoice and defines getSummarizationFailure" \
+         "do not copy pi-setup/pi-core-patches/compaction.js (retired). restore stock compaction.js from the installed pi tarball"
 fi
 
 # ── pi-tui: conservative widths in ALL copies (TUI smears without it) ──

@@ -51,7 +51,7 @@ export default function guardrailsExtension(pi: ExtensionAPI): void {
 			(message: { customType?: string }) => message.customType !== CUSTOM_TYPE,
 		);
 
-		if (ctx.model?.provider === "llama-local") return { messages };
+		if (ctx.model?.provider === "llama-local" || ctx.model?.provider === "llama.cpp") return { messages };
 
 		const rules = resolveRules();
 		if (!rules) return { messages };

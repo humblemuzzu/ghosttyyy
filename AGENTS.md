@@ -38,21 +38,24 @@ continuing to add.
 ## Provider chain
 
 ```
-pi CLI (v0.85.1) — @earendil-works/pi-coding-agent
+pi CLI (v0.99.2) — @earendil-works/pi-coding-agent
   ├─ xai (native)                               → Grok OAuth         [DEFAULT]
   ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
   ├─ kimi-coding (native)                       → Kimi Code OAuth (/login)
   ├─ deepseek, openai-codex (native)            → API keys in ~/.zshrc
-  └─ llama-local                                → llama.cpp, /local
+  └─ llama-local                                → llama.cpp via /local
 ```
 
 Default: `xai` / `grok-4.6`, thinking `high`, theme gruvbox,
-`compaction.enabled: true`.
+`compaction.enabled: true`, `cacheWarming: "off"`.
 
-**`PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER=1` is REQUIRED** (set in `~/.zshrc`).
-Without it, `pi-claude-code-use`'s `filterAndRemapTools()` silently drops every
-tool that isn't one of Claude Code's own 17 — 38 tools become 4, with no error.
-Gate is `provider === "anthropic" && isUsingOAuth`, so it hits the TUI too.
+Upstream 0.87 ships `/llama` + provider `llama.cpp` (needs `/login llama.cpp`).
+We keep `/local` + `llama-local` in models.json (no login, always listed).
+Bare-prompt gates match both ids so `/llama` cannot dump the amp prompt on a local model.
+
+**Do not set `PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER`.** 2.2.1 auto-aliases
+non-core tools to `mcp__tools__*` on anthropic+OAuth. That env skips remap and
+sends flats + aliases together.
 
 **When changing the default provider, also update `pi-sub-core-settings.json`**
 — its `defaultProvider` is what the status bar reports, and a provider left
@@ -88,7 +91,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 | pi-sub grok provider | `@marckrenn/pi-sub-*` | wiped by every `pi install` / `pi update --extensions` |
 | pi-sub-core stale-ctx guard | `@marckrenn/pi-sub-core/index.ts` | same wipe. Without it a usage fetch that outlives `/new`, `/resume` or fork emits through the invalidated runtime, and pi exits (`uncaughtException`) — killed a session on 2026-09-12 |
 | pi-tool-display `config.json` | `~/.pi/agent/extensions/pi-tool-display/` | all tool overrides `false` — otherwise it replaces our custom tools |
-| pi-mcp-adapter settings | `~/.pi/agent/mcp.json` | `scriptMode: false`, skills `[]` |
+| pi-mcp-adapter settings | `~/.config/mcp/mcp.json` | `scriptMode: false`, skills `[]` |
 
 ### Quick re-patch
 
@@ -137,24 +140,31 @@ that doesn't exist). **The object form is load-bearing** — the string form
 silently restores the skill. After any update: tool list must contain `mcp` and
 not `mcpScript`; skills must not contain `mcp-scripting`.
 
+0.99 also ships a built-in `mcp` extension. It is `replaceable`, so pi-mcp-adapter
+takes the name and the built-in one is skipped; `-builtin:mcp` in the `extensions`
+setting makes that explicit and silences the boot warning.
+
 ---
 
 ## Packages (npm)
 
 | Package | Ver | Purpose | Patched |
 |---|---|---|---|
-| `@earendil-works/pi-coding-agent` | 0.85.1 | pi itself | 3 core patches |
-| `@benvargas/pi-claude-code-use` | **1.0.5 (pinned `@1.0.5`)** | Claude Max OAuth payload shim | no |
+| `@earendil-works/pi-coding-agent` | 0.99.2 | pi itself | 3 core patches |
+| `@benvargas/pi-claude-code-use` | **2.2.1 (pinned `@2.2.1`)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
 | `pi-autoresearch` | 1.8.1 | experiment loop (git install) | no |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
-| `pi-codex-goal` | 0.3.0 | `/goal` | no |
-| `pi-mcp-adapter` | 2.33.0 | one `mcp` proxy tool, lazy servers | **config** |
+| `pi-codex-goal` | 0.4.1 | `/goal` | no |
+| `pi-mcp-adapter` | 3.3.0 | one `mcp` proxy tool, lazy servers | **config** |
 
-**pi-claude-code-use pinned `@1.0.5`** in settings.json and install.sh, so even
-`pi update --extensions` skips it; 2.x's only new ≥0.84 feature needs
-registered MCP aliases, which we never have.
+**pi-claude-code-use pinned `@2.2.1`** in settings.json and install.sh, so even
+`pi update --extensions` skips other versions. 2.x auto-aliases custom tools;
+do not set `PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER`.
+`warnings.anthropicExtraUsage: false` silences pi's Max-OAuth extra-usage banner
+(`/settings`). The package already remaps tools; the banner is UI, not a billing
+signal. Re-enable in `/settings` if you want the reminder.
 
 **`pi-autoresearch` shortcut is pinned to `ctrl+shift+r`** in
 `pi-setup/extensions/pi-autoresearch.json` — pi-tui 0.84.2 took `ctrl+shift+f`
@@ -190,8 +200,11 @@ copies it into the loaded path, so the width patcher scans the repo too.
 
 ## MCP servers
 
-Global config: `~/.pi/agent/mcp.json` (backed up as `pi-setup/mcp.json`).
-Lazy — nothing connects until a tool is called.
+Global config: `~/.config/mcp/mcp.json` (backed up as `pi-setup/mcp.json`).
+Adapter 3.x **ignores** `~/.pi/agent/mcp.json`. Leaving that leftover in place
+fires a boot warning whose suggested `mv` to `mcp-adapter.json` would load the
+same servers twice. Do not recreate it (`-builtin:mcp` is on). Lazy — nothing
+connects until a tool is called.
 
 | Server | Notes |
 |---|---|
@@ -221,7 +234,7 @@ First connect: `/mcp-auth <key>`, or headless
 2.25.0 changed result rendering: `settings.toolResultRendering: "boxed"` restores
 the old boxed row, `collapsedResultLines` (1–3) controls collapsed height.
 
-Add servers in `~/.pi/agent/mcp.json` (global) or a project `.mcp.json`: stdio
+Add servers in `~/.config/mcp/mcp.json` (global) or a project `.mcp.json`: stdio
 uses `command`/`args`, HTTP uses `url` + optional `headers`/`auth`.
 
 ---
@@ -244,8 +257,8 @@ why tests can live beside an extension without being loaded.
 | `editor/` | custom box-drawing editor, labels, clipboard image paste |
 | `deepseek-peak/` | `/deepseek` + peak/off-peak clock in the editor border |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — sub-agent transcripts |
-| `local-model.ts` | `/local` llama.cpp router; bare system prompt for `llama-local` only |
-| `guardrails/` | re-injects `rules.amp.md` per turn (skipped for `llama-local`) + comment gate |
+| `local-model.ts` | `/local` llama.cpp router; bare system prompt for `llama-local` and `llama.cpp` |
+| `guardrails/` | re-injects `rules.amp.md` per turn (skipped for llama-local / llama.cpp) + comment gate |
 | `tools/` | 29 custom tools |
 
 ### guardrails — behaviour rules the model cannot forget or ignore
@@ -257,7 +270,9 @@ anti-comment rules. So the rules live in two places that survive that:
 - **`context` hook** re-appends `agents/rules.amp.md` before **every** model
   call, stripping its own prior copy first (it is a deep copy per turn, so
   without the strip the block accumulates). Edit the rules in that .md, never
-  in the extension.
+  in the extension. 0.87 strips system messages before `context` and restores
+  them after; do **not** migrate this to `context_with_system` unless you want
+  to own the prompt.
 - **`tool_call` hook** blocks `apply_patch` when a change adds a comment run
   over 12 lines **or** more than 0.5 comment lines per line of code. Two
   triggers because one misses the other: a ratio check cannot see a 30-line
@@ -286,10 +301,10 @@ time. They now agree, and the agreement is the point.
   This killed a session once (`deepseek-peak`). Component-scoped timers that
   touch only local state are exempt; a timer calling `invalidate()`/
   `requestRender()` is **not**.
-- **Clipboard paste** uses `getImageBinary()` + `Buffer.toString("base64")`, never
-  `getImageBase64()` (drops `=` padding → Anthropic 400). `[image #N]` tokens
-  expand to inline image blocks at submit; if `@mariozechner/clipboard` fails to
-  resolve, pi's default path-insert transparently takes over.
+- **Clipboard paste** uses pi's `readClipboardImage` (`dist/utils/clipboard-image.js`)
+  + `Buffer.toString("base64")`. `[image #N]` tokens expand to inline image
+  blocks at submit; if that module cannot load, leave `onPasteImage` unset and
+  pi's default path-insert takes over. 0.87 dropped `@mariozechner/clipboard`.
 
 ---
 

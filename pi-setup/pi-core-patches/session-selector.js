@@ -11,6 +11,7 @@ import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint, keyText } from "./keybinding-hints.js";
 import { filterAndSortSessions, hasSessionName } from "./session-selector-search.js";
+
 // --- LOCAL PATCH: session pinning (see pi-setup/pi-core-patches) ---
 // Pins are stored as a JSON array of canonical session file paths in
 // ~/.pi/agent/pinned-sessions.json. Pinned sessions float to the top of the
@@ -309,6 +310,7 @@ class SessionList {
     filteredSessions = [];
     pinnedSet = new Set();
     selectedIndex = 0;
+    selectionTouched = false;
     searchInput;
     showCwd = false;
     sortMode = "threaded";
@@ -324,10 +326,10 @@ class SessionList {
     onToggleSort;
     onToggleNameFilter;
     onTogglePath;
-    onTogglePin;
     onDeleteConfirmationChange;
     onDeleteSession;
     onRenameSession;
+    onTogglePin;
     onError;
     maxVisible = 10; // Max sessions visible (one line each)
     // Focusable implementation - propagate to searchInput for IME cursor positioning
@@ -368,9 +370,18 @@ class SessionList {
         this.filterSessions(this.searchInput.getValue());
     }
     setSessions(sessions, showCwd) {
+        const selectedPath = this.selectionTouched ? this.getSelectedSessionPath() : undefined;
         this.allSessions = sessions;
         this.showCwd = showCwd;
         this.filterSessions(this.searchInput.getValue());
+        if (!this.selectionTouched) {
+            this.selectedIndex = 0;
+        }
+        else if (selectedPath) {
+            const selectedIndex = this.filteredSessions.findIndex((node) => node.session.path === selectedPath);
+            if (selectedIndex >= 0)
+                this.selectedIndex = selectedIndex;
+        }
     }
     filterSessions(query) {
         const trimmed = query.trim();
@@ -589,6 +600,7 @@ class SessionList {
             this.startDeleteConfirmationForSelectedSession();
             return;
         }
+        this.selectionTouched = true;
         // Up arrow
         if (kb.matches(keyData, "tui.select.up")) {
             this.selectedIndex = Math.max(0, this.selectedIndex - 1);
@@ -677,7 +689,6 @@ export class SessionSelectorComponent extends Container {
         }
         this.sessionList.handleInput(data);
     }
-    onCancel;
     canRename = true;
     sessionList;
     header;
@@ -691,9 +702,8 @@ export class SessionSelectorComponent extends Container {
     allSessionsLoader;
     requestRender;
     renameSession;
-    currentLoading = false;
-    allLoading = false;
-    allLoadSeq = 0;
+    currentLoad = null;
+    allLoad = null;
     mode = "list";
     renameInput = new Input();
     renameTargetPath = null;
@@ -728,7 +738,6 @@ export class SessionSelectorComponent extends Container {
         this.keybindings = options?.keybindings ?? KeybindingsManager.create();
         this.currentSessionsLoader = currentSessionsLoader;
         this.allSessionsLoader = allSessionsLoader;
-        this.onCancel = onCancel;
         this.requestRender = requestRender;
         this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
         const renameSession = options?.renameSession;
@@ -745,14 +754,17 @@ export class SessionSelectorComponent extends Container {
         const clearStatusMessage = () => this.header.setStatusMessage(null);
         this.sessionList.onSelect = (sessionPath) => {
             clearStatusMessage();
+            this.cancelLoads();
             onSelect(sessionPath);
         };
         this.sessionList.onCancel = () => {
             clearStatusMessage();
+            this.cancelLoads();
             onCancel();
         };
         this.sessionList.onExit = () => {
             clearStatusMessage();
+            this.cancelLoads();
             onExit();
         };
         this.sessionList.onToggleScope = () => this.toggleScope();
@@ -761,9 +773,7 @@ export class SessionSelectorComponent extends Container {
         this.sessionList.onRenameSession = (sessionPath) => {
             if (!renameSession)
                 return;
-            if (this.scope === "current" && this.currentLoading)
-                return;
-            if (this.scope === "all" && this.allLoading)
+            if (this.scope === "current" ? this.currentLoad : this.allLoad)
                 return;
             const sessions = this.scope === "all" ? (this.allSessions ?? []) : (this.currentSessions ?? []);
             const session = sessions.find((s) => s.path === sessionPath);
@@ -810,10 +820,19 @@ export class SessionSelectorComponent extends Container {
             this.requestRender();
         };
         // Start loading current sessions immediately
-        this.loadCurrentSessions();
+        void this.loadScope("current");
     }
-    loadCurrentSessions() {
-        void this.loadScope("current", "initial");
+    cancelLoads() {
+        if (this.currentLoad) {
+            this.currentLoad.abort();
+            this.currentLoad = null;
+            this.currentSessions = null;
+        }
+        if (this.allLoad) {
+            this.allLoad.abort();
+            this.allLoad = null;
+            this.allSessions = null;
+        }
     }
     enterRenameMode(sessionPath, currentName) {
         this.mode = "rename";
@@ -858,67 +877,77 @@ export class SessionSelectorComponent extends Container {
             this.exitRenameMode();
         }
     }
-    async loadScope(scope, reason) {
+    async loadScope(scope) {
+        if (scope === "current" ? this.currentLoad : this.allLoad)
+            return;
         const showCwd = scope === "all";
-        // Mark loading
+        const controller = new AbortController();
         if (scope === "current") {
-            this.currentLoading = true;
+            this.currentLoad = controller;
         }
         else {
-            this.allLoading = true;
+            this.allLoad = controller;
         }
-        const seq = scope === "all" ? ++this.allLoadSeq : undefined;
         this.header.setScope(scope);
         this.header.setLoading(true);
         this.requestRender();
-        const onProgress = (loaded, total) => {
-            if (scope !== this.scope)
+        const isActive = () => (scope === "current" ? this.currentLoad : this.allLoad) === controller;
+        const onProgress = (loaded, total, partialSessions) => {
+            if (!isActive())
                 return;
-            if (seq !== undefined && seq !== this.allLoadSeq)
+            if (partialSessions) {
+                const sessions = [...partialSessions];
+                if (scope === "current") {
+                    this.currentSessions = sessions;
+                }
+                else {
+                    this.allSessions = sessions;
+                }
+                if (scope === this.scope)
+                    this.sessionList.setSessions(sessions, showCwd);
+            }
+            if (scope !== this.scope)
                 return;
             this.header.setProgress(loaded, total);
             this.requestRender();
         };
         try {
             const sessions = await (scope === "current"
-                ? this.currentSessionsLoader(onProgress)
-                : this.allSessionsLoader(onProgress));
+                ? this.currentSessionsLoader(onProgress, controller.signal)
+                : this.allSessionsLoader(onProgress, controller.signal));
+            if (!isActive())
+                return;
             if (scope === "current") {
                 this.currentSessions = sessions;
-                this.currentLoading = false;
+                this.currentLoad = null;
             }
             else {
                 this.allSessions = sessions;
-                this.allLoading = false;
+                this.allLoad = null;
             }
             if (scope !== this.scope)
-                return;
-            if (seq !== undefined && seq !== this.allLoadSeq)
                 return;
             this.header.setLoading(false);
             this.sessionList.setSessions(sessions, showCwd);
             this.requestRender();
-            if (scope === "all" && sessions.length === 0 && (this.currentSessions?.length ?? 0) === 0) {
-                this.onCancel();
-            }
         }
         catch (err) {
+            if (!isActive())
+                return;
             if (scope === "current") {
-                this.currentLoading = false;
+                this.currentLoad = null;
+                this.currentSessions = null;
             }
             else {
-                this.allLoading = false;
+                this.allLoad = null;
+                this.allSessions = null;
             }
             if (scope !== this.scope)
-                return;
-            if (seq !== undefined && seq !== this.allLoadSeq)
                 return;
             const message = err instanceof Error ? err.message : String(err);
             this.header.setLoading(false);
             this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${message}` }, 4000);
-            if (reason === "initial") {
-                this.sessionList.setSessions([], showCwd);
-            }
+            this.sessionList.setSessions([], showCwd);
             this.requestRender();
         }
     }
@@ -936,28 +965,21 @@ export class SessionSelectorComponent extends Container {
         this.requestRender();
     }
     async refreshSessionsAfterMutation() {
-        await this.loadScope(this.scope, "refresh");
+        this.cancelLoads();
+        this.currentSessions = null;
+        this.allSessions = null;
+        await this.loadScope(this.scope);
     }
     toggleScope() {
-        if (this.scope === "current") {
-            this.scope = "all";
-            this.header.setScope(this.scope);
-            if (this.allSessions !== null) {
-                this.header.setLoading(false);
-                this.sessionList.setSessions(this.allSessions, true);
-                this.requestRender();
-                return;
-            }
-            if (!this.allLoading) {
-                void this.loadScope("all", "toggle");
-            }
-            return;
-        }
-        this.scope = "current";
+        this.scope = this.scope === "current" ? "all" : "current";
+        const sessions = this.scope === "current" ? this.currentSessions : this.allSessions;
+        const loading = (this.scope === "current" ? this.currentLoad : this.allLoad) !== null;
         this.header.setScope(this.scope);
-        this.header.setLoading(this.currentLoading);
-        this.sessionList.setSessions(this.currentSessions ?? [], false);
+        this.header.setLoading(loading);
+        this.sessionList.setSessions(sessions ?? [], this.scope === "all");
         this.requestRender();
+        if (sessions === null && !loading)
+            void this.loadScope(this.scope);
     }
     getSessionList() {
         return this.sessionList;

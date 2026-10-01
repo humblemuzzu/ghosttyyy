@@ -21,7 +21,6 @@ import type { AgentMessage, AssistantMessage, ImageContent, TextContent } from "
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { hasToolCost } from "../tools/lib/tool-cost";
 
@@ -41,9 +40,9 @@ const execFileAsync = promisify(execFile);
 // pi's plain-text editor. multiple pastes stack as [image #1], [image #2], ...
 //
 // the editor-swap path in core only wires its default paste handler when ours
-// is unset (`if (!customEditor.onPasteImage)`), so if the native clipboard
+// is unset (`if (!customEditor.onPasteImage)`), so if pi's clipboard-image
 // module can't be loaded we simply DON'T set onPasteImage and pi's default
-// (insert path) transparently takes back over — zero regression.
+// (insert path) transparently takes back over.
 // ---------------------------------------------------------------------------
 
 interface PastedImage {
@@ -84,45 +83,20 @@ const ESCAPE_LABEL_KEY = "esc-gate";
  */
 let agentRunning = false;
 
-type ClipboardModule = {
-	hasImage?: () => boolean;
-	/**
-	 * Raw image bytes (NAPI returns number[]). We base64-encode these via Buffer
-	 * to get correctly *padded* standard base64. NOTE: the module's
-	 * getImageBase64() helper omits the trailing "=" padding, which Anthropic
-	 * rejects with "invalid base64 data" for any image whose byte length isn't a
-	 * multiple of 3 — so we deliberately do NOT use it.
-	 */
-	getImageBinary?: () => Promise<number[] | Uint8Array>;
-};
+type ClipboardImage = { bytes: Uint8Array; mimeType: string };
 
-let clipboardCache: ClipboardModule | null | undefined;
-
-/**
- * Resolve @mariozechner/clipboard (pi's native clipboard dependency).
- *
- * We can't bare-import it: jiti only aliases the @mariozechner/pi-* packages
- * for extensions, not clipboard, and the ~/.pi/agent/node_modules symlinks are
- * stale. So we anchor require.resolve at the running pi binary's node_modules
- * (clipboard is pi's own dep, guaranteed present there) plus a few fallbacks.
- * Returns null if unavailable.
- */
-function loadClipboard(): ClipboardModule | null {
-	if (clipboardCache !== undefined) return clipboardCache;
+function loadClipboardImageReader(): (() => Promise<ClipboardImage | null>) | null {
 	try {
-		const req = createRequire(process.argv[1] || join(homedir(), ".pi", "noop.js"));
-		const searchPaths: string[] = [];
-		const piEntry = process.argv[1]; // e.g. .../pi-coding-agent/dist/cli.js
-		if (piEntry) searchPaths.push(join(dirname(piEntry), "..", "node_modules"));
-		searchPaths.push(join(homedir(), ".pi", "agent", "extensions", "tools", "node_modules"));
-		searchPaths.push("/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules");
-		searchPaths.push("/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules");
-		const resolved = req.resolve("@mariozechner/clipboard", { paths: searchPaths });
-		clipboardCache = req(resolved) as ClipboardModule;
+		const piEntry = process.argv[1];
+		if (!piEntry) return null;
+		const req = createRequire(piEntry);
+		const mod = req(join(dirname(piEntry), "utils/clipboard-image.js")) as {
+			readClipboardImage?: () => Promise<ClipboardImage | null>;
+		};
+		return typeof mod.readClipboardImage === "function" ? () => mod.readClipboardImage!() : null;
 	} catch {
-		clipboardCache = null;
+		return null;
 	}
-	return clipboardCache;
 }
 
 interface Label {
@@ -173,7 +147,7 @@ class LabeledEditor extends CustomEditor {
 	};
 
 	constructor(tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager, appTheme: Theme) {
-		super(tui, editorTheme, keybindings);
+		super(tui, editorTheme, keybindings, { embedWorkingStatus: true });
 		this.appTheme = appTheme;
 		this.tuiRef = tui;
 		this.setupImagePaste();
@@ -270,22 +244,17 @@ class LabeledEditor extends CustomEditor {
 	 * `onPasteImage` is left unset and pi core wires its default handler.
 	 */
 	private setupImagePaste(): void {
-		const clipboard = loadClipboard();
-		if (!clipboard?.hasImage || !clipboard.getImageBinary) return;
+		const readImage = loadClipboardImageReader();
+		if (!readImage) return;
 		this.onPasteImage = async () => {
 			try {
-				if (!clipboard.hasImage!()) return;
-				const bytes = await clipboard.getImageBinary!();
-				if (!bytes || bytes.length === 0) return;
-				// Buffer.toString("base64") produces correctly *padded* standard
-				// base64 — the only form Anthropic accepts. (Do NOT swap this for
-				// clipboard.getImageBase64(): it omits "=" padding → API 400.)
-				const data = Buffer.from(bytes).toString("base64");
+				const image = await readImage();
+				if (!image?.bytes?.length) return;
+				const data = Buffer.from(image.bytes).toString("base64");
 				if (!data) return;
-				// fresh paste after a submit (registry drained) restarts numbering
 				if (pastedImages.size === 0) pasteCounter = 0;
 				const token = `[image #${++pasteCounter}]`;
-				pastedImages.set(token, { data, mime: "image/png" });
+				pastedImages.set(token, { data, mime: image.mimeType || "image/png" });
 				this.insertTextAtCursor(`${token} `);
 				this.tuiRef.requestRender();
 			} catch {
@@ -338,6 +307,17 @@ class LabeledEditor extends CustomEditor {
 		return match ? match[0] : "";
 	}
 
+	private workingStatusText(budget: number): string {
+		if (!this.embedWorkingStatus || budget < 3) return "";
+		const indicator = (
+			this as unknown as {
+				workingStatusIndicator?: { renderInBorder: (width: number) => string };
+			}
+		).workingStatusIndicator;
+		if (!indicator) return "";
+		return flattenLabelText(indicator.renderInBorder(budget));
+	}
+
 	/**
 	 * build a border line like: ╭─ left label ─────── right label ─╮
 	 *
@@ -355,9 +335,8 @@ class LabeledEditor extends CustomEditor {
 		const leftText = this.getLabelsFor(position, "left");
 		const rightText = this.getLabelsFor(position, "right");
 		const scrollIndicator = this.extractScrollIndicator(originalLine);
-
-		// combine right-side content
-		const rightParts = [rightText, scrollIndicator].filter(Boolean);
+		const status = position === "top" ? this.workingStatusText(Math.max(8, Math.floor(outerWidth / 3))) : "";
+		const rightParts = [rightText, status, scrollIndicator].filter(Boolean);
 		const rightCombined = rightParts.join(SEPARATOR);
 		const cacheKey = `${outerWidth}|${position}|${leftText}|${rightCombined}`;
 		const cached = this.borderCache[position];
