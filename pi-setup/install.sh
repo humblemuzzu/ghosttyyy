@@ -10,7 +10,7 @@
 #
 # What it installs:
 #   ~/.pi/agent/extensions/     — custom extensions (editor, tools, mentions, md-export, etc.)
-#   ~/.pi/agent/themes/         — gruvbox + nightowl themes
+#   ~/.pi/agent/themes/         — gruvbox, nightowl, catppuccin-mocha, black-metal
 #   ~/.pi/agent/agents/         — agent/prompt markdown files (system prompt, sub-agents, etc.)
 #   ~/.pi/agent/skills/         — pi-level skills
 #   ~/.pi/agent/settings.json   — settings (anthropic default, gruvbox theme, compaction on, etc.)
@@ -203,8 +203,8 @@ packages=(
     "npm:@marckrenn/pi-sub-bar"
     "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"
-    "npm:pi-codex-goal"
-    "npm:pi-mcp-adapter"
+    "npm:pi-codex-goal@0.6.0"
+    "npm:pi-mcp-adapter@5.0.0"
 )
 # NOTE: pi-context, todos.ts, pi-web-access, pi-tasks and
 # @tomooshi/condensed-milk-pi were removed deliberately — do NOT re-add them
@@ -309,7 +309,7 @@ echo "│                                         │"
 echo "│   Installed:                            │"
 echo "│   • custom extensions                   │"
 echo "│   • 28 custom tools               │"
-echo "│   • 2 themes (gruvbox active)           │"
+echo "│   • 4 pi themes (gruvbox active)        │"
 echo "│   • 24 config skills                    │"
 echo "│   • 9 agent prompts                     │"
 echo "│   • Settings, keybindings, permissions  │"

@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.85.1",
+  "lastChangelogVersion": "1.0.0",
   "hideThinkingBlock": true,
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
@@ -14,6 +14,7 @@
     "~/.pi/agent/extensions/system-prompt.ts",
     "~/.pi/agent/extensions/tools",
     "~/.pi/agent/extensions/command-palette",
+    "~/.pi/agent/extensions/theme-studio",
     "~/.pi/agent/extensions/session-breakdown.ts",
     "~/.pi/agent/extensions/notify.ts",
     "~/.pi/agent/extensions/mentions.ts",
@@ -38,15 +39,16 @@
   "steeringMode": "all",
   "followUpMode": "all",
   "doubleEscapeAction": "tree",
-  "quietStartup": true,
+  "quietStartup": "header",
+  "tuiMode": "fullscreen",
   "packages": [
     "npm:pi-token-burden",
     "npm:@benvargas/pi-claude-code-use@2.2.1",
     "npm:@marckrenn/pi-sub-bar",
     "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",
-    "npm:pi-codex-goal",
-    { "source": "npm:pi-mcp-adapter", "skills": [] }
+    "npm:pi-codex-goal@0.6.0",
+    { "source": "npm:pi-mcp-adapter@5.0.0", "skills": [] }
   ],
   "terminal": {
     "clearOnShrink": false,

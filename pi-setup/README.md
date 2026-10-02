@@ -60,7 +60,7 @@ it replaced `edit`/`write`, and pi's natives are hidden at session start.
 - `oracle` — Grok 4.6 high technical advisor
 - `librarian` — Grok 4.6 high GitHub repo explorer
 - `code_review` — two-phase Grok 4.6 high review
-- `delegate` — full resumable sub-agent (Grok 4.6 xhigh) for parallel independent work
+- `delegate` — full resumable sub-agent (Grok 4.6 high) for parallel independent work
 - `read_web_page` — web page reader + optional Q&A child
 - `read_session` / `search_sessions` — past-session reader / search
 - `screenshot`, `web_search` (Parallel AI), `agent_message`, `redo_edit`

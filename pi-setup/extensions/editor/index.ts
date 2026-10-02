@@ -13,13 +13,14 @@
 
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@mariozechner/pi-coding-agent";
 import { CustomEditor, Theme, estimateTokens } from "@mariozechner/pi-coding-agent";
-import type { TUI, EditorTheme } from "@mariozechner/pi-tui";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import type { TUI, EditorTheme, TuiMouseEvent } from "@mariozechner/pi-tui";
+import { Image, visibleWidth } from "@mariozechner/pi-tui";
 import { HorizontalLineWidget, WidgetRowRegistry } from "./widget-row";
 import type { KeybindingsManager } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage, AssistantMessage, ImageContent, TextContent } from "@mariozechner/pi-ai";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { hasToolCost } from "../tools/lib/tool-cost";
@@ -55,6 +56,9 @@ interface PastedImage {
 const pastedImages = new Map<string, PastedImage>();
 let pasteCounter = 0;
 
+const IMAGE_TOKEN = /\[image #\d+\]/g;
+let showPeek: ((token: string | undefined) => void) | undefined;
+
 // ---------------------------------------------------------------------------
 // Escape gate — a running agent takes THREE escapes, not one
 //
@@ -87,8 +91,9 @@ type ClipboardImage = { bytes: Uint8Array; mimeType: string };
 
 function loadClipboardImageReader(): (() => Promise<ClipboardImage | null>) | null {
 	try {
-		const piEntry = process.argv[1];
-		if (!piEntry) return null;
+		const entry = process.argv[1];
+		if (!entry) return null;
+		const piEntry = realpathSync(entry);
 		const req = createRequire(piEntry);
 		const mod = req(join(dirname(piEntry), "utils/clipboard-image.js")) as {
 			readClipboardImage?: () => Promise<ClipboardImage | null>;
@@ -256,11 +261,34 @@ class LabeledEditor extends CustomEditor {
 				const token = `[image #${++pasteCounter}]`;
 				pastedImages.set(token, { data, mime: image.mimeType || "image/png" });
 				this.insertTextAtCursor(`${token} `);
+				showPeek?.(token);
 				this.tuiRef.requestRender();
 			} catch {
 				// clipboard read failed — leave the editor untouched
 			}
 		};
+	}
+
+	private peekToken(): string | undefined {
+		if (pastedImages.size === 0) return undefined;
+		const { line, col } = this.getCursor();
+		const text = this.getText().split("\n")[line] ?? "";
+		for (const match of text.matchAll(IMAGE_TOKEN)) {
+			const start = match.index ?? 0;
+			if (col >= start && col <= start + match[0].length && pastedImages.has(match[0])) return match[0];
+		}
+		return undefined;
+	}
+
+	handleInput(data: string): void {
+		super.handleInput(data);
+		showPeek?.(this.peekToken());
+	}
+
+	handleMouse(event: TuiMouseEvent) {
+		const result = super.handleMouse(event);
+		showPeek?.(this.peekToken());
+		return result;
 	}
 
 	/** always-dim color for box chrome (corners, lines, rails) */
@@ -685,6 +713,7 @@ export default function (pi: ExtensionAPI) {
 		// a submit resets the editor, so any unreferenced tokens are gone for good
 		pastedImages.clear();
 		pasteCounter = 0;
+		showPeek?.(undefined);
 		return matched
 			? ({ action: "transform", text: event.text, images } as const)
 			: ({ action: "continue" } as const);
@@ -704,6 +733,28 @@ export default function (pi: ExtensionAPI) {
 			themeAny.bgColors.set("toolSuccessBg", transparent);
 			themeAny.bgColors.set("toolErrorBg", transparent);
 		}
+
+		let peeked: string | undefined;
+		showPeek = (token) => {
+			if (token === peeked) return;
+			const image = token ? pastedImages.get(token) : undefined;
+			peeked = image ? token : undefined;
+			if (!token || !image) {
+				ctx.ui.setWidget("image-peek", undefined);
+				return;
+			}
+			ctx.ui.setWidget(
+				"image-peek",
+				() =>
+					new Image(
+						image.data,
+						image.mime,
+						{ fallbackColor: (text: string) => ctx.ui.theme.fg("dim", text) },
+						{ maxWidthCells: 48, maxHeightCells: 14, filename: token },
+					),
+				{ placement: "aboveEditor" },
+			);
+		};
 
 		// replace editor with labeled box-drawing version
 		ctx.ui.setEditorComponent((tui: TUI, editorTheme: EditorTheme, keybindings: KeybindingsManager) => {

@@ -38,7 +38,7 @@ continuing to add.
 ## Provider chain
 
 ```
-pi CLI (v0.99.2) — @earendil-works/pi-coding-agent
+pi CLI (v1.0.0) — @earendil-works/pi-coding-agent
   ├─ xai (native)                               → Grok OAuth         [DEFAULT]
   ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
   ├─ kimi-coding (native)                       → Kimi Code OAuth (/login)
@@ -91,7 +91,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 | pi-sub grok provider | `@marckrenn/pi-sub-*` | wiped by every `pi install` / `pi update --extensions` |
 | pi-sub-core stale-ctx guard | `@marckrenn/pi-sub-core/index.ts` | same wipe. Without it a usage fetch that outlives `/new`, `/resume` or fork emits through the invalidated runtime, and pi exits (`uncaughtException`) — killed a session on 2026-09-12 |
 | pi-tool-display `config.json` | `~/.pi/agent/extensions/pi-tool-display/` | all tool overrides `false` — otherwise it replaces our custom tools |
-| pi-mcp-adapter settings | `~/.config/mcp/mcp.json` | `scriptMode: false`, skills `[]` |
+| pi-mcp-adapter settings | `~/.config/mcp/mcp.json` | `scriptMode: false`, `namespaceProxyTools: false`, skills `[]` |
 
 ### Quick re-patch
 
@@ -150,14 +150,14 @@ setting makes that explicit and silences the boot warning.
 
 | Package | Ver | Purpose | Patched |
 |---|---|---|---|
-| `@earendil-works/pi-coding-agent` | 0.99.2 | pi itself | 3 core patches |
+| `@earendil-works/pi-coding-agent` | 1.0.0 | pi itself | 3 core patches |
 | `@benvargas/pi-claude-code-use` | **2.2.1 (pinned `@2.2.1`)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
 | `pi-autoresearch` | 1.8.1 | experiment loop (git install) | no |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
-| `pi-codex-goal` | 0.4.1 | `/goal` | no |
-| `pi-mcp-adapter` | 3.3.0 | one `mcp` proxy tool, lazy servers | **config** |
+| `pi-codex-goal` | 0.6.0 | `/goal` | no |
+| `pi-mcp-adapter` | 5.0.0 | one `mcp` proxy tool, lazy servers | **config** |
 
 **pi-claude-code-use pinned `@2.2.1`** in settings.json and install.sh, so even
 `pi update --extensions` skips other versions. 2.x auto-aliases custom tools;
@@ -239,7 +239,7 @@ uses `command`/`args`, HTTP uses `url` + optional `headers`/`auth`.
 
 ---
 
-## Extensions (13, all in `extensions/`)
+## Extensions (14, all in `extensions/`)
 
 pi auto-discovers every `.ts` here — there is **no** disabled state. To disable,
 delete or move out. From a subdirectory pi loads **only `index.ts`**, which is
@@ -254,6 +254,7 @@ why tests can live beside an extension without being loaded.
 | `notify.ts` | OSC 777 desktop notifications |
 | `md-export.ts` | `/md` session → markdown |
 | `command-palette/` | Ctrl+Shift+P |
+| `theme-studio/` | `/studio`, `/theme`, Ctrl+Shift+K — live-preview pi theme, Ghostty theme/font/size/cursor/opacity. Esc reverts, Enter keeps. Writes the Ghostty config at `PI_STUDIO_GHOSTTY_CONFIG` or the default path, reloads via AppleScript |
 | `editor/` | custom box-drawing editor, labels, clipboard image paste |
 | `deepseek-peak/` | `/deepseek` + peak/off-peak clock in the editor border |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — sub-agent transcripts |
@@ -305,6 +306,10 @@ time. They now agree, and the agreement is the point.
   + `Buffer.toString("base64")`. `[image #N]` tokens expand to inline image
   blocks at submit; if that module cannot load, leave `onPasteImage` unset and
   pi's default path-insert takes over. 0.87 dropped `@mariozechner/clipboard`.
+  `process.argv[1]` is the `/opt/homebrew/bin/pi` symlink: `realpathSync` it
+  before resolving `utils/…`, or the reader silently fails and pastes insert
+  the raw temp path. The cursor-on-token image preview (`image-peek` widget)
+  hangs off the same `pastedImages` map.
 
 ---
 
@@ -336,7 +341,7 @@ time. They now agree, and the agreement is the point.
 | `chad` | `chad.ts` | read-only research, pinned xai/grok-4.6, built to swarm |
 | `librarian` | `librarian.ts` | external repos via GitHub API |
 | `agent_message` | `agent-message.ts` | inter-session mailbox (`setupAgentMessage(pi)`) |
-| `web_search` | `web-search.ts` | Parallel AI Search |
+| `web_search` | `web-search.ts` | Parallel AI Search; results judged by TypeSafe Jev when a classifier is available (`lib/jev-judge.ts`, fail-open, `TYPESAFE_API_KEY` in `~/.zshrc`, else `openrouter/typesafe/jev-1.13`) |
 | `read_web_page` | `read-web-page.ts` | cheerio → markdown |
 | `read_session` / `search_sessions` | `read-session.ts` / `search-sessions.ts` | session history |
 | `code_review` | `code-review.ts` | diff review |
@@ -415,8 +420,8 @@ retries, self-clears at `maxTimeoutSec()` + slack).
 ### chad — read-only, pinned, swarmable
 
 `pinModel: true` + `--thinking high` pins `xai/grok-4.6` whatever the parent
-runs — the model the setup itself is on. Most sub-agents are pinned the same way;
-`delegate` uses `--thinking xhigh`.
+runs — the model the setup itself is on. Most sub-agents are pinned the same way,
+`delegate` included.
 
 `readOnlyBash: true` sets `PI_BASH_READ_ONLY=1`; `lib/read-only-bash.ts` is an
 **allowlist** (~60 read commands, git gated per-subcommand, quote-aware scanner
@@ -542,7 +547,7 @@ anthropic-parent qualify path still exists for any unpinned caller.
 | agent | model |
 |---|---|
 | finder, librarian, code_review, oracle, read_session, read_web_page | `xai/grok-4.6` **pinned**, `--thinking high` |
-| **delegate** | `xai/grok-4.6` **pinned** (`pinModel`), `--thinking xhigh` |
+| **delegate** | `xai/grok-4.6` **pinned** (`pinModel`), `--thinking high` |
 | **chad** | `xai/grok-4.6` **pinned**, provider-qualified (`pinModel` skips `qualifyModel`) |
 | session-name | haiku, deliberately (one line, every session) |
 
@@ -627,11 +632,14 @@ pi-setup/
 
 ## Update workflow
 
-0. **`pi update` fails on this machine** — the npm package declares
-   `devEngines: bun`, npm 10.9.4 errors with EBADDEVENGINES, and pi's updater
-   shells out without `--force`. Install with
-   `npm install --prefix /opt/homebrew -g --force --ignore-scripts @earendil-works/pi-coding-agent@<ver>`
-   (`--prefix` because `npm root -g` is the nvm root, not homebrew).
+0. **Update with `bash pi-setup/update-pi.sh <ver>`, never `pi update --self`.**
+   Self-update repoints `bin/pi` at `dist/bundle/cli.js`, which disables every
+   core patch. EBADDEVENGINES is not pi's: npm reads `devEngines` from the
+   nearest `package.json` above cwd, and `~/package.json` (a bun project)
+   demands bun. Run npm from outside `~` (the script uses a temp dir). The
+   script refuses if stock patched files drifted from `pi-core-patches/base-version`.
+   TUI is `tuiMode: "fullscreen"` + `quietStartup: "header"` (1.0 logo header);
+   `"regular"` restores normal scrollback.
 1. **`bash pi-setup/verify-patches.sh`** — always first.
 2. **Also grep our own CLI call sites.** An import-level audit cannot see a
    change in how pi interprets the **arguments we pass it**, and `pi-spawn.ts`

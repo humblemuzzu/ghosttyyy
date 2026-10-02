@@ -401,14 +401,14 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | **finder** | `xai/grok-4.6` **pinned** · high | Concept-based parallel code search (8+ searches/turn, read-only) |
 | **oracle** | `xai/grok-4.6` **pinned** · high | Architecture review, complex planning (read + bash + web + screenshot) |
 | **code_review** | `xai/grok-4.6` **pinned** · high | Structured 2-phase diff review with XML output |
-| **delegate** | `xai/grok-4.6` **pinned** · xhigh | Full resumable sub-agent for parallel independent work |
+| **delegate** | `xai/grok-4.6` **pinned** · high | Full resumable sub-agent for parallel independent work |
 | **chad** | `xai/grok-4.6` **pinned** · high | Read-only deep research, built to swarm — 5–8 at once, one question each |
 | **librarian** | `xai/grok-4.6` **pinned** · high | Cross-repo GitHub exploration (7 GitHub tools) |
 
 Sub-agents are **pinned** to Grok, deliberately — they do not inherit the parent.
 
-**All research/work sub-agents run `xai/grok-4.6`.** Most use high thinking;
-`delegate` uses xhigh. chad cannot change anything — no `apply_patch`, and its bash runs under an
+**All research/work sub-agents run `xai/grok-4.6`.** All use high thinking.
+chad cannot change anything — no `apply_patch`, and its bash runs under an
 allowlist that refuses writes, redirection, `sed -i`, interpreters and every git
 subcommand that mutates. Reach for `chad` to find out, `delegate` to do.
 

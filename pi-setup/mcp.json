@@ -1,6 +1,7 @@
 {
   "settings": {
-    "scriptMode": false
+    "scriptMode": false,
+    "namespaceProxyTools": false
   },
   "mcpServers": {
     "chrome-devtools": {

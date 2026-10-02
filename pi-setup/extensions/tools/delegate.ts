@@ -8,7 +8,7 @@
  *     `@earendil-works/*` -> `@mariozechner/*`
  *   - his DI wrapper / config plumbing dropped; tool lists are consts here,
  *     matching how finder/oracle/librarian are written in this repo
- *   - model pinned to xai/grok-4.6 xhigh (see MODEL below)
+ *   - model pinned to xai/grok-4.6 high (see MODEL below)
  *   - `description` is optional with a derived fallback (see PARAMS below)
  *
  * WHAT IT ADDS OVER `Task`
@@ -18,7 +18,7 @@
  * `--no-session`, so every child was a dead end.
  *
  * MODEL
- * pinned to xai/grok-4.6 at xhigh thinking. the default provider auths it
+ * pinned to xai/grok-4.6 at high thinking. the default provider auths it
  * whatever session spawned the child, so a delegate never depends on the
  * parent's provider (see pi-spawn's pinModel).
  */
@@ -39,7 +39,7 @@ import {
 
 /** provider-qualified: `pinModel` passes it through untouched (pi 0.84 #7327). */
 const MODEL = "xai/grok-4.6";
-const THINKING = "xhigh";
+const THINKING = "high";
 
 /*
  * `apply_patch` rather than edit/write: those tools no longer exist, and pi's
@@ -94,7 +94,7 @@ export function createDelegateTool(): ToolDefinition {
 		name: "delegate",
 		label: "Delegate",
 		description:
-			"Delegate a sub-task to a sub-agent. Runs on xai/grok-4.6 at xhigh thinking.\n\n" +
+			"Delegate a sub-task to a sub-agent. Runs on xai/grok-4.6 at high thinking.\n\n" +
 			"Tools: read, grep, find, ls, bash, apply_patch, format_file, skill, finder, " +
 			"web_search, read_web_page, screenshot.\n\n" +
 			"When to use delegate:\n" +

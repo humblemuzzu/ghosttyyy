@@ -12,6 +12,86 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## Jev + theme studio (2026-10-02)
+
+- `web_search` judges Parallel results with a Jev classifier (`lib/jev-judge.ts`,
+  logic from GaganSD/pi-extensions `pi-web-search/src/jev`, MIT). Auto-picks
+  `typesafe/jev-latest`, else `openrouter/typesafe/jev-1.13`; any failure leaves
+  results unchanged plus one `jev:` line. Verified: with the key,
+  `jev: sufficient`, classifier cost 0; pinned to a missing model,
+  `jev: judging failed — no available classifier for typesafe/does-not-exist`,
+  results intact. The upstream repo ships no web-search skill (its only skill is
+  `pi-ask/skills/ask-user`), so none was added.
+- `theme-studio/` extension. Verified in tmux against a copied Ghostty config:
+  preview writes the key, Esc restores it, Enter keeps it; Pi tab persists
+  `theme` in `settings.json`. Not verified: the visible effect of a live reload
+  on the real Ghostty window.
+- Themes added: `catppuccin-mocha`, `black-metal` (from pi-slate, schema-checked
+  by pi at load).
+
+---
+
+## Packages (2026-10-02) — pi-mcp-adapter 3.3.0 → 5.0.0, pi-codex-goal 0.4.1 → 0.6.0; 1.0 TUI on
+
+Installed with explicit versions from `/tmp` (`pi install npm:<name>@<ver>`).
+Backup: `~/pi-update-backup-pkgs-20261002-200439`.
+
+- **pi-mcp-adapter 5.0.0** defaults `settings.namespaceProxyTools` to true
+  (`types.ts:626`), which registered `mcp__chrome_devtools` and
+  `mcp__cloudflare_agents_docs` next to `mcp` (42 tools). Set it `false` in
+  `mcp.json`; surface back to 37. `scriptMode` is now opt-in upstream, still
+  `false` here. 5.0 also reads `~/.pi/agent/mcp.json` again; that file stays
+  absent. It writes `-builtin:mcp` into settings on first start; already present.
+- **pi-codex-goal 0.6.0** qualifies against pi 1.0.0. Declares node >=24 like
+  0.4.1 did; loads under node 22.23.1, goal tools present.
+- **TUI:** `tuiMode: "fullscreen"`, `quietStartup: "header"`. Captured in tmux
+  at 120x40: logo + `v1.0.0` + key hints, editor/footer/sub-bar intact.
+
+---
+
+## 1.0.0 (2026-10-02) — from 0.99.2; patched files unchanged, copied
+
+**EBADDEVENGINES root cause.** pi's package.json has had no `devEngines` since
+at least 0.99.2. npm's `checkDevEngines` (`npm/lib/base-cmd.js:135`) normalizes
+`localPrefix`, the nearest `package.json` above cwd, and `~/package.json` is a
+bun project with `devEngines.packageManager: bun`. Any npm command run inside
+`~` fails, `npm view` included; the same command from `/tmp` works. Fix: run npm
+outside `~`. `--force` is no longer needed. `~/package.json` was left alone
+because it belongs to another project.
+
+**`pi update --self` is not safe here** even with that fixed: it runs
+`npm --prefix /opt/homebrew install -g` (`config.js:121-136`), which repoints
+`bin/pi` at `dist/bundle/cli.js`. `update-pi.sh` replaces the manual procedure:
+diff stock base vs target for the 3 patched files, backup, install, re-pin,
+copy patches, width patcher, verify, headless smoke.
+
+**Patch drift (stock 0.99.2 vs stock 1.0.0, registry tarballs):**
+- resource-loader.js, session-selector.js, keybindings.js, compaction.js,
+  model-resolver.js: byte-identical. Stored patches copied clean.
+- args.js: help text only. main.js now errors on `--provider` without
+  `--model`; pi-spawn passes only a qualified `--model` (`pi-spawn.ts:454`).
+- settings-manager.js: `tuiMode` default flipped to fullscreen. Set
+  `"tuiMode": "regular"` to keep scrollback.
+- user-message.js: `Box` wrapper removed, Markdown pads itself. pi-tool-display
+  0.5.0's `findMarkdownChild` walks children recursively, so the bordered
+  user box still renders (rendered at width 60 under jiti before and after).
+- pi-tui 1.0.0: width patcher anchors intact, applied.
+
+**Bug found by the smoke test:** `notify.ts` wrote OSC 777 to stdout in
+`--mode json`, corrupting the first JSON line of every headless run (sub-agents
+included). Now gated on `ctx.hasUI`; 17/17 lines parse after the fix.
+
+**Not updated:** pi-mcp-adapter 5.0.0 (3.3.0 kept; first version declaring
+pi-ai 0.99, none declares 1.0) and pi-codex-goal 0.6.0 (0.4.1 kept). Separate
+jumps, each needs its own check.
+
+verify-patches.sh 14/14 PASS. Headless replied `UPDATE_100` as xai/grok-4.6.
+37 tools, `mcp` present, `mcpScript`/`codemode` absent. A `finder` sub-agent
+spawned on 1.0 and returned cited lines. Rollback:
+`~/pi-update-backup-0.99.2-20261002-190854`.
+
+---
+
 ## 0.99.2 (2026-10-01) — from 0.99.1; patched files unchanged, copied
 
 Install is still
