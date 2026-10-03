@@ -154,7 +154,7 @@ setting makes that explicit and silences the boot warning.
 | `@benvargas/pi-claude-code-use` | **2.2.1 (pinned `@2.2.1`)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
-| `pi-autoresearch` | 1.8.1 | experiment loop (git install) | no |
+| `pi-autoresearch` | 1.8.1 | experiment loop (git install) | **disabled** — off in `packages` |
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
 | `pi-codex-goal` | 0.6.0 | `/goal` | no |
 | `pi-mcp-adapter` | 5.0.0 | one `mcp` proxy tool, lazy servers | **config** |
@@ -166,10 +166,12 @@ do not set `PI_CLAUDE_CODE_USE_DISABLE_TOOL_FILTER`.
 (`/settings`). The package already remaps tools; the banner is UI, not a billing
 signal. Re-enable in `/settings` if you want the reminder.
 
-**`pi-autoresearch` shortcut is pinned to `ctrl+shift+r`** in
-`pi-setup/extensions/pi-autoresearch.json` — pi-tui 0.84.2 took `ctrl+shift+f`
-for fullscreen transcript search. Fix belongs in that config, never in the
-package (git-installed, wiped on update).
+**`pi-autoresearch` is disabled.** It gates its tools on a runtime flag plus a
+`.auto/log.jsonl` check, so its `promptGuidelines` appear and vanish mid-session;
+conditional text inside the system prompt costs a full prefix re-write each time
+it changes (measured: 27,099 tokens per flip). Removed from `packages` in
+settings.json and install.sh; add the line back to both to re-enable. Its
+`pi-autoresearch.json` shortcut config is inert while it is off.
 
 ### Removed — do not reinstall
 
@@ -259,31 +261,30 @@ why tests can live beside an extension without being loaded.
 | `deepseek-peak/` | `/deepseek` + peak/off-peak clock in the editor border |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — sub-agent transcripts |
 | `local-model.ts` | `/local` llama.cpp router; bare system prompt for `llama-local` and `llama.cpp` |
-| `guardrails/` | re-injects `rules.amp.md` per turn (skipped for llama-local / llama.cpp) + comment gate |
+| `guardrails/` | comment gate on `apply_patch` (rules now ship in the system prompt) |
 | `tools/` | 29 custom tools |
 
-### guardrails — behaviour rules the model cannot forget or ignore
+### guardrails — the comment gate, and where the rules live
 
-A system prompt stops governing behaviour after roughly eight turns, and
-Anthropic's own tracker has an open bug for Claude ignoring mandatory
-anti-comment rules. So the rules live in two places that survive that:
+`guardrails/` is one thing: a `tool_call` hook blocking `apply_patch` when a
+change adds a comment run over 12 lines **or** more than 0.5 comment lines per
+line of code. Triggers are paired because one misses the other: a ratio check
+cannot see a 30-line header in a long file, and a run check cannot see a comment
+on every third line. Only real source extensions are gated (`#` is a heading in
+markdown). **The gate fails open on any error**; a guardrail that blocks real
+work gets switched off, and a missed essay costs one rewrite.
+`PI_GUARDRAILS_OFF=1` disables it; `PI_GUARDRAILS_MAX_COMMENT_RUN`,
+`_MAX_COMMENT_RATIO`, `_MIN_COMMENTS` retune it.
 
-- **`context` hook** re-appends `agents/rules.amp.md` before **every** model
-  call, stripping its own prior copy first (it is a deep copy per turn, so
-  without the strip the block accumulates). Edit the rules in that .md, never
-  in the extension. 0.87 strips system messages before `context` and restores
-  them after; do **not** migrate this to `context_with_system` unless you want
-  to own the prompt.
-- **`tool_call` hook** blocks `apply_patch` when a change adds a comment run
-  over 12 lines **or** more than 0.5 comment lines per line of code. Two
-  triggers because one misses the other: a ratio check cannot see a 30-line
-  header in a long file, and a run check cannot see a comment on every third
-  line. Only real source extensions are gated — `#` is a heading in markdown.
-  **The gate fails open on any error**; a guardrail that blocks real work gets
-  switched off, and a missed essay costs one rewrite.
-
-`PI_GUARDRAILS_OFF=1` disables both. `PI_GUARDRAILS_MAX_COMMENT_RUN`,
-`_MAX_COMMENT_RATIO`, `_MIN_COMMENTS` retune the gate.
+**The rules live in the system prompt, never in a `context` hook.**
+Re-appending `agents/rules.amp.md` from `context` mutated the message list on
+every model call, and a changed list makes pi collapse the system prompt and the
+tool declarations (`dist/core/extensions/runner.js`), which invalidated the
+Anthropic prompt cache on every turn: measured 83% of each request re-written as
+cache-write, 99% of all metered subscription tokens. `system-prompt.ts` appends
+the rules instead, delivered every turn from the cached head at no recurring
+cost. Do not move them back. Edit the rules in that .md, never in an extension.
+Skipped for llama-local / llama.cpp; sub-agents get them too.
 
 **Do not re-add a why-essay comment rule anywhere.** `document/SKILL.md`,
 `AGENTS.md` and `prompt.amp.system.md` used to disagree about comments while
@@ -314,6 +315,11 @@ time. They now agree, and the agreement is the point.
 ---
 
 ## Custom tools (29)
+
+`codemode` is on, via `defaultTools: ["+codemode"]` in settings.json (`cli.md:148`,
+`settings.md:46`: a list of only `+name`/`-name` changes the inherited selection).
+It is a built-in, not one of the 29, and it is not in the shim's `CORE_TOOL_NAMES`,
+so the shim aliases it on Anthropic OAuth.
 
 29 = 28 `pi.registerTool` calls + `agent_message`. `web_search` is conditional
 (skipped when its config disables it), so a session shows 26–27.

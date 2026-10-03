@@ -47,6 +47,24 @@ export interface InterpolateContext {
 	harnessDocsSection?: string;
 }
 
+let listingRoot: string | undefined;
+let listingValue = "";
+
+/** memoized: a live listing rewrites the system prompt mid-session and invalidates the whole prompt cache. */
+function workspaceListing(root: string): string {
+	if (listingRoot === root) return listingValue;
+	listingRoot = root;
+	try {
+		listingValue = fs.readdirSync(root).map((e) => {
+			const full = path.join(root, e);
+			try { return fs.statSync(full).isDirectory() ? `${full}/` : full; } catch { return full; }
+		}).join("\n");
+	} catch {
+		listingValue = "";
+	}
+	return listingValue;
+}
+
 /**
  * resolve template variables in agent prompts (e.g. {cwd}, {roots}, {date}).
  *
@@ -58,13 +76,7 @@ export function interpolatePromptVars(prompt: string, cwd: string, extra?: Inter
 	const date = new Date().toLocaleDateString("en-US", { weekday: "short", year: "numeric", month: "short", day: "numeric" });
 	const repo = extra?.repo ?? getGitRemoteUrl(roots);
 	const sessionId = extra?.sessionId ?? "";
-	let ls = "";
-	try {
-		ls = fs.readdirSync(roots).map((e) => {
-			const full = path.join(roots, e);
-			try { return fs.statSync(full).isDirectory() ? `${full}/` : full; } catch { return full; }
-		}).join("\n");
-	} catch { /* graceful */ }
+	const ls = workspaceListing(roots);
 
 	const vars: Record<string, string> = {
 		cwd,

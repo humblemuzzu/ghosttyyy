@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **10 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 29 custom tools, 8 packages, 30 skills, multi-provider support, and a custom agent identity.
+A curated, aesthetic Ghostty terminal setup with **22 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 29 custom tools, 8 packages, 30 skills, multi-provider support, and a custom agent identity.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -21,7 +21,7 @@ Scroll through themes and fonts and watch your terminal change **in real-time**.
 
 ## ✨ Features
 
-- 🎨 **10 hand-crafted dark themes** with full 16-color ANSI palettes
+- 🎨 **22 dark themes** with full 16-color ANSI palettes
 - 🔤 **11 premium developer fonts** (JetBrains Mono, Fira Code, Geist Mono, etc.)
 - ✏️ **3 cursor styles** × 2 blink modes = 6 combinations
 - 🪟 **Frosted glass effect** — background blur + opacity
@@ -63,7 +63,7 @@ The install script will:
 2. 📦 Install `fzf` (the fuzzy finder that powers the switchers)
 3. 🔤 Install all 11 developer fonts via Homebrew
 4. ⚙️ Back up your existing Ghostty config and install the new one
-5. 🎨 Copy all 10 themes to the correct directory
+5. 🎨 Copy all 22 themes to the correct directory
 6. 🛠️ Install the switcher scripts (`gtheme`, `gfont`, `gcursor`, `ghostty-config`)
 7. 🔗 Add PATH and shell aliases to your `.zshrc`
 
@@ -105,12 +105,24 @@ ghosttyyy/
 ├── README.md              ← you're here
 ├── install.sh             ← one-command installer
 ├── config                 ← main Ghostty config file
-├── themes/                ← all 10 theme files
+├── themes/                ← all 22 theme files
+│   ├── ember-soft
+│   ├── ember-dark
+│   ├── cursor-soft
+│   ├── melange-dark
+│   ├── afterglow
+│   ├── miasma
+│   ├── n0tch2k
+│   ├── kanso-mist
+│   ├── github-dark-dimmed
+│   ├── ayu-mirage
+│   ├── gruvbox-medium
+│   ├── one-half-dark
+│   ├── kanagawa
 │   ├── midnight-code
 │   ├── catppuccin-macchiato
 │   ├── dracula-pro
 │   ├── vesper
-│   ├── kanagawa
 │   ├── rosepine
 │   ├── gruvbox-dark
 │   ├── nord-frost
@@ -142,16 +154,28 @@ All themes are dark. Each has a carefully tuned 16-color ANSI palette, cursor co
 
 | Theme | Vibe | Background |
 |-------|------|-----------|
+| **ember-soft** | Ember, lifted charcoal, warm orange cursor | `#222226` |
+| **ember-dark** | Same palette, one step darker | `#18181a` |
+| **cursor-soft** | Cursor Dark without the black + white sting | `#1e1e1e` |
+| **melange-dark** | Warm brown paper, cream text | `#292522` |
+| **afterglow** | Flat charcoal, muted | `#212121` |
+| **miasma** | Earth khaki, no neon | `#222222` |
+| **n0tch2k** | Low contrast, glasses-friendly | `#222222` |
+| **kanso-mist** | Muted ink, no neon | `#22262d` |
+| **github-dark-dimmed** | Dimmed GitHub gray | `#22272e` |
+| **ayu-mirage** | Twilight slate | `#1f2430` |
+| **gruvbox-medium** | Warm brown-orange, lifted | `#282828` |
+| **one-half-dark** | Classic Atom gray | `#282c34` |
+| **kanagawa** | Japanese ink, muted earth | `#1f1f28` |
 | **midnight-code** | Deep blue-black, pastel accents | `#1a1b26` |
-| **catppuccin-macchiato** | Warm purple-blue, soft pastels, cozy | `#24273a` |
+| **catppuccin-macchiato** | Warm purple-blue, soft pastels | `#24273a` |
 | **dracula-pro** | Classic purple, vibrant neons | `#282a36` |
-| **vesper** | True black, warm amber + mint, ultra minimal | `#101010` |
-| **kanagawa** | Japanese ink, muted earth tones, zen | `#1f1f28` |
-| **rosepine** | Dark plum, floral pinks & golds, elegant | `#191724` |
-| **gruvbox-dark** | Warm brown-orange, retro vibes | `#1d2021` |
-| **nord-frost** | Arctic blue-gray, cool & Scandinavian | `#2e3440` |
-| **opencode** | Near-black, orange accent, developer pro | `#0a0a0a` |
-| **synthwave** | 80s neon purple, hot pink, electric retro | `#1b1720` |
+| **vesper** | True black, warm amber + mint | `#101010` |
+| **rosepine** | Dark plum, floral pinks & golds | `#191724` |
+| **gruvbox-dark** | Warm brown-orange, hard | `#1d2021` |
+| **nord-frost** | Arctic blue-gray | `#2e3440` |
+| **opencode** | Near-black, orange accent | `#0a0a0a` |
+| **synthwave** | 80s neon purple | `#1b1720` |
 
 ### Switching themes
 

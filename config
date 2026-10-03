@@ -6,14 +6,26 @@
 # ══════════════════════════════════════════════════════════════════
 # 🎨 THEME — uncomment ONE line to switch
 # ══════════════════════════════════════════════════════════════════
-theme = gruvbox-dark
+theme = ember-soft
+# theme = ember-dark
+# theme = cursor-soft
+# theme = melange-dark
+# theme = afterglow
+# theme = miasma
+# theme = n0tch2k
+# theme = kanso-mist
+# theme = github-dark-dimmed
+# theme = ayu-mirage
+# theme = gruvbox-medium
+# theme = one-half-dark
+# theme = kanagawa
+# theme = gruvbox-dark
 # theme = catppuccin-macchiato
+# theme = nord-frost
+# theme = rosepine
+# theme = midnight-code
 # theme = dracula-pro
 # theme = vesper
-# theme = kanagawa
-# theme = rosepine
-# theme = gruvbox-dark
-# theme = nord-frost
 # theme = opencode
 # theme = synthwave
 
@@ -98,9 +110,9 @@ window-theme = dark
 # ══════════════════════════════════════════════════════════════════
 # ✨ OPACITY & BLUR — the vibes
 # ══════════════════════════════════════════════════════════════════
-background-opacity = 0.92
-background-blur = 20
-unfocused-split-opacity = 0.85
+background-opacity = 1.0
+background-blur = 0
+unfocused-split-opacity = 0.9
 
 # Want more transparent? try 0.80
 # Want solid? set to 1.0

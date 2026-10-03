@@ -24,6 +24,9 @@
     "enabled": true
   },
   "cacheWarming": "off",
+  "defaultTools": [
+    "+codemode"
+  ],
   "enabledModels": [
     "anthropic/claude-opus-5-5",
     "anthropic/claude-sonnet-5-5",
@@ -45,7 +48,6 @@
     "npm:pi-token-burden",
     "npm:@benvargas/pi-claude-code-use@2.2.1",
     "npm:@marckrenn/pi-sub-bar",
-    "https://github.com/davebcn87/pi-autoresearch",
     "npm:pi-tool-display",
     "npm:pi-codex-goal@0.6.0",
     { "source": "npm:pi-mcp-adapter@5.0.0", "skills": [] }

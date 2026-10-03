@@ -37,6 +37,10 @@ export default function (pi: ExtensionAPI) {
 
 	// load harness docs based on harness name
 	const harnessDocs = readAgentPrompt(`prompt.harness-docs.${HARNESS}.md`) || "";
+	const rules = readAgentPrompt("rules.amp.md").trim();
+
+	const compose = (...parts: (string | undefined)[]) =>
+		parts.filter((part): part is string => !!part && part.trim().length > 0).join("\n\n");
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		/*
@@ -57,7 +61,7 @@ export default function (pi: ExtensionAPI) {
 		const childTools = process.env[SUB_AGENT_TOOLS_ENV]?.trim();
 		if (childTools && parseToolList(childTools).length > 0) {
 			return {
-				systemPrompt: `${event.systemPrompt}\n\n${buildSubAgentPrompt(IDENTITY, childTools)}`,
+				systemPrompt: compose(event.systemPrompt, buildSubAgentPrompt(IDENTITY, childTools), rules),
 			};
 		}
 
@@ -70,10 +74,8 @@ export default function (pi: ExtensionAPI) {
 			harnessDocsSection: harnessDocs,
 		});
 
-		if (!interpolated.trim()) return;
-
 		return {
-			systemPrompt: event.systemPrompt + "\n\n" + interpolated,
+			systemPrompt: compose(event.systemPrompt, interpolated, rules),
 		};
 	});
 }

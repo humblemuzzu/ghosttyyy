@@ -53,6 +53,7 @@ const DARK_THEMES = new Set([
 	"Night Owl",
 	"Everforest Dark Hard",
 	"gruvbox-dark",
+	"gruvbox-medium",
 	"catppuccin-macchiato",
 	"kanagawa",
 	"nord-frost",
@@ -60,6 +61,25 @@ const DARK_THEMES = new Set([
 	"rosepine",
 	"vesper",
 	"midnight-code",
+	"ayu-mirage",
+	"kanso-mist",
+	"github-dark-dimmed",
+	"one-half-dark",
+	"ember-dark",
+	"ember-soft",
+	"cursor-soft",
+	"melange-dark",
+	"afterglow",
+	"miasma",
+	"n0tch2k",
+	"Afterglow",
+	"Dark+",
+	"Melange Dark",
+	"Miasma",
+	"GitHub Dark Dimmed",
+	"Kanso Mist",
+	"Gruvbox Dark",
+	"N0tch2k",
 ]);
 const GHOSTTY_BIN = "/Applications/Ghostty.app/Contents/MacOS/ghostty";
 const RELOAD =
@@ -149,7 +169,11 @@ function listGhosttyThemes(): Entry[] {
 	THEME_DIRS.forEach((dir, i) => {
 		if (!existsSync(dir)) return;
 		for (const name of readdirSync(dir)) {
-			if (DARK_THEMES.has(name) && !seen.has(name)) seen.set(name, { value: name, label: name, hint: i === 0 ? "custom" : undefined });
+			if (name.startsWith(".")) continue;
+			const custom = i === 0;
+			if ((custom || DARK_THEMES.has(name)) && !seen.has(name)) {
+				seen.set(name, { value: name, label: name, hint: custom ? "custom" : undefined });
+			}
 		}
 	});
 	return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));

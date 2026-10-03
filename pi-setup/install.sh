@@ -21,7 +21,7 @@
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
 #   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
 #   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
-#   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, autoresearch, tool-display, codex-goal, mcp-adapter
+#   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, tool-display, codex-goal, mcp-adapter
 #
 # NO global npm packages are installed. Every pi package lives in
 # ~/.pi/agent/npm/node_modules (installed by `pi install`), which is the ONLY
@@ -47,6 +47,27 @@ backup_if_exists() {
         local backup="${target}${BACKUP_SUFFIX}"
         cp -R "$target" "$backup"
         warn "Backed up existing $(basename "$target") → $(basename "$backup")"
+    fi
+}
+
+# Copy every file the repo owns into place. Files the repo does not own are kept
+# and reported, never deleted.
+sync_dir() {
+    local src="$1" target="$2"
+    if [ ! -d "$src" ]; then
+        warn "Source missing, skipped: $src"
+        return 0
+    fi
+    backup_if_exists "$target"
+    mkdir -p "$target"
+    cp -R "$src/." "$target/" 2>/dev/null || warn "Copy reported errors: $src"
+    local orphans
+    orphans=$(cd "$target" && find . \( -type f -o -type l \) -print | sed 's|^\./||' | sort | while IFS= read -r f; do
+        [ -e "$src/$f" ] || printf '%s\n' "$f"
+    done) || true
+    if [ -n "$orphans" ]; then
+        warn "Kept $(printf '%s\n' "$orphans" | wc -l | tr -d ' ') file(s) the repo does not own:"
+        printf '%s\n' "$orphans" | sed 's/^/    /'
     fi
 }
 
@@ -92,9 +113,7 @@ mkdir -p "$CONFIG_SKILLS"
 
 # ── Extensions ──
 info "Installing extensions..."
-backup_if_exists "$PI_AGENT/extensions"
-rm -rf "$PI_AGENT/extensions"
-cp -R "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"
+sync_dir "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"
 
 # Install tool dependencies if npm is available
 if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/null; then
@@ -105,30 +124,22 @@ ok "Extensions installed"
 
 # ── Themes ──
 info "Installing themes..."
-backup_if_exists "$PI_AGENT/themes"
-rm -rf "$PI_AGENT/themes"
-cp -R "$SCRIPT_DIR/themes" "$PI_AGENT/themes"
+sync_dir "$SCRIPT_DIR/themes" "$PI_AGENT/themes"
 ok "Themes installed (gruvbox, nightowl)"
 
 # ── Agents (prompt files) ──
 info "Installing agent prompts..."
-backup_if_exists "$PI_AGENT/agents"
-rm -rf "$PI_AGENT/agents"
-cp -R "$SCRIPT_DIR/agents" "$PI_AGENT/agents"
+sync_dir "$SCRIPT_DIR/agents" "$PI_AGENT/agents"
 ok "Agent prompts installed"
 
 # ── Pi-level skills ──
 info "Installing pi skills..."
-backup_if_exists "$PI_AGENT/skills"
-rm -rf "$PI_AGENT/skills"
-cp -R "$SCRIPT_DIR/pi-skills" "$PI_AGENT/skills"
+sync_dir "$SCRIPT_DIR/pi-skills" "$PI_AGENT/skills"
 ok "Pi skills installed"
 
 # ── Config-level skills ──
 info "Installing config skills..."
-backup_if_exists "$CONFIG_SKILLS"
-rm -rf "$CONFIG_SKILLS"
-cp -R "$SCRIPT_DIR/config-skills" "$CONFIG_SKILLS"
+sync_dir "$SCRIPT_DIR/config-skills" "$CONFIG_SKILLS"
 
 # Make scripts executable
 if [ -f "$CONFIG_SKILLS/spawn/scripts/spawn-amp" ]; then
@@ -201,7 +212,6 @@ packages=(
     "npm:pi-token-burden"
     "npm:@benvargas/pi-claude-code-use@2.2.1"
     "npm:@marckrenn/pi-sub-bar"
-    "https://github.com/davebcn87/pi-autoresearch"
     "npm:pi-tool-display"
     "npm:pi-codex-goal@0.6.0"
     "npm:pi-mcp-adapter@5.0.0"

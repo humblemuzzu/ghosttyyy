@@ -1,6 +1,6 @@
 ---
 name: rules
-description: behaviour rules re-injected before every model call by the guardrails extension.
+description: behaviour rules loaded into the system prompt on every agent start by system-prompt.ts.
 ---
 
 COMMENTS. Write none by default. Add one only when a careful reader would
