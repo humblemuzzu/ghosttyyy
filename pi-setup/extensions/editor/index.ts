@@ -16,6 +16,7 @@ import { CustomEditor, Theme, estimateTokens } from "@mariozechner/pi-coding-age
 import type { TUI, EditorTheme, TuiMouseEvent } from "@mariozechner/pi-tui";
 import { Image, visibleWidth } from "@mariozechner/pi-tui";
 import { HorizontalLineWidget, WidgetRowRegistry } from "./widget-row";
+import { CacheLineWidget, collectCacheStats } from "./cache-line";
 import type { KeybindingsManager } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage, AssistantMessage, ImageContent, TextContent } from "@mariozechner/pi-ai";
 import { execFile } from "node:child_process";
@@ -694,7 +695,47 @@ export default function (pi: ExtensionAPI) {
 	let gitBranch: string | null = null;
 	let branchUnsub: (() => void) | null = null;
 	let statusRow: WidgetRowRegistry | null = null;
+	let cacheLine: CacheLineWidget | null = null;
 	const activity = createActivityState();
+
+	/**
+	 * TTL comes from the model catalog, so a provider without `promptCache` gets no
+	 * row at all rather than a permanent fake zero. Retention mirrors pi: `long`
+	 * only when the env asks for it.
+	 */
+	const cacheTtlMs = (ctx: ExtensionContext): number | undefined => {
+		const catalog = ctx.model?.promptCache;
+		if (!catalog) return undefined;
+		const seconds = catalog[process.env.PI_CACHE_RETENTION === "long" ? "long" : "short"];
+		return seconds === undefined ? undefined : seconds * 1000;
+	};
+
+	const syncCacheLine = (ctx: ExtensionContext): void => {
+		if (!ctx.hasUI) return;
+		const ttlMs = cacheTtlMs(ctx);
+		if (ttlMs === undefined) {
+			if (!cacheLine) return;
+			cacheLine.dispose();
+			cacheLine = null;
+			ctx.ui.setWidget("cache-line", undefined);
+			return;
+		}
+		const stats = collectCacheStats(ctx.sessionManager.getEntries());
+		if (cacheLine) {
+			cacheLine.setStats(stats, ttlMs);
+			return;
+		}
+		ctx.ui.setWidget(
+			"cache-line",
+			(tui, theme) => {
+				const widget = new CacheLineWidget(tui, theme);
+				widget.setStats(stats, ttlMs);
+				cacheLine = widget;
+				return widget;
+			},
+			{ placement: "belowEditor" },
+		);
+	};
 
 	// expand "[image #N]" paste tokens into inline image attachments at submit.
 	// the token text stays in the message (readable transcript); the matching
@@ -795,6 +836,10 @@ export default function (pi: ExtensionAPI) {
 
 		updateBottomLabel();
 		updateStatsLabels(editor!, pi, ctx, statsCacheBranchLen);
+
+		cacheLine?.dispose();
+		cacheLine = null;
+		syncCacheLine(ctx);
 	});
 
 	// --- animated activity spinner + git changes widget ---
@@ -877,6 +922,13 @@ export default function (pi: ExtensionAPI) {
 		activity.phase = activity.activeTools.size > 0 ? "tool" : "thinking";
 		syncActivitySegment();
 		if (editor) updateStatsLabels(editor, pi, ctx, statsCacheBranchLen);
+		syncCacheLine(ctx);
+	});
+
+	pi.on("message_end", async (event, ctx) => {
+		// fires before pi persists the message, so this lands one turn behind;
+		// tool_execution_end and agent_end are the post-append syncs.
+		if ((event.message as { role?: string }).role === "assistant") syncCacheLine(ctx);
 	});
 
 	pi.on("message_start", async (event, _ctx) => {
@@ -897,6 +949,7 @@ export default function (pi: ExtensionAPI) {
 		activity.activeTools.clear();
 		statusRow?.remove(ACTIVITY_SEGMENT);
 		if (editor) updateStatsLabels(editor, pi, ctx, statsCacheBranchLen);
+		syncCacheLine(ctx);
 
 		const diffStats = await getGitDiffStats(ctx.cwd);
 		updateGitSegment(diffStats);
@@ -925,6 +978,7 @@ export default function (pi: ExtensionAPI) {
 		// update model display when user changes model via /model or Ctrl+P
 		statsCacheBranchLen.value = -1;
 		if (editor) updateStatsLabels(editor, pi, ctx, statsCacheBranchLen);
+		syncCacheLine(ctx);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -939,5 +993,12 @@ export default function (pi: ExtensionAPI) {
 		statusRow?.clear();
 		statsCacheBranchLen.value = -1;
 		if (editor) updateStatsLabels(editor, pi, ctx, statsCacheBranchLen);
+	});
+
+	// pi emits this before invalidating. Afterwards every ctx call throws, and an
+	// uncaught throw inside a live timer is process.exit(1).
+	pi.on("session_shutdown", async () => {
+		cacheLine?.dispose();
+		cacheLine = null;
 	});
 }
