@@ -712,15 +712,20 @@ export default function (pi: ExtensionAPI) {
 
 	const syncCacheLine = (ctx: ExtensionContext): void => {
 		if (!ctx.hasUI) return;
+		const stats = collectCacheStats(ctx.sessionManager.getEntries());
 		const ttlMs = cacheTtlMs(ctx);
-		if (ttlMs === undefined) {
+		// A declared lifetime is enough on its own; without one, the row waits until
+		// the provider has actually reported cache activity. Only Anthropic declares
+		// a lifetime, but most providers still report reads — the countdown is the
+		// only part that genuinely needs it.
+		const reportsActivity = stats.cacheRead > 0 || stats.cacheWrite > 0;
+		if (ttlMs === undefined && !reportsActivity) {
 			if (!cacheLine) return;
 			cacheLine.dispose();
 			cacheLine = null;
 			ctx.ui.setWidget("cache-line", undefined);
 			return;
 		}
-		const stats = collectCacheStats(ctx.sessionManager.getEntries());
 		if (cacheLine) {
 			cacheLine.setStats(stats, ttlMs);
 			return;

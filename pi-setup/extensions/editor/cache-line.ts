@@ -67,7 +67,7 @@ export class CacheLineWidget {
 		private theme: Theme,
 	) {}
 
-	setStats(stats: CacheStats, ttlMs: number): void {
+	setStats(stats: CacheStats, ttlMs: number | undefined): void {
 		if (this.disposed) return;
 		this.stats = stats;
 		this.ttlMs = ttlMs;

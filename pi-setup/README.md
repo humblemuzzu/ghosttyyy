@@ -26,15 +26,17 @@ node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check   # exit 0 = 
 
 ## What's Inside
 
-### Extensions (12 active)
+### Extensions (15)
 
 pi auto-discovers every `.ts` in `extensions/` — there is no "present but disabled" state; to
-disable one, delete it or move it out of `extensions/`.
+disable one, delete it or move it out of `extensions/`. An extension can still ship its own
+off switch (`you-should-know/` starts off and waits for `/ysk on`), but nothing at the
+loader level turns one off.
 
 | Extension | What it does |
 |---|---|
-| `editor/` | Custom box-drawing bordered editor with labels (context %, cost, model, git branch), enlarged prompt bar, and inline `[image #N]` clipboard-paste |
-| `tools/` | Full replacement tool suite — 28 tools. See below. |
+| `editor/` | Custom box-drawing bordered editor with labels (context %, cost, model, git branch), enlarged prompt bar, inline `[image #N]` clipboard-paste, and a cache line below the box (hit %, read/write totals, and a TTL countdown where the provider declares one) |
+| `tools/` | Full replacement tool suite — 29 tools. See below. |
 | `system-prompt.ts` | Injects the full Amp system prompt with runtime template vars (parent sessions); a sub-agent instead gets a short generated prompt naming exactly its own `--tools` allowlist |
 | `mentions.ts` | `@mention` resolution (`@session`, `@commit`, `@handoff`) + agent directives (`@oracle`, `@finder`, `@codereview`, `@task` → `delegate`) |
 | `session-name.ts` | Auto-generates session names from the first message (Claude Haiku) |
@@ -44,8 +46,12 @@ disable one, delete it or move it out of `extensions/`.
 | `command-palette/` | `Ctrl+Shift+P` command-palette overlay |
 | `subagent-inspector/` | `Ctrl+Shift+A` / `/subagents` — drill into a sub-agent's live transcript |
 | `local-model.ts` | `/local` — start/stop the llama.cpp router |
+| `deepseek-peak/` | `/deepseek` — a peak/off-peak pricing clock in the editor border |
+| `guardrails/` | Comment gate on `apply_patch` (the behaviour rules themselves ship in the system prompt, not here) |
+| `theme-studio/` | `/studio`, `/theme`, `Ctrl+Shift+K` — live-preview a pi theme and the Ghostty theme/font/size; Esc reverts, Enter keeps |
+| `you-should-know/` | `/ysk` — a side agent on `deepseek-flash` that flags what you might have missed, and inlines what each sub-agent actually did as evidence. **Off until `/ysk on`**; ~0.1–0.3¢ per check |
 
-### Custom Tools (28)
+### Custom Tools (29)
 
 The `tools/` extension replaces pi's built-ins and adds new tools:
 
@@ -144,9 +150,13 @@ pi-setup/
 ├── pi-sub-core-settings.json   # sub-core provider/refresh config
 ├── verify-patches.sh           # Read-only audit of every patch/config
 ├── extensions/                 # extensions + tools/ suite
-│   ├── editor/                 # Custom TUI editor
+│   ├── editor/                 # Custom TUI editor + cache line
 │   ├── command-palette/        # Ctrl+Shift+P palette
 │   ├── subagent-inspector/     # Ctrl+Shift+A sub-agent transcript inspector
+│   ├── theme-studio/           # /studio — live theme + Ghostty preview
+│   ├── deepseek-peak/          # /deepseek — peak/off-peak clock
+│   ├── guardrails/             # apply_patch comment gate
+│   ├── you-should-know/        # /ysk — side agent (off until asked)
 │   ├── tools/                  # 29 custom tools + shared lib/
 │   ├── pi-tool-display/        # config.json (all tool overrides false — required)
 │   ├── system-prompt.ts  mentions.ts  session-name.ts  session-breakdown.ts

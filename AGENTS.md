@@ -241,7 +241,7 @@ uses `command`/`args`, HTTP uses `url` + optional `headers`/`auth`.
 
 ---
 
-## Extensions (14, all in `extensions/`)
+## Extensions (15, all in `extensions/`)
 
 pi auto-discovers every `.ts` here — there is **no** disabled state. To disable,
 delete or move out. From a subdirectory pi loads **only `index.ts`**, which is
@@ -262,6 +262,7 @@ why tests can live beside an extension without being loaded.
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — sub-agent transcripts |
 | `local-model.ts` | `/local` llama.cpp router; bare system prompt for `llama-local` and `llama.cpp` |
 | `guardrails/` | comment gate on `apply_patch` (rules now ship in the system prompt) |
+| `you-should-know/` | `/ysk` — side agent on deepseek-flash that flags what you might have missed. **Off until `/ysk on`**, spends ~0.1–0.3¢ per check |
 | `tools/` | 29 custom tools |
 
 ### guardrails — the comment gate, and where the rules live
@@ -631,7 +632,7 @@ pi-setup/
 ├── port-harness/           # screenshot / permission / tier verification
 ├── agents/                 # 10 prompt templates
 ├── themes/  config-skills/  pi-skills/
-└── extensions/             # all 13 extensions incl. tools/ (29 tools + lib/)
+└── extensions/             # all 15 extensions incl. tools/ (29 tools + lib/)
 ```
 
 ---
@@ -696,6 +697,8 @@ never in the body of this file:
 - `pi-setup/2026-07-30-bdsqqq-port.md` — sub-agent wiring, OAuth tool-filter trap,
   apply_patch lanes, delegate. **Read before touching tools/subagents.**
 - `pi-setup/2026-08-13-cloudflare-mcp.md` — the 16 Cloudflare servers, auth flow
+- `pi-setup/2026-10-04-you-should-know.md` — the `/ysk` side agent: the built-in Claude
+  Code mod it was ported from, and the DeepSeek cache-cost maths that shapes it
 - `pi-setup/pi-migrations.md` — per-update record: which patch drifted, how it was
   re-derived. **Read before `pi update`.**
 - `pi-setup/README.md` — setup docs + session log
