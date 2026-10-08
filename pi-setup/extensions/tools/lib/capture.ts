@@ -34,6 +34,8 @@ export interface WindowInfo {
 	y: number;
 	width: number;
 	height: number;
+	/** false when the owner is an agent, helper or system overlay rather than a regular (Dock) app */
+	regularApp?: boolean;
 }
 
 /**
@@ -42,6 +44,13 @@ export interface WindowInfo {
  */
 const LIST_WINDOWS_JXA = `
 ObjC.import("CoreGraphics");
+ObjC.import("AppKit");
+var policy = {};
+var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+for (var i = 0; i < apps.count; i++) {
+  var a = apps.objectAtIndex(i);
+  policy[a.processIdentifier] = Number(a.activationPolicy);
+}
 var raw = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(0, 0)));
 JSON.stringify(raw.map(function (w) {
   var b = w.kCGWindowBounds || {};
@@ -51,7 +60,8 @@ JSON.stringify(raw.map(function (w) {
     title: w.kCGWindowName || "",
     layer: w.kCGWindowLayer,
     onScreen: !!w.kCGWindowIsOnscreen,
-    x: b.X, y: b.Y, width: b.Width, height: b.Height
+    x: b.X, y: b.Y, width: b.Width, height: b.Height,
+    regularApp: policy[w.kCGWindowOwnerPID] === 0
   };
 }));
 `;

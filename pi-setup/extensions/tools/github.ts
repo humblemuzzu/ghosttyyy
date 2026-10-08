@@ -19,7 +19,6 @@ import {
 	parseRepoUrl,
 	repoSlug,
 	ghApi,
-	ghApiPaginated,
 	decodeBase64Content,
 	addLineNumbers,
 	truncate,
@@ -53,6 +52,26 @@ const REPOSITORY_PARAM = Type.Optional(
 
 /** parameter names models actually use for the repository, canonical first. */
 const REPO_PARAMS = ["repository", "repo", "repo_url", "url"] as const;
+
+const API_PAGE_SIZE = 100;
+
+/**
+ * items [offset, offset + limit) from a page-numbered API: a true skip, fetching
+ * only the pages that cover the window.
+ */
+export function fetchWindow<T>(offset: number, limit: number, fetchPage: (page: number, perPage: number) => T[]): T[] {
+	const out: T[] = [];
+	let page = Math.floor(offset / API_PAGE_SIZE) + 1;
+	let skip = offset % API_PAGE_SIZE;
+	while (out.length < limit) {
+		const items = fetchPage(page, API_PAGE_SIZE);
+		out.push(...items.slice(skip, skip + (limit - out.length)));
+		if (items.length < API_PAGE_SIZE) break;
+		skip = 0;
+		page++;
+	}
+	return out;
+}
 
 /**
  * resolve the repository, or return a result that tells the model precisely
@@ -184,6 +203,22 @@ export function createReadGithubTool(): ToolDefinition {
 
 // --- search_github ---
 
+/**
+ * GitHub code search's `path:` is a directory prefix: `path:dir/file.sh`
+ * matches nothing, while `path:dir filename:file.sh` finds the file. A last
+ * segment with an extension (a dot not in first position) is taken as a file
+ * name, so `.github` stays a directory.
+ */
+export function searchPathQualifier(p: string): string {
+	const trimmed = p.replace(/^\/+|\/+$/g, "");
+	if (!trimmed) return "";
+	const quote = (v: string) => (/\s/.test(v) ? `"${v}"` : v);
+	const slash = trimmed.lastIndexOf("/");
+	const base = trimmed.slice(slash + 1);
+	if (!/^[^.].*\.[^.]+$/.test(base)) return `path:${quote(trimmed)}`;
+	return slash === -1 ? `filename:${quote(base)}` : `path:${quote(trimmed.slice(0, slash))} filename:${quote(base)}`;
+}
+
 export function createSearchGithubTool(): ToolDefinition {
 	return {
 		name: "search_github",
@@ -201,7 +236,7 @@ export function createSearchGithubTool(): ToolDefinition {
 				description: "The search pattern. Supports GitHub search operators (AND, OR, NOT) and qualifiers.",
 			}),
 			repository: REPOSITORY_PARAM,
-			path: Type.Optional(Type.String({ description: "Optional path to limit search to" })),
+			path: Type.Optional(Type.String({ description: "Optional directory or file path to limit the search to" })),
 			limit: Type.Optional(Type.Number({ description: "Max results (default: 30, max: 100)", minimum: 1, maximum: 100 })),
 			offset: Type.Optional(Type.Number({ description: "Results to skip for pagination (default: 0)", minimum: 0 })),
 		}),
@@ -212,27 +247,35 @@ export function createSearchGithubTool(): ToolDefinition {
 				if ("error" in repo) return repo.error;
 				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 30;
-				const page = params.offset ? Math.floor(params.offset / limit) + 1 : 1;
-
 				let query = `${params.pattern} repo:${repoSlug(ref)}`;
-				if (params.path) query += ` path:${params.path}`;
+				const pathQualifier = params.path ? searchPathQualifier(params.path) : "";
+				if (pathQualifier) query += ` ${pathQualifier}`;
 
-				const data = ghApi<any>(`search/code`, {
-					params: {
-						q: query,
-						per_page: Math.min(limit, 100),
-						page,
-					},
-					accept: "application/vnd.github.text-match+json",
+				let total = 0;
+				const items = fetchWindow(params.offset ?? 0, limit, (page, perPage) => {
+					const data = ghApi<any>("search/code", {
+						params: { q: query, per_page: perPage, page },
+						accept: "application/vnd.github.text-match+json",
+					});
+					total = data.total_count ?? 0;
+					return data.items ?? [];
 				});
 
-				if (!data.items || data.items.length === 0) {
-					return { content: [{ type: "text" as const, text: `No results for "${params.pattern}" in ${repoSlug(ref)}` }] };
+				if (items.length === 0) {
+					return {
+						content: [{
+							type: "text" as const,
+							text:
+								`No results for "${params.pattern}" in ${repoSlug(ref)} (query: ${query}). ` +
+								"GitHub code search covers only the default branch and skips large files, so a miss " +
+								"is not proof of absence — read_github the file to confirm.",
+						}],
+					};
 				}
 
-				const results: string[] = [`Found ${data.total_count} results (showing ${data.items.length}):\n`];
+				const results: string[] = [`Found ${total} results (showing ${items.length}):\n`];
 
-				for (const item of data.items) {
+				for (const item of items) {
 					results.push(`## ${item.path}`);
 					if (item.text_matches) {
 						for (const match of item.text_matches) {
@@ -280,7 +323,7 @@ export function createListDirectoryGithubTool(): ToolDefinition {
 			"Returns files and directories with trailing / for directories.",
 
 		parameters: Type.Object({
-			path: Type.String({ description: "The directory path to list (defaults to root)" }),
+			path: Type.Optional(Type.String({ description: "The directory path to list (default: the repository root)" })),
 			repository: REPOSITORY_PARAM,
 			limit: Type.Optional(Type.Number({ description: "Max entries (default: 100, max: 1000)", minimum: 1, maximum: 1000 })),
 		}),
@@ -291,9 +334,7 @@ export function createListDirectoryGithubTool(): ToolDefinition {
 				if ("error" in repo) return repo.error;
 				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 100;
-				const apiPath = params.path === "" || params.path === "." || params.path === "/"
-					? ""
-					: params.path;
+				const apiPath = !params.path || params.path === "." || params.path === "/" ? "" : params.path;
 
 				const data = ghApi<any[]>(`repos/${repoSlug(ref)}/contents/${apiPath}`);
 
@@ -307,7 +348,7 @@ export function createListDirectoryGithubTool(): ToolDefinition {
 					return `${item.name}${suffix}${size}`;
 				});
 
-				return { content: [{ type: "text" as const, text: entries.join("\n") }], details: { header: `${repoSlug(ref)}/${params.path}` } };
+				return { content: [{ type: "text" as const, text: entries.join("\n") }], details: { header: `${repoSlug(ref)}/${apiPath}` } };
 			} catch (e: any) {
 				return { content: [{ type: "text" as const, text: e.message }], isError: true };
 			}
@@ -341,7 +382,8 @@ export function createListRepositoriesTool(): ToolDefinition {
 			"- When you need to find repositories by name\n" +
 			"- When exploring repositories in an organization\n" +
 			"- When you need repository metadata (stars, forks, descriptions)\n\n" +
-			"Prioritizes your own repositories, then supplements with public results.",
+			"Results come from GitHub repository search sorted by stars, and include private repositories " +
+			"your gh login can see. Pass `pattern` and/or `organization`; with neither it lists GitHub's most-starred repositories.",
 
 		parameters: Type.Object({
 			pattern: Type.Optional(Type.String({ description: "Pattern to match in repository names" })),
@@ -354,29 +396,27 @@ export function createListRepositoriesTool(): ToolDefinition {
 		async execute(_id, params) {
 			try {
 				const limit = params.limit ?? 30;
-				const page = params.offset ? Math.floor(params.offset / limit) + 1 : 1;
-
 				const queryParts: string[] = [];
 				if (params.pattern) queryParts.push(params.pattern);
 				if (params.organization) queryParts.push(`org:${params.organization}`);
 				if (params.language) queryParts.push(`language:${params.language}`);
 				if (queryParts.length === 0) queryParts.push("stars:>0");
 
-				const data = ghApi<any>("search/repositories", {
-					params: {
-						q: queryParts.join(" "),
-						sort: "stars",
-						per_page: Math.min(limit, 100),
-						page,
-					},
+				let total = 0;
+				const items = fetchWindow(params.offset ?? 0, limit, (page, perPage) => {
+					const data = ghApi<any>("search/repositories", {
+						params: { q: queryParts.join(" "), sort: "stars", per_page: perPage, page },
+					});
+					total = data.total_count ?? 0;
+					return data.items ?? [];
 				});
 
-				if (!data.items || data.items.length === 0) {
+				if (items.length === 0) {
 					return { content: [{ type: "text" as const, text: "No repositories found." }] };
 				}
 
-				const lines: string[] = [`Found ${data.total_count} repositories (showing ${data.items.length}):\n`];
-				for (const repo of data.items) {
+				const lines: string[] = [`Found ${total} repositories (showing ${items.length}):\n`];
+				for (const repo of items) {
 					lines.push(`## ${repo.full_name}`);
 					if (repo.description) lines.push(repo.description);
 					const meta = [
@@ -477,7 +517,7 @@ export function createGlobGithubTool(): ToolDefinition {
 					...sliced,
 				];
 
-				return { content: [{ type: "text" as const, text: output.join("\n") }], details: { header: `${params.filePattern} in ${repoSlug(ref)}` } };
+				return { content: [{ type: "text" as const, text: output.join("\n") }], details: { header: `${pattern} in ${repoSlug(ref)}` } };
 			} catch (e: any) {
 				return { content: [{ type: "text" as const, text: e.message }], isError: true };
 			}
@@ -486,7 +526,7 @@ export function createGlobGithubTool(): ToolDefinition {
 		renderCall(args: any, theme: any, context: any) {
 			const Text = getText();
 			const text = context?.lastComponent ?? new Text("", 0, 0);
-			const pattern = args.filePattern || "...";
+			const pattern = args.filePattern || args.pattern || "...";
 			const repo = args.repository ? args.repository.replace(/^https?:\/\/github\.com\//, "") : "";
 			const linkedRepo = args.repository ? osc8Link(args.repository, repo) : repo;
 			text.setText(theme.fg("toolTitle", theme.bold("glob_github ")) + theme.fg("dim", `${pattern} in ${linkedRepo}`));
@@ -505,6 +545,9 @@ export function createCommitSearchTool(): ToolDefinition {
 		label: "Commit Search",
 		description:
 			"Search commit history in a GitHub repository.\n\n" +
+			"With `query`, searches commit messages across the full history of the default branch " +
+			"(GitHub commit search); `path` cannot be combined with `query`. Without `query`, lists " +
+			"commits newest first, filtered by author, dates and path.\n\n" +
 			"WHEN TO USE THIS TOOL:\n" +
 			"- When you need to understand how code evolved over time\n" +
 			"- When looking for commits by a specific author or date range\n" +
@@ -512,8 +555,8 @@ export function createCommitSearchTool(): ToolDefinition {
 
 		parameters: Type.Object({
 			repository: REPOSITORY_PARAM,
-			query: Type.Optional(Type.String({ description: "Search query for commit messages" })),
-			author: Type.Optional(Type.String({ description: "Filter by author username or email" })),
+			query: Type.Optional(Type.String({ description: "Text to search for in commit messages (full history)" })),
+			author: Type.Optional(Type.String({ description: "Filter by author username (or email when listing without query)" })),
 			since: Type.Optional(Type.String({ description: 'ISO 8601 date for earliest commit (e.g., "2024-01-01T00:00:00Z")' })),
 			until: Type.Optional(Type.String({ description: 'ISO 8601 date for latest commit (e.g., "2024-02-01T00:00:00Z")' })),
 			path: Type.Optional(Type.String({ description: "Filter commits that changed specific files/directories" })),
@@ -527,36 +570,47 @@ export function createCommitSearchTool(): ToolDefinition {
 				if ("error" in repo) return repo.error;
 				const ref = parseRepoUrl(repo.value);
 				const limit = params.limit ?? 50;
-				const page = params.offset ? Math.floor(params.offset / limit) + 1 : 1;
+				const offset = params.offset ?? 0;
+				if (params.query && params.path) {
+					return {
+						content: [{
+							type: "text" as const,
+							text: "commit_search: `query` searches the whole history but GitHub commit search cannot filter by path. " +
+								"Drop `path` to search messages, or drop `query` to list the commits that touched the path.",
+						}],
+						isError: true,
+					};
+				}
 
-				const apiParams: Record<string, string | number> = {
-					per_page: Math.min(limit, 100),
-					page,
-				};
-				if (params.author) apiParams.author = params.author;
-				if (params.since) apiParams.since = params.since;
-				if (params.until) apiParams.until = params.until;
+				let commits: any[];
+				if (params.query) {
+					const q = [params.query, `repo:${repoSlug(ref)}`];
+					if (params.author) q.push(`author:${params.author}`);
+					if (params.since) q.push(`committer-date:>=${params.since}`);
+					if (params.until) q.push(`committer-date:<=${params.until}`);
+					commits = fetchWindow(offset, limit, (page, perPage) =>
+						ghApi<any>("search/commits", {
+							params: { q: q.join(" "), sort: "committer-date", order: "desc", per_page: perPage, page },
+						}).items ?? [],
+					);
+				} else {
+					const filters: Record<string, string> = {};
+					if (params.author) filters.author = params.author;
+					if (params.since) filters.since = params.since;
+					if (params.until) filters.until = params.until;
+					if (params.path) filters.path = params.path;
+					commits = fetchWindow(offset, limit, (page, perPage) => {
+						const data = ghApi<any[]>(`repos/${repoSlug(ref)}/commits`, { params: { ...filters, per_page: perPage, page } });
+						return Array.isArray(data) ? data : [];
+					});
+				}
 
-				let endpoint = `repos/${repoSlug(ref)}/commits`;
-				if (params.path) apiParams.path = params.path;
-
-				const commits = ghApi<any[]>(endpoint, { params: apiParams });
-
-				if (!Array.isArray(commits) || commits.length === 0) {
+				if (commits.length === 0) {
 					return { content: [{ type: "text" as const, text: "No commits found." }] };
 				}
 
-				// filter by query in commit message if specified
-				let filtered = commits;
-				if (params.query) {
-					const q = params.query.toLowerCase();
-					filtered = commits.filter((c: any) =>
-						c.commit?.message?.toLowerCase().includes(q),
-					);
-				}
-
-				const lines: string[] = [`Found ${filtered.length} commits:\n`];
-				for (const c of filtered) {
+				const lines: string[] = [`Found ${commits.length} commits:\n`];
+				for (const c of commits) {
 					const sha = c.sha?.slice(0, 7) ?? "???????";
 					const author = c.commit?.author?.name ?? c.author?.login ?? "unknown";
 					const date = c.commit?.author?.date ?? "";

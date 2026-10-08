@@ -6,7 +6,8 @@
  * - sorted by mtime (most recent first, via rg --sortr modified)
  * - pagination via offset + limit
  * - hidden files included by default (--hidden)
- * - .git/.jj excluded
+ * - .git/.jj excluded; .gitignore respected (an ignored directory passed as
+ *   `path` is still listed — rg searches explicitly named paths)
  *
  * shadows pi's built-in `find` tool via same-name registration.
  */
@@ -17,6 +18,7 @@ import { createInterface } from "node:readline";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
+import { GITIGNORE_NOTE, rgLocation } from "./lib/rg";
 import { renderBoxedText } from "./lib/box-format";
 import { getText } from "./lib/tui";
 
@@ -29,10 +31,12 @@ export function createGlobTool(): ToolDefinition {
 		description:
 			"Fast file pattern matching tool that works with any codebase size.\n\n" +
 			"Returns matching file paths sorted by most recent modification time first.\n\n" +
+			"Respects .gitignore: ignored files are skipped unless their directory is passed as `path`.\n\n" +
 			"## Pattern syntax\n" +
 			"- `**/*.js` — All JavaScript files in any directory\n" +
 			"- `src/**/*.ts` — TypeScript files under src/\n" +
-			"- `*.json` — JSON files in the current directory\n" +
+			"- `*.json` — JSON files at any depth (a pattern without `/` matches file names anywhere)\n" +
+			"- `/*.json` — JSON files directly in the search directory only\n" +
 			"- `**/*test*` — Files with \"test\" in their name\n" +
 			"- `**/*.{js,ts}` — JavaScript and TypeScript files\n",
 
@@ -70,11 +74,27 @@ export function createGlobTool(): ToolDefinition {
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const globPattern = params.filePattern ?? params.pattern;
+			if (!globPattern) {
+				return {
+					content: [{ type: "text" as const, text: 'filePattern is required, e.g. { filePattern: "**/*.ts" }' }],
+					isError: true,
+				} as any;
+			}
 			const searchPath = params.path
 				? (path.isAbsolute(params.path) ? params.path : path.resolve(ctx.cwd, params.path))
 				: ctx.cwd;
 			const limit = params.limit ?? DEFAULT_LIMIT;
 			const offset = params.offset ?? 0;
+			const where = rgLocation(searchPath);
+			if ("error" in where) {
+				return { content: [{ type: "text" as const, text: where.error }], isError: true } as any;
+			}
+			if (where.target !== ".") {
+				return {
+					content: [{ type: "text" as const, text: `${searchPath} is a file; find lists directories (use read or grep on a file)` }],
+					isError: true,
+				} as any;
+			}
 
 			return new Promise((resolve) => {
 				const args = [
@@ -89,10 +109,10 @@ export function createGlobTool(): ToolDefinition {
 					"!.jj",
 					"--glob",
 					globPattern,
-					searchPath,
+					where.target,
 				];
 
-				const child = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
+				const child = spawn("rg", args, { cwd: where.cwd, stdio: ["ignore", "pipe", "pipe"] });
 				const rl = createInterface({ input: child.stdout! });
 
 				let stderr = "";
@@ -112,7 +132,7 @@ export function createGlobTool(): ToolDefinition {
 				rl.on("line", (line) => {
 					const trimmed = line.trim();
 					if (!trimmed) return;
-					const rel = path.relative(searchPath, trimmed).replace(/\\/g, "/");
+					const rel = path.relative(where.cwd, path.resolve(where.cwd, trimmed)).replace(/\\/g, "/");
 					if (rel && !rel.startsWith("..")) {
 						allPaths.push(rel);
 					}
@@ -149,7 +169,7 @@ export function createGlobTool(): ToolDefinition {
 
 					if (allPaths.length === 0) {
 						resolve({
-							content: [{ type: "text" as const, text: "no files found matching pattern" }],
+							content: [{ type: "text" as const, text: `no files found matching pattern (${GITIGNORE_NOTE})` }],
 						} as any);
 						return;
 					}

@@ -13,7 +13,7 @@
  * shared infrastructure lives in ./lib/.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, Skill } from "@mariozechner/pi-coding-agent";
 import { createReadTool, NORMAL_LIMITS, COMPACT_LIMITS } from "./read";
 import { createLsTool } from "./ls";
 import { createApplyPatchTool } from "./apply-patch";
@@ -48,7 +48,9 @@ import {
 } from "./github";
 import {
 	loadSecrets,
-	scrubAll,
+	hasScrubbableContent,
+	makeScrubber,
+	scrubToolResult,
 	setActiveTags,
 	getActiveTags,
 	invalidateCache,
@@ -75,7 +77,11 @@ export default function (pi: ExtensionAPI) {
 	// undo; see the invalidation check in undo-edit.ts.
 	pi.registerTool(createRedoEditTool());
 	pi.registerTool(createFormatFileTool());
-	pi.registerTool(createSkillTool());
+	let skills: readonly Skill[] = [];
+	pi.on("before_agent_start", (event) => {
+		skills = event.systemPromptOptions.skills ?? [];
+	});
+	pi.registerTool(createSkillTool(() => skills));
 	// screenshot owns the ONLY sanctioned path from screen pixels to a vision
 	// model. permissions.json rejects `screencapture`/`sips -Z` in bash so this
 	// cannot be routed around by hand — see lib/vision.ts for why that matters.
@@ -145,28 +151,9 @@ export default function (pi: ExtensionAPI) {
 	// ── psst secret management hooks ──────────────────────────
 
 	// scrub ALL sensitive values from tool output — vault secrets, auth.json tokens, env var keys
-	pi.on("tool_result", async (event) => {
-		const allText = event.content
-			.filter((c: any) => c.type === "text")
-			.map((c: any) => c.text)
-			.join("");
-
-		// quick check — if no content, skip
-		if (!allText) return;
-
-		// load vault secrets for named redaction
-		const vaultSecrets = await loadSecrets();
-
-		// if no vault secrets, check if there are any auth/env values to scrub
-		// (always scrub comprehensively — even if vault is empty)
-		const scrubbed = await Promise.all(event.content.map(async (c: any) =>
-			c.type === "text"
-				? { ...c, text: await scrubAll(c.text) }
-				: c,
-		));
-
-		return { content: scrubbed };
-	});
+	pi.on("tool_result", async (event) =>
+		hasScrubbableContent(event) ? scrubToolResult(event, await makeScrubber()) : undefined,
+	);
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		if (ctx.model?.provider === "llama-local" || ctx.model?.provider === "llama.cpp") return;

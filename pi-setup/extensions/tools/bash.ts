@@ -12,15 +12,27 @@ import { withFileLock } from "./lib/mutex";
 import { evaluatePermission, loadPermissions } from "./lib/permissions";
 import { evaluateReadOnlyCommand, isReadOnlyBash, readOnlyRefusal } from "./lib/read-only-bash";
 import { resolveToAbsolute } from "./read";
-import { OutputBuffer } from "./lib/output-buffer";
+import { OutputBuffer, headTailChars } from "./lib/output-buffer";
+import { FullOutput, MAX_FILE_BYTES } from "./lib/full-output";
 import { loadSecrets } from "./lib/psst";
 import { SLEEP_JUMP_MS, watchdogTickMs, watchdogVerdict } from "./lib/watchdog";
 import { sampleGroupCpuSeconds } from "./lib/proc-cpu";
 
 const HEAD_LINES = 50;
 const TAIL_LINES = 50;
+/** the line window alone lets one minified line through whole. */
+const MAX_OUTPUT_CHARS = 50_000;
 const SIGKILL_DELAY_MS = 3000;
 const STREAM_UPDATE_INTERVAL_MS = 150;
+
+/** pi's built-in bash output contract, so codemode scripts get data, not a throw, on a non-zero exit. */
+const bashOutputSchema = Type.Object({
+	output: Type.String({ description: "Combined stdout and stderr, possibly truncated" }),
+	truncated: Type.Boolean(),
+	full_output_path: Type.Optional(Type.String({ description: "Full output, when truncated" })),
+	exit_code: Type.Number(),
+	wall_time_seconds: Type.Number(),
+});
 
 // --- time bounds ---
 
@@ -227,7 +239,7 @@ export function createBashTool(): ToolDefinition {
 			"Executes the given shell command using bash.\n\n" +
 			"- Do NOT chain commands with `;` or `&&` or use `&` for background processes; make separate tool calls instead\n" +
 			"- Do NOT use interactive commands (REPLs, editors, password prompts)\n" +
-			`- Output shows first ${HEAD_LINES} and last ${TAIL_LINES} lines; middle is truncated for large outputs\n` +
+			`- Output shows first ${HEAD_LINES} and last ${TAIL_LINES} lines; for larger output the truncation marker names a file holding all of it\n` +
 			"- Do NOT pipe to `tail`/`head`/`grep` just to shorten output — this tool already truncates. " +
 			"Piping buffers everything until the command ends, which hides progress and makes a working command look hung\n" +
 			"- Environment variables and `cd` do not persist between commands; use the `cwd` parameter instead\n" +
@@ -248,7 +260,7 @@ export function createBashTool(): ToolDefinition {
 			cwd: Type.Optional(
 				Type.String({
 					description:
-						"Working directory for the command (absolute path). Defaults to workspace root.",
+						"Working directory for the command, absolute or relative to the workspace root. Defaults to workspace root.",
 				}),
 			),
 			/* optional; never required, so it cannot break the timeout-required contract. */
@@ -286,6 +298,7 @@ export function createBashTool(): ToolDefinition {
 		}, {
 			// at least one of cmd/command must be present
 		}),
+		outputSchema: bashOutputSchema,
 
 		renderCall(args: any, theme: any, context: any) {
 			// clock starts here, not on first output: a command can be silent for its
@@ -548,6 +561,7 @@ async function runCommand(
 	const env = { ...process.env, ...secretEnv };
 
 	return new Promise((resolve) => {
+		const startedAt = performance.now();
 		const child = spawn(shell, [...args, command], {
 			cwd,
 			detached: true,
@@ -556,6 +570,7 @@ async function runCommand(
 		});
 
 		const output = new OutputBuffer(HEAD_LINES, TAIL_LINES);
+		const full = new FullOutput();
 		let timedOut = false;
 		let idledOut = false;
 		let aborted = false;
@@ -682,7 +697,10 @@ async function runCommand(
 			const { display, carry } = splitIncompleteEscape(raw);
 			controlCarry = carry;
 			const sanitized = sanitizeForDisplay(display);
-			if (sanitized) output.add(sanitized);
+			if (sanitized) {
+				output.add(sanitized);
+				full.add(sanitized);
+			}
 			scheduleUpdate();
 		};
 
@@ -694,22 +712,34 @@ async function runCommand(
 			if (idleHandle) clearInterval(idleHandle);
 			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
+			full.finish();
 			resolve({
 				content: [{ type: "text" as const, text: `command error: ${err.message}` }],
 				isError: true,
 			} as any);
 		});
 
-		child.on("close", (code) => {
+		child.on("close", (code, killSignal) => {
 			if (timeoutHandle) clearTimeout(timeoutHandle);
 			if (idleHandle) clearInterval(idleHandle);
 			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
 
 			const finalCarry = sanitizeForDisplay(controlCarry + stdoutDecoder.end() + stderrDecoder.end());
-			if (finalCarry) output.add(finalCarry);
+			if (finalCarry) {
+				output.add(finalCarry);
+				full.add(finalCarry);
+			}
 			controlCarry = "";
-			const { text: outputText } = output.format();
+			const formatted = output.format(() => full.spill());
+			let outputText = formatted.text;
+			let modelViewCut = formatted.truncatedLines > 0;
+			if (outputText.length > MAX_OUTPUT_CHARS) {
+				const file = full.spill();
+				outputText = headTailChars(outputText, MAX_OUTPUT_CHARS, file ? `full output: ${file}` : undefined).text;
+				modelViewCut = true;
+			}
+			const finished = full.finish();
 
 			if (aborted) {
 				const text = outputText ? `${outputText}\n\ncommand aborted` : "command aborted";
@@ -752,18 +782,43 @@ async function runCommand(
 
 			// format result with command header
 			let result = `$ ${command}\n\n${outputText || "(no output)"}`;
+			if (finished.error && modelViewCut) result += `\n\n(full output not kept: ${finished.error})`;
+			if (finished.capped) result += `\n\n(the full-output file stops at ${MAX_FILE_BYTES / 1024 / 1024} MiB; the command printed more)`;
 
-			if (code !== 0 && code !== null) {
+			if (code === null) {
+				resolve({
+					content: [{ type: "text" as const, text: `${result}\n\nterminated by ${killSignal ?? "a signal"}` }],
+					isError: true,
+					details: { command },
+				} as any);
+				return;
+			}
+
+			const structuredContent = {
+				...(finished.error
+					? { output: outputText, truncated: modelViewCut }
+					: {
+						output: finished.output,
+						truncated: finished.truncated,
+						...(finished.truncated && finished.path ? { full_output_path: finished.path } : {}),
+					}),
+				exit_code: code,
+				wall_time_seconds: Math.round((performance.now() - startedAt) / 100) / 10,
+			};
+
+			if (code !== 0) {
 				result += `\n\nexit code ${code}`;
 				resolve({
 					content: [{ type: "text" as const, text: result }],
 					isError: true,
 					details: { command },
+					structuredContent,
 				} as any);
 			} else {
 				resolve({
 					content: [{ type: "text" as const, text: result }],
 					details: { command },
+					structuredContent,
 				} as any);
 			}
 		});

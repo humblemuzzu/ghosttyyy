@@ -88,8 +88,8 @@ export interface SpawnSessionMeta {
  * how the child's conversation should be stored.
  *
  * omitted entirely (the default) means `--no-session`: sub-agents are
- * throwaway and must not litter the session list. only `delegate` opts in,
- * because resuming a child is its whole point.
+ * throwaway and must not litter the session list. only `delegate` and `chad`
+ * opt in, because both are resumable by continueId.
  */
 export interface SpawnSessionConfig {
 	/** resume this session id; created if it does not exist yet. */

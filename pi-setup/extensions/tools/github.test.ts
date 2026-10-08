@@ -32,7 +32,57 @@ import {
 	addLineNumbers,
 	truncate,
 } from "./lib/github";
-import { matchGlob } from "./github";
+import { fetchWindow, matchGlob, searchPathQualifier } from "./github";
+
+describe("fetchWindow", () => {
+	const source = Array.from({ length: 250 }, (_, i) => i);
+	const pages: number[] = [];
+	const fetchPage = (page: number, perPage: number) => {
+		pages.push(page);
+		return source.slice((page - 1) * perPage, page * perPage);
+	};
+
+	it("offset skips exactly that many items, across a page boundary", () => {
+		pages.length = 0;
+		expect(fetchWindow(95, 10, fetchPage)).toEqual([95, 96, 97, 98, 99, 100, 101, 102, 103, 104]);
+		expect(pages).toEqual([1, 2]);
+	});
+
+	it("an offset smaller than the limit is not rounded away", () => {
+		expect(fetchWindow(5, 3, fetchPage)).toEqual([5, 6, 7]);
+	});
+
+	it("stops at the end of the results", () => {
+		pages.length = 0;
+		expect(fetchWindow(240, 50, fetchPage)).toEqual(source.slice(240));
+		expect(pages).toEqual([3]);
+	});
+});
+
+describe("searchPathQualifier", () => {
+	it("turns a file path into path:<dir> filename:<name>, which GitHub can match", () => {
+		expect(searchPathQualifier("pi-setup/verify-patches.sh")).toBe("path:pi-setup filename:verify-patches.sh");
+		expect(searchPathQualifier("/src/a/b.ts/")).toBe("path:src/a filename:b.ts");
+	});
+
+	it("a bare file name is a filename qualifier", () => {
+		expect(searchPathQualifier("install.sh")).toBe("filename:install.sh");
+	});
+
+	it("a directory stays a path prefix", () => {
+		expect(searchPathQualifier("pi-setup/extensions")).toBe("path:pi-setup/extensions");
+	});
+
+	it("a dot-leading directory like .github is a directory, not a file name", () => {
+		expect(searchPathQualifier(".github")).toBe("path:.github");
+		expect(searchPathQualifier(".github/workflows")).toBe("path:.github/workflows");
+	});
+
+	it("an empty or root path adds no qualifier, and spaces are quoted", () => {
+		expect(searchPathQualifier("/")).toBe("");
+		expect(searchPathQualifier("Code stuff/a.ts")).toBe('path:"Code stuff" filename:a.ts');
+	});
+});
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CWD = process.env.PI_E2E_CWD ?? resolve(__dirname, "../../../..");

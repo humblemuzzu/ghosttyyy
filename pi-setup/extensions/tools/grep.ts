@@ -7,8 +7,8 @@
  * - caseSensitive param (default case-sensitive)
  * - suggests literal:true when pattern contains regex metacharacters
  * - spawns rg directly (no ensureTool — nix provides rg on PATH)
- * - includes ±1 context lines around matches (via rg --context) so
- *   the LLM sees surrounding code and show() has natural gaps to elide
+ * - includes ±1 context lines around matches by default (via rg --context)
+ *   so the LLM sees surrounding code and show() has natural gaps to elide
  *
  * shadows pi's built-in `grep` tool via same-name registration.
  */
@@ -23,12 +23,16 @@ import { Type } from "@sinclair/typebox";
 import { headTail } from "./lib/output-buffer";
 import { boxRendererWindowed, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
+import { GITIGNORE_NOTE, rgLocation } from "./lib/rg";
 
-const MAX_TOTAL_MATCHES = 100;
+/** output lines past which the result shows only its first and last SHOWN_WHEN_CUT lines */
+const MAX_OUTPUT_LINES = 300;
+const SHOWN_WHEN_CUT = 200;
 const MAX_COLLECT_MATCHES = 200;
 const MAX_PER_FILE = 10;
 const MAX_LINE_CHARS = 200;
-const RG_CONTEXT_LINES = 1;
+const DEFAULT_CONTEXT_LINES = 1;
+const MAX_CONTEXT_LINES = 10;
 /** max files shown in collapsed display */
 const COLLAPSED_MAX_FILES = 3;
 /** per-block excerpts for collapsed display — show first 5 visual lines */
@@ -41,6 +45,11 @@ function truncateLine(line: string): string {
 
 function looksLikeRegex(pattern: string): boolean {
 	return /[{}()\[\]|\\+*?^$]/.test(pattern);
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+	if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+	return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
 // --- structured data for visual rendering ---
@@ -107,8 +116,9 @@ export function createGrepTool(): ToolDefinition {
 			"# When to use\n" +
 			"- Finding exact text matches (variable names, function calls, specific strings)\n\n" +
 			"# Constraints\n" +
-			`- Results are limited to ${MAX_TOTAL_MATCHES} matches (up to ${MAX_PER_FILE} per file)\n` +
-			`- Lines are truncated at ${MAX_LINE_CHARS} characters\n\n` +
+			`- Stops after \`limit\` matches (default and max ${MAX_COLLECT_MATCHES}); at most ${MAX_PER_FILE} shown per file\n` +
+			`- Lines are truncated at ${MAX_LINE_CHARS} characters\n` +
+			"- Respects .gitignore: ignored files are skipped unless their directory is passed as `path`\n\n" +
 			"# Strategy\n" +
 			"- Use 'path' or 'glob' to narrow searches; run multiple focused calls rather than one broad search\n" +
 			"- Uses Rust-style regex (escape `{` and `}`); use `literal: true` for literal text search\n",
@@ -119,12 +129,12 @@ export function createGrepTool(): ToolDefinition {
 			}),
 			path: Type.Optional(
 				Type.String({
-					description: "The file or directory path to search in. Cannot be used with glob.",
+					description: "The file or directory to search in (default: current directory).",
 				}),
 			),
 			glob: Type.Optional(
 				Type.String({
-					description: "The glob pattern to filter files (e.g., '**/*.ts'). Cannot be used with path.",
+					description: "Glob that filters which files are searched (e.g., '**/*.ts'), relative to `path`.",
 				}),
 			),
 			caseSensitive: Type.Optional(
@@ -144,12 +154,12 @@ export function createGrepTool(): ToolDefinition {
 			),
 			context: Type.Optional(
 				Type.Number({
-					description: "Number of context lines around matches.",
+					description: `Context lines around each match (default ${DEFAULT_CONTEXT_LINES}, max ${MAX_CONTEXT_LINES}).`,
 				}),
 			),
 			limit: Type.Optional(
 				Type.Number({
-					description: "Maximum number of results.",
+					description: `Stop after this many matches (default and max ${MAX_COLLECT_MATCHES}).`,
 				}),
 			),
 		}),
@@ -173,11 +183,18 @@ export function createGrepTool(): ToolDefinition {
 					? params.path
 					: path.resolve(ctx.cwd, params.path)
 				: ctx.cwd;
+			const contextLines = clampInt(params.context, 0, MAX_CONTEXT_LINES, DEFAULT_CONTEXT_LINES);
+			const maxMatches = clampInt(params.limit, 1, MAX_COLLECT_MATCHES, MAX_COLLECT_MATCHES);
+			const where = rgLocation(searchPath);
+			if ("error" in where) {
+				return { content: [{ type: "text" as const, text: where.error }], isError: true } as any;
+			}
+			const rgCwd = where.cwd;
 
 			return new Promise((resolve) => {
 				const args = [
 					"--json", "--line-number", "--color=never", "--hidden",
-					"--context", String(RG_CONTEXT_LINES),
+					"--context", String(contextLines),
 				];
 
 				if (params.caseSensitive === false || params.ignoreCase === true) {
@@ -190,9 +207,9 @@ export function createGrepTool(): ToolDefinition {
 					args.push("--glob", params.glob);
 				}
 
-				args.push("--", params.pattern, searchPath);
+				args.push("--", params.pattern, where.target);
 
-				const child = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
+				const child = spawn("rg", args, { cwd: rgCwd, stdio: ["ignore", "pipe", "pipe"] });
 				const rl = createInterface({ input: child.stdout! });
 
 				let stderr = "";
@@ -224,10 +241,11 @@ export function createGrepTool(): ToolDefinition {
 
 					if (event.type !== "match" && event.type !== "context") return;
 
-					const filePath: string | undefined = event.data?.path?.text;
+					const rawPath: string | undefined = event.data?.path?.text;
 					const lineNumber: number | undefined = event.data?.line_number;
 					const lineText: string = (event.data?.lines?.text ?? "").replace(/\r?\n$/, "");
-					if (!filePath || typeof lineNumber !== "number") return;
+					if (!rawPath || typeof lineNumber !== "number") return;
+					const filePath = path.resolve(rgCwd, rawPath);
 
 					if (event.type === "match") {
 						totalMatches++;
@@ -240,7 +258,7 @@ export function createGrepTool(): ToolDefinition {
 						lineText,
 					});
 
-					if (totalMatches >= MAX_COLLECT_MATCHES) {
+					if (totalMatches >= maxMatches) {
 						killedDueToLimit = true;
 						if (!child.killed) child.kill();
 					}
@@ -276,7 +294,7 @@ export function createGrepTool(): ToolDefinition {
 					}
 
 					if (totalMatches === 0) {
-						let text = "no matches found";
+						let text = `no matches found (${GITIGNORE_NOTE})`;
 						if (!params.literal && looksLikeRegex(params.pattern)) {
 							text += "\n\n(pattern contains regex characters — try literal: true if searching for exact text)";
 						}
@@ -326,8 +344,7 @@ export function createGrepTool(): ToolDefinition {
 						const includedLines = new Set<number>();
 						for (const ln of includedMatchLines) {
 							includedLines.add(ln);
-							// include context lines within RG_CONTEXT_LINES distance
-							for (let d = 1; d <= RG_CONTEXT_LINES; d++) {
+							for (let d = 1; d <= contextLines; d++) {
 								includedLines.add(ln - d);
 								includedLines.add(ln + d);
 							}
@@ -338,7 +355,7 @@ export function createGrepTool(): ToolDefinition {
 							outputLines.push("");
 						}
 
-						const rel = path.relative(searchPath, filePath).replace(/\\/g, "/");
+						const rel = path.relative(rgCwd, filePath).replace(/\\/g, "/");
 						const displayPath = rel && !rel.startsWith("..") ? rel : path.basename(filePath);
 
 						const grepFile: GrepFile = {
@@ -388,9 +405,8 @@ export function createGrepTool(): ToolDefinition {
 					const notices: string[] = [];
 					let finalMatchIndices: number[];
 
-					if (outputLines.length > MAX_TOTAL_MATCHES * 3) {
-						// with context lines, the threshold is higher
-						const limit = MAX_TOTAL_MATCHES * 2;
+					if (outputLines.length > MAX_OUTPUT_LINES) {
+						const limit = SHOWN_WHEN_CUT;
 						const { head, tail, truncatedCount } = headTail(outputLines, limit);
 						output = [
 							...head,
@@ -417,7 +433,7 @@ export function createGrepTool(): ToolDefinition {
 					}
 
 					if (killedDueToLimit) {
-						notices.push(`stopped at ${MAX_COLLECT_MATCHES} matches — refine pattern`);
+						notices.push(`stopped at ${maxMatches} matches — refine pattern`);
 					}
 
 					const filesAtLimit = Array.from(perFileMatchCount.values()).filter((c) => c >= MAX_PER_FILE).length;
@@ -433,7 +449,7 @@ export function createGrepTool(): ToolDefinition {
 
 					resolve({
 						content: [{ type: "text" as const, text: output }],
-						details: { fileGroups, notices, matchLineIndices: finalMatchIndices, firstMatchPerFile, searchPath },
+						details: { fileGroups, notices, matchLineIndices: finalMatchIndices, firstMatchPerFile, searchPath: rgCwd },
 					} as any);
 				});
 			});

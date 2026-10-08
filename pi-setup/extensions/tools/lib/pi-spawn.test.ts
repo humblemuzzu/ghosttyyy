@@ -236,7 +236,7 @@ describe("stall watchdog", () => {
 		// stall is set to 60s here purely so that regression would be visible as a
 		// >60s run rather than hiding behind a short window.
 		const turn = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"end_turn"}}';
-		const bin = writeStub("rpc-done.sh", [`echo '${turn}'`, `echo '${turn}'`, "sleep 60"]);
+		const bin = writeStub("rpc-done.sh", ["sleep 60 &", `echo '${turn}'`, `echo '${turn}'`, "wait"]);
 		const run = await withChild(bin, "60", { followUp: "second turn" });
 		// ~10s grace. before the dedicated release timer this landed at 20s (the
 		// watchdog tick for a 60s window); before killedAt it would be 60s+.
@@ -247,8 +247,11 @@ describe("stall watchdog", () => {
 	test("the release backstop works even with the stall watchdog disabled", async () => {
 		// PI_SPAWN_STALL_SEC=0 removes the interval entirely, but an aborted or
 		// turn-complete child must still be released from a stuck pipe.
+		// the pipe-holding sleep starts BEFORE the turns print: the parent kills
+		// the shell on the second turn, and a sleep forked after that kill would
+		// hold nothing, letting close fire early.
 		const turn = '{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"end_turn"}}';
-		const bin = writeStub("rpc-nostall.sh", [`echo '${turn}'`, `echo '${turn}'`, "sleep 60"]);
+		const bin = writeStub("rpc-nostall.sh", ["sleep 60 &", `echo '${turn}'`, `echo '${turn}'`, "wait"]);
 		const run = await withChild(bin, "0", { followUp: "second turn" });
 		expect(run.ms).toBeGreaterThanOrEqual(10_000);
 		expect(run.ms).toBeLessThan(14_000);

@@ -1,6 +1,6 @@
 ---
 name: mat-design
-description: "shared vocabulary + principles for designing deep modules (module / interface / seam / adapter / depth), from ousterhout + feathers via matt pocock. use when designing or restructuring a module's interface, placing a seam, or making code testable. methodology, not a workflow. see DESIGN-IT-TWICE.md to explore alternative interfaces with parallel Task subagents."
+description: "shared vocabulary + principles for designing deep modules (module / interface / seam / adapter / depth), from ousterhout + feathers via matt pocock. use when designing or restructuring a module's interface, placing a seam, or making code testable. methodology, not a workflow. see DESIGN-IT-TWICE.md to explore alternative interfaces with parallel oracle calls."
 ---
 
 # Codebase Design
@@ -111,4 +111,4 @@ Good interfaces make testing natural:
 ## Going deeper
 
 - **Deepening a cluster given its dependencies** — see [DEEPENING.md](DEEPENING.md): dependency categories, seam discipline, and replace-don't-layer testing.
-- **Exploring alternative interfaces** — see [DESIGN-IT-TWICE.md](DESIGN-IT-TWICE.md): spin up parallel `Task` subagents to design the interface several radically different ways, then compare on depth, locality, and seam placement.
+- **Exploring alternative interfaces** — see [DESIGN-IT-TWICE.md](DESIGN-IT-TWICE.md): run parallel `oracle` calls to design the interface several radically different ways, then compare on depth, locality, and seam placement.

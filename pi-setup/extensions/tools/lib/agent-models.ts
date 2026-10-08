@@ -245,11 +245,12 @@ export function auditAgentModels(config: AgentModels, catalog: ModelCatalog): st
 export function modelParams(config: AgentModels, agent: SubAgent) {
 	const preset = config.agents[agent] ?? {};
 	const names = Object.keys(config.models);
+	const onResume = agent === "delegate" || agent === "chad" ? " A continueId resume keeps the child's own." : "";
 	const thinking = Type.Optional(
 		Type.Unsafe<ThinkingLevel>({
 			type: "string",
 			enum: [...THINKING_LEVELS],
-			description: `Omit unless the user names a thinking level. Default: ${preset.thinking ?? "pi's default"}.`,
+			description: `Omit unless the user names a thinking level. Default: ${preset.thinking ?? "pi's default"}.${onResume}`,
 		}),
 	);
 	if (names.length === 0) return { thinking };
@@ -258,7 +259,7 @@ export function modelParams(config: AgentModels, agent: SubAgent) {
 			Type.Unsafe<string>({
 				type: "string",
 				enum: names,
-				description: `Omit unless the user names a model. Default: ${preset.model ?? "pi's default model"}.`,
+				description: `Omit unless the user names a model. Default: ${preset.model ?? "pi's default model"}.${onResume}`,
 			}),
 		),
 		thinking,

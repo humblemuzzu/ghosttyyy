@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **22 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 29 custom tools, 8 packages, 14 skills, multi-provider support, and a custom agent identity.
+A curated, aesthetic Ghostty terminal setup with **22 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with custom extensions and tools, dedicated sub-agents, skills, multi-provider support, and a custom agent identity.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -357,7 +357,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.84.1) coding agent environment — 12 extensions, 29 custom tools, 6 dedicated sub-agents with @mention routing, 8 packages, 14 skills, 3 pi-core patches, multi-provider support, and a custom system prompt.
+Full portable backup of my [pi](https://github.com/badlogic/pi-mono) coding agent environment — custom extensions and tools, dedicated sub-agents with @mention routing, pi packages, skills, pi-core patches, multi-provider support, and a custom system prompt. `AGENTS.md` is the maintained reference; the pi version is in its "Providers and defaults" section.
 
 ## 🚀 Installation
 
@@ -369,23 +369,22 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 
 ---
 
-## 📦 Packages (7 active)
+## 📦 Packages
 
 | Package | Purpose | Patched? |
 |---------|---------|----------|
 | `pi-token-burden` | Token usage tracking and display | No |
 | `@benvargas/pi-claude-code-use` | Claude Max subscription via OAuth payload rewrite | No |
-| `@marckrenn/pi-sub-bar` | Usage widget in status bar | No (**config**) |
-| `pi-autoresearch` | Autonomous experiment loop for optimization | No |
+| `@marckrenn/pi-sub-bar` | Usage widget in status bar | **grok patch** + config |
 | `pi-tool-display` | Thinking labels, native user message box | **Config** |
 | `pi-codex-goal` | Codex-style `/goal` — autonomous multi-turn objectives | No |
 | `pi-mcp-adapter` | On-demand MCP gateway — single `mcp` proxy tool | No (**config**) |
 
-**Removed (do not reinstall):** `pi-context` (checkpoint/timeline/compact), `todos.ts` (file todo tool), `pi-web-access` (dead `web_search` on every provider, replaced by our Parallel AI tool), `pi-tasks` (array params broken), `@tomooshi/condensed-milk-pi` (reported failed git commands as successes), `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask`. See `pi-setup/pi-migrations.md`.
+**Removed (do not reinstall):** the full list, with reasons, is in `AGENTS.md` → "Removed — do not reinstall"; `pi-setup/verify-patches.sh` fails if any of them comes back.
 
 ---
 
-## 🧩 Extensions (11 active)
+## 🧩 Extensions
 
 | Extension | Purpose |
 |-----------|---------|
@@ -399,13 +398,17 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | `command-palette/` | Ctrl+Shift+P fuzzy command overlay |
 | `subagent-inspector/` | Ctrl+Shift+A / `/subagents` — drill into a sub-agent's live transcript |
 | `local-model.ts` | `/local` — start/stop the llama.cpp router |
-| `tools/` | 29 custom tools (see below) |
+| `deepseek-peak/` | `/deepseek` — peak/off-peak pricing clock in the editor border |
+| `guardrails/` | Comment gate on `apply_patch` |
+| `theme-studio/` | `/studio`, `/theme`, Ctrl+Shift+K — live pi + Ghostty theme/font preview |
+| `you-should-know/` | `/ysk` — side agent that flags what you may have missed (off until `/ysk on`) |
+| `tools/` | Custom tools (see below) |
 
 **Removed:** `todos.ts`, `tool-harness.ts` (replaced by piSpawn's native `--tools` allowlists), `handoff.ts`, `btw.ts`, `opencode-zen.ts`, `crof.ts`, `brain-loader.ts`. pi auto-discovers every `.ts`/dir in `~/.pi/agent/extensions/` — to disable one, delete it or move it out.
 
 ---
 
-## 🛠 Custom Tools (28)
+## 🛠 Custom Tools
 
 ### Replacements (override pi built-ins)
 
@@ -414,8 +417,8 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 | **bash** | Git trailers, mutex locking, psst secret injection + scrubbing, permission rules, output scrubbing |
 | **read** | Image support fitted to the vision budget, line numbers, `.env` blocking |
 | **apply_patch** | The ONLY file-mutation tool — write/edit/batch/envelope lanes, mutex locking, undo tracking. Replaced `edit`/`write` (pi's natives are hidden) |
-| **grep** | Per-file limits, 200-char truncation, context lines |
-| **find** | `rg --files`, mtime sort (registers as `find`, shadows pi's built-in) |
+| **grep** | Per-file limits, 200-char truncation, context lines; respects .gitignore |
+| **find** | `rg --files`, mtime sort (registers as `find`, shadows pi's built-in); respects .gitignore |
 | **ls**, **format_file**, **skill**, **undo_edit**, **redo_edit** | Enhanced versions of pi defaults |
 
 ### Sub-agents
@@ -457,9 +460,7 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ### Other tools
 
-`read_web_page`, `read_session`, `search_sessions`, `web_search` (Parallel AI), `screenshot`, `agent_message`, `mcp`, plus GitHub (×7 — read, search, list-dir, list-repos, glob, commit-search, diff).
-
-**Removed:** `look-at` (low quality). `pi-web-access` was removed 2026-07-30 — `web_search` is now our self-contained Parallel AI tool.
+`read_web_page` (static fetch — scripts are not run), `read_session`, `search_sessions`, `web_search` (Parallel AI), `screenshot`, `agent_message`, `mcp`, plus GitHub (×7 — read, search, list-dir, list-repos, glob, commit-search, diff).
 
 ---
 
@@ -468,32 +469,35 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 | File | Purpose |
 |------|---------|
 | `prompt.amp.system.md` | Main Amp identity — behavior rules, tool selection, code defaults |
+| `rules.amp.md` | Working rules (comments, scope, evidence, danger) sent to the main agent and every sub-agent |
 | `agent.amp.oracle.md` | Oracle sub-agent: simplicity-first advice, effort/scope signal |
-| `agent.amp.finder.md` | Finder sub-agent: ≤3 turns, 8+ parallel searches per turn |
+| `agent.amp.finder.md` | Finder sub-agent: 8+ parallel searches per turn, reports only what a search showed |
 | `agent.amp.librarian.md` | Librarian sub-agent: cross-repo GitHub exploration |
 | `agent.amp.chad.md` | Chad sub-agent: read-only research; Answer / Evidence / Verified vs inferred / Gaps |
 | `prompt.amp.code-review-*.md` | Code review system prompt + XML report format |
-| `prompt.amp.read-web-page.md` | Web page Q&A prompt (used by `read_web_page`'s `prompt` path) |
+| `prompt.amp.read-web-page.md` | Web page Q&A prompt (used by `read_web_page`'s `prompt` / `objective` path) |
 | `prompt.harness-docs.pi.md` | Pi-specific harness documentation |
 
 ---
 
 ## 🤖 Providers
 
-| Provider | Models | Purpose |
-|----------|--------|---------|
-| `anthropic` | claude-opus-5-5 (default · high), claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5, claude-opus-4-6/4-7/4-8 (1M context) | **Primary** — Claude Max via pi-claude-code-use |
-| `xai` | grok-4.6, grok-4.5 | Grok OAuth |
-| `deepseek` | deepseek-flash (V4.1 Flash) | 1M context, vision, thinking mode |
-| `kimi-coding` | k3 (1M), k3-256k, kimi-for-coding (K2.7) | Kimi Code OAuth (native) |
+`/model` lists only `enabledModels` in `pi-setup/settings.json`:
+
+| Provider | Models in `/model` | Access |
+|----------|--------------------|--------|
+| `anthropic` | claude-opus-5-5 (default · high), claude-sonnet-5-5, claude-haiku-5-5 | **Primary** — Claude Max via pi-claude-code-use |
+| `deepseek` | deepseek-flash, deepseek-v4-pro | `$DEEPSEEK_API_KEY` |
+| `openrouter` | deepseek/deepseek-v4.1-flash, z-ai/glm-5.3-flash | `/login openrouter` |
 | `llama-local` | LFM2.5-2.6B | Local llama.cpp router, managed via `/local` |
-| `openai-codex` | gpt-5.5 | OpenAI Codex OAuth |
+
+`xai`, `kimi-coding` and `openai-codex` models are in pi's catalog but not enabled.
 
 ---
 
-## 🧠 Skills (14 loadable)
+## 🧠 Skills
 
-12 config-level (`~/.config/agents/skills/`): `c-sqr`, `chrome-cdp`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `git`, `jev`, `mat-design`, `mat-tdd`, `review`, `tmux` — plus `find-skills` and `userinterface-wiki` at pi level (3 `autoresearch-*` load only while pi-autoresearch is enabled).
+Config-level (`~/.config/agents/skills/`, from `pi-setup/config-skills/`): `c-sqr`, `chrome-cdp`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `git`, `jev`, `mat-design`, `mat-tdd`, `review`, `tmux` — plus `find-skills` and `userinterface-wiki` in `~/.agents/skills/` (not from this repo).
 
 ---
 
@@ -509,7 +513,7 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 }
 ```
 
-Compaction enabled — pi's native compaction (the handoff/pi-vcc systems are gone).
+Compaction enabled — pi's native compaction.
 
 ---
 
@@ -524,7 +528,7 @@ Compaction enabled — pi's native compaction (the handoff/pi-vcc systems are go
 
 ## 🎨 Pi Themes
 
-**Gruvbox** (active) — warm retro palette. **Night Owl** — dark blue.
+**Gruvbox** (active), **Night Owl**, **Catppuccin Mocha**, **Black Metal**.
 
 ---
 
@@ -535,14 +539,14 @@ pi-setup/
 ├── install.sh                  # Backs up + deploys everything
 ├── settings.json, models.json, keybindings.json, permissions.json, mcp.json
 ├── pi-core-patches/            # resource-loader, session pinning, pi-tui width patch
-├── agents/                     # 9 prompt templates (main + sub-agents)
-├── themes/                     # gruvbox + nightowl
-├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 12 skills
+├── agents/                     # system prompt, rules, sub-agent prompts
+├── themes/                     # pi themes
+├── pi-sub-patches/             # grok usage provider; manifest.txt maps files to destinations
+├── config-skills/              # config skills
 └── extensions/
-    ├── tools/                  # 28 custom tools + lib/
+    ├── tools/                  # custom tools + lib/
     ├── editor/, command-palette/, subagent-inspector/, pi-tool-display/
-    └── *.ts                    # 12 active extensions
+    └── *.ts                    # single-file extensions
 ```
 
 ---

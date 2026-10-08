@@ -23,7 +23,7 @@ import { clip, renderSubAgentResult } from "./lib/sub-agent-render";
 import { requireParam } from "./lib/params";
 
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
-const FINDER_PARAM_NAMES = ["query", "task", "prompt", "description", "search"] as const;
+const FINDER_PARAM_NAMES = ["query", "task", "prompt", "question", "description", "search"] as const;
 
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls"];
 const EXTENSION_TOOLS = ["read", "grep", "find", "ls"];
@@ -76,7 +76,7 @@ export function createFinderTool(config: FinderConfig = {}): ToolDefinition {
 				description:
 					"The search query describing what to find. Be specific and include " +
 					"technical terms, file types, or expected code patterns. " +
-					"(Also accepted: task, prompt, question, description.)",
+					`(Also accepted: ${FINDER_PARAM_NAMES.slice(1).join(", ")}.)`,
 			}),
 			...modelParams(models, "finder"),
 		}),

@@ -1,9 +1,10 @@
 /**
  * read-only bash policy for research sub-agents.
- * allowlist that fails closed — an unrecognised command is refused and named.
- * a command name is not a capability: flags can write (WRITE_FLAGS /
- * POSITIONAL_OUTPUT). accepted hole: an allowed binary talked into writing
- * by a flag form not listed here.
+ * an unrecognised command is refused and named (allowlist, fails closed).
+ * a command name is not a capability: flags can write, so WRITE_FLAGS /
+ * POSITIONAL_OUTPUT are a denylist matched in every spelling getopt accepts.
+ * accepted hole: an allowed binary talked into writing by a flag not listed.
+ * a guardrail on our own agent, not a sandbox.
  */
 
 /** env var that turns the policy on. set by piSpawn for read-only sub-agents. */
@@ -140,8 +141,13 @@ const WRITE_FLAGS: Record<string, readonly string[]> = {
 		"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode", "-F", "--form",
 		"-X", "--request", "--dump-header", "-D", "-c", "--cookie-jar", "--trace",
 		"--trace-ascii", "-K", "--config",
+		// each names a file curl writes, or sends a body
+		"--remote-name-all", "--json", "--libcurl", "--stderr", "--etag-save", "--hsts", "--alt-svc",
 	],
 };
+
+/** commands whose long options parse with getopt_long, which accepts any unique prefix (`--out`). verified for sort and base64. */
+const GETOPT_LONG_ABBREVIATES: ReadonlySet<string> = new Set(["sort", "base64"]);
 
 /**
  * commands whose SECOND positional operand is an output file.
@@ -150,9 +156,14 @@ const WRITE_FLAGS: Record<string, readonly string[]> = {
  * operands needs the value-taking flags, or `xxd -l 64 file` reads as two
  * operands and a legitimate read gets refused.
  */
-const POSITIONAL_OUTPUT: Record<string, { maxOperands: number; valueFlags: readonly string[] }> = {
-	uniq: { maxOperands: 1, valueFlags: ["-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"] },
-	xxd: { maxOperands: 1, valueFlags: ["-l", "-s", "-c", "-g", "-o", "-seek"] },
+const POSITIONAL_OUTPUT: Record<string, { maxOperands: number; valueFlags: readonly string[]; getoptBundles: boolean }> = {
+	uniq: {
+		maxOperands: 1,
+		valueFlags: ["-f", "--skip-fields", "-s", "--skip-chars", "-w", "--check-chars"],
+		getoptBundles: true,
+	},
+	// xxd's `-ps` is one option, not -p -s: it parses its own flags.
+	xxd: { maxOperands: 1, valueFlags: ["-l", "-s", "-c", "-g", "-o", "-seek"], getoptBundles: false },
 };
 
 /** find primaries that execute or delete rather than report. */
@@ -161,6 +172,16 @@ const FIND_WRITE_PRIMARIES: ReadonlySet<string> = new Set([
 	// GNU-only; BSD find rejects it outright. listed for portability.
 	"-fprint0",
 ]);
+
+/** git global options (before the subcommand) that only choose what to read. */
+const GIT_SAFE_GLOBALS = new Set([
+	"--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--glob-pathspecs",
+	"--noglob-pathspecs", "--icase-pathspecs", "--no-replace-objects", "--bare",
+]);
+/** git global options that print information and need no subcommand. */
+const GIT_INFO_GLOBALS = new Set(["--version", "-v", "--help", "-h"]);
+/** safe git global options whose value is the next token unless written `--opt=value`. */
+const GIT_SAFE_VALUE_GLOBALS = new Set(["-C", "--git-dir", "--work-tree", "--namespace"]);
 
 // --- scanning ---
 
@@ -366,21 +387,48 @@ function stripPrefixes(words: string[]): string[] {
 
 // --- per-command gates ---
 
-function checkGit(args: string[]): ReadOnlyVerdict {
-	const flagged = args.find((arg) => GIT_MUTATING_TOKENS.has(arg) || arg.startsWith("--output="));
-	const subcommand = args.find((arg) => !arg.startsWith("-"));
+/**
+ * index of git's subcommand in `args`, past its global options, or a refusal.
+ * `-c`, `--config-env` and `--exec-path=` are refused: config can name a
+ * command to run (core.fsmonitor, core.pager, an alias), so they are exec vectors.
+ */
+function gitSubcommandIndex(args: string[]): { index: number } | ReadOnlyVerdict {
+	let i = 0;
+	while (i < args.length && args[i].startsWith("-")) {
+		const arg = args[i];
+		const name = arg.split("=")[0];
+		if (GIT_INFO_GLOBALS.has(arg)) {
+			return { allowed: true };
+		} else if (GIT_SAFE_GLOBALS.has(arg)) {
+			i++;
+		} else if (GIT_SAFE_VALUE_GLOBALS.has(name)) {
+			i += arg.includes("=") ? 1 : 2;
+		} else {
+			return {
+				allowed: false,
+				reason: `git global option \`${arg}\` is not allowed read-only (\`-C <dir>\`, \`--git-dir\` and \`--no-pager\` are)`,
+			};
+		}
+	}
+	return { index: i };
+}
 
-	if (!subcommand) {
+function checkGit(args: string[]): ReadOnlyVerdict {
+	const located = gitSubcommandIndex(args);
+	if (!("index" in located)) return located;
+	const subcommand = args[located.index];
+	if (subcommand === undefined) {
 		return { allowed: false, reason: "`git` with no subcommand" };
 	}
+	const rest = args.slice(located.index + 1);
+	const flagged = rest.find((arg) => GIT_MUTATING_TOKENS.has(arg) || arg.startsWith("--output="));
+
 	// operand limits are checked BEFORE the read-subcommand shortcut: the
 	// subcommands that need one (symbolic-ref) are on the read list, and an
 	// early return there would skip the check entirely.
 	const operandLimit = GIT_OPERAND_LIMIT[subcommand];
 	if (operandLimit !== undefined) {
-		const operands = args
-			.slice(args.indexOf(subcommand) + 1)
-			.filter((arg) => !arg.startsWith("-"));
+		const operands = rest.filter((arg) => !arg.startsWith("-"));
 		if (operands.length > operandLimit) {
 			return {
 				allowed: false,
@@ -400,7 +448,6 @@ function checkGit(args: string[]): ReadOnlyVerdict {
 		return { allowed: false, reason: `\`git ${subcommand}\` can modify the repository` };
 	}
 
-	const rest = args.slice(args.indexOf(subcommand) + 1);
 	if (rest.length === 0) {
 		return mixed.bareIsRead
 			? { allowed: true }
@@ -426,41 +473,123 @@ function checkSed(args: string[]): ReadOnlyVerdict {
 	);
 	if (flagged) return { allowed: false, reason: `\`sed ${flagged}\` edits in place` };
 
-	/*
-	 * sed's own `w` command writes a file from INSIDE the script, with no flag
-	 * involved: `sed -n '1w out'` and `sed 's/a/b/w out'` both create `out`
-	 * (verified). two targeted shapes rather than a bare /w\s/, which would
-	 * refuse an innocent `s/a w b/x/`.
-	 */
-	const script = args.filter((arg) => !arg.startsWith("-"));
-	const writesFile = script.find(
-		(arg) => /\/[a-zA-Z0-9]*[wW]\s+\S/.test(arg) || /(^|[;{}])\s*[0-9$,~+/]*\s*[wW]\s+\S/.test(arg),
-	);
-	if (writesFile) {
-		return { allowed: false, reason: "`sed` script writes a file with its `w` command" };
+	const scripts = sedScripts(args);
+	if (scripts === null) {
+		return { allowed: false, reason: "`sed -f` runs a script file this guard cannot inspect" };
 	}
+	for (const script of scripts) {
+		const effect = sedScriptEffect(script);
+		if (effect === "w") return { allowed: false, reason: "`sed` script writes a file with its `w` command" };
+		if (effect === "e") return { allowed: false, reason: "`sed` script executes a command with its `e` command" };
+	}
+	return { allowed: true };
+}
 
-	/*
-	 * GNU sed's `e` command and `s///e` flag execute the pattern space as a
-	 * shell command. BSD sed (this machine) has neither and errors out, so this
-	 * is a portability guard: it costs nothing here and matters the day this
-	 * runs on Linux or against `gsed`.
-	 */
-	const executes = script.find(
-		(arg) => /\/[a-zA-Z0-9]*e(\s|;|$)/.test(arg) || /(^|[;{}])\s*[0-9$,~+/]*\s*e(\s|$)/.test(arg),
-	);
-	return executes
-		? { allowed: false, reason: "`sed` script executes a command with its `e` command" }
-		: { allowed: true };
+/**
+ * every sed script in `args`: `-e S`, `-eS`, `-neS`, `--expression[=]S`, or,
+ * when none of those is given, the first bare operand (the rest are files).
+ * null for `-f`/`--file`, whose script cannot be inspected.
+ */
+function sedScripts(args: string[]): string[] | null {
+	const scripts: string[] = [];
+	const operands: string[] = [];
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg === "--file" || arg.startsWith("--file=")) return null;
+		if (arg === "--expression") {
+			scripts.push(args[++i] ?? "");
+		} else if (arg.startsWith("--expression=")) {
+			scripts.push(arg.slice("--expression=".length));
+		} else if (/^-[a-zA-Z]/.test(arg)) {
+			const at = arg.search(/[ef]/);
+			if (at === -1) continue;
+			if (arg[at] === "f") return null;
+			scripts.push(arg.slice(at + 1) || (args[++i] ?? ""));
+		} else if (!arg.startsWith("-")) {
+			operands.push(arg);
+		}
+	}
+	if (scripts.length === 0 && operands.length > 0) scripts.push(operands[0]);
+	return scripts;
+}
+
+/**
+ * walk a sed script command by command, the way sed reads it: skip each
+ * address (`3`, `$`, `/re/`, `\cREc`, ranges, `!`), then look at the command.
+ * "w" for a write (`w`/`W` command, `s///w` flag), "e" for an exec (GNU `e`
+ * command, `s///e` flag), null for neither. Unknown commands run to the next
+ * `;`, newline or `}`, so text after `a`/`i`/`c` may be misread as a command
+ * — which can only refuse, never allow.
+ */
+function sedScriptEffect(script: string): "w" | "e" | null {
+	const n = script.length;
+	let i = 0;
+	const skipDelimited = (d: string) => {
+		while (i < n && script[i] !== d) i += script[i] === "\\" ? 2 : 1;
+		i++;
+	};
+	const skipAddress = () => {
+		if (script[i] === "/" || script[i] === "\\") {
+			const d = script[i] === "\\" ? script[i + 1] : "/";
+			i += script[i] === "\\" ? 2 : 1;
+			skipDelimited(d);
+			while (i < n && /[IM]/.test(script[i])) i++;
+		} else {
+			while (i < n && /[0-9$~+]/.test(script[i])) i++;
+		}
+	};
+	while (i < n) {
+		while (i < n && /[\s;{}]/.test(script[i])) i++;
+		if (i >= n) break;
+		skipAddress();
+		if (script[i] === ",") {
+			i++;
+			skipAddress();
+		}
+		while (i < n && /[\s!]/.test(script[i])) i++;
+		const cmd = script[i++];
+		if (cmd === "w" || cmd === "W") return "w";
+		if (cmd === "e") return "e";
+		if (cmd === "s" || cmd === "y") {
+			const d = script[i++];
+			skipDelimited(d);
+			skipDelimited(d);
+			while (cmd === "s" && i < n && /[gpiImMew0-9]/.test(script[i])) {
+				if (script[i] === "w") return "w";
+				if (script[i] === "e") return "e";
+				i++;
+			}
+		}
+		while (i < n && !/[;\n}]/.test(script[i])) i++;
+	}
+	return null;
+}
+
+/**
+ * whether `arg` is `flag` in any spelling the command accepts: exact,
+ * `--flag=v`, an attached short value (`-oFILE`), a bundle of short letters
+ * containing it (`-so`), and — only for getopt_long commands — an abbreviated
+ * long option (`--out` for `--output`).
+ */
+function matchesFlag(arg: string, flag: string, abbreviates: boolean): boolean {
+	if (arg === flag) return true;
+	if (flag.startsWith("--")) {
+		const name = arg.split("=")[0];
+		if (name === flag) return true;
+		return abbreviates && name.startsWith("--") && name.length >= 3 && flag.startsWith(name);
+	}
+	if (flag.length === 2 && !arg.startsWith("--") && arg.startsWith("-")) {
+		return arg.startsWith(flag) || (/^-[A-Za-z]+$/.test(arg) && arg.includes(flag[1]));
+	}
+	return false;
 }
 
 /** a flag-form output/exec vector on a command that otherwise only reads. */
 function checkWriteFlags(name: string, args: string[]): ReadOnlyVerdict {
 	const flags = WRITE_FLAGS[name];
 	if (!flags) return { allowed: true };
-	const flagged = args.find((arg) =>
-		flags.some((flag) => arg === flag || (flag.startsWith("--") && arg.startsWith(`${flag}=`))),
-	);
+	const abbreviates = GETOPT_LONG_ABBREVIATES.has(name);
+	const flagged = args.find((arg) => flags.some((flag) => matchesFlag(arg, flag, abbreviates)));
 	return flagged
 		? { allowed: false, reason: `\`${name} ${flagged}\` writes a file or runs a command` }
 		: { allowed: true };
@@ -475,8 +604,10 @@ function checkPositionalOutput(name: string, args: string[]): ReadOnlyVerdict {
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg.startsWith("-") && arg !== "-") {
-			// skip this flag's value so `xxd -l 64 f` counts one operand, not two
-			if (rule.valueFlags.includes(arg)) i++;
+			// skip this flag's value so `xxd -l 64 f` and `uniq -cf 2 f` count one operand
+			const bundleTakesValue =
+				rule.getoptBundles && /^-[A-Za-z]{2,}$/.test(arg) && rule.valueFlags.includes(`-${arg[arg.length - 1]}`);
+			if (rule.valueFlags.includes(arg) || bundleTakesValue) i++;
 			continue;
 		}
 		operands++;

@@ -4,20 +4,14 @@
  * tries prettier, then biome, and captures a before/after diff which is
  * tracked for undo_edit.
  *
- * RESOLUTION ORDER MATTERS. this used to check `which <name>` only, i.e. the
- * GLOBAL PATH. almost no JavaScript project installs prettier globally — it is
- * a devDependency in `node_modules/.bin`. so the tool reported "no formatter
- * found" in repositories that very much had one, and the only way to make it
- * work was a global install the project never asked for.
- *
- * now, for the file being formatted, we look:
- *   1. in `node_modules/.bin` of that file's directory and every ancestor
- *      (the project's own pinned version — the one its config expects)
+ * resolution, first hit wins:
+ *   1. `node_modules/.bin` from the file's directory up to its git root,
+ *      never at or above $HOME (a home-dir install is nobody's project pin)
  *   2. on PATH (a global install)
  *   3. via `bunx`/`npx` (no install at all, resolves the package on demand)
  *
- * the first hit wins, so a project's pinned formatter always beats a global
- * one of a different version.
+ * prettier skips files matched by .gitignore/.prettierignore with exit 0, so
+ * "unchanged" would read as "already formatted". `--file-info` is asked first.
  */
 
 import * as fs from "node:fs";
@@ -32,7 +26,12 @@ import { resolveWithVariants } from "./read";
 import { osc8Link, renderBoxedText } from "./lib/box-format";
 import { getText } from "./lib/tui";
 
-type Formatter = { name: string; args: (file: string) => string[] };
+type Formatter = {
+	name: string;
+	args: (file: string) => string[];
+	/** argv that reports whether the formatter will touch the file. */
+	fileInfoArgs?: (file: string) => string[];
+};
 
 /** a formatter resolved to something actually runnable. */
 type ResolvedFormatter = {
@@ -40,14 +39,16 @@ type ResolvedFormatter = {
 	label: string;
 	/** executable to spawn */
 	command: string;
-	/** full argv, including any runner prefix like `npx prettier` */
-	argv: string[];
+	/** runner prefix like `--yes prettier` for npx; empty when command is the formatter */
+	prefix: string[];
+	formatter: Formatter;
 };
 
 const FORMATTERS: Formatter[] = [
 	{
 		name: "prettier",
 		args: (file) => ["--write", "--log-level", "silent", file],
+		fileInfoArgs: (file) => ["--file-info", file],
 	},
 	{
 		name: "biome",
@@ -55,10 +56,12 @@ const FORMATTERS: Formatter[] = [
 	},
 ];
 
-/** `node_modules/.bin/<name>` for the file's directory and every ancestor. */
+/** `node_modules/.bin/<name>` from startDir up to the git root, stopping below $HOME. */
 function findLocalBin(name: string, startDir: string): string | null {
+	const home = path.resolve(os.homedir());
 	let dir = startDir;
 	while (true) {
+		if (dir === home || home.startsWith(dir + path.sep) || dir === path.parse(dir).root) return null;
 		const candidate = path.join(dir, "node_modules", ".bin", name);
 		try {
 			fs.accessSync(candidate, fs.constants.X_OK);
@@ -66,9 +69,8 @@ function findLocalBin(name: string, startDir: string): string | null {
 		} catch {
 			/* keep walking up */
 		}
-		const parent = path.dirname(dir);
-		if (parent === dir) return null;
-		dir = parent;
+		if (fs.existsSync(path.join(dir, ".git"))) return null;
+		dir = path.dirname(dir);
 	}
 }
 
@@ -88,23 +90,51 @@ function findFormatter(filePath: string): ResolvedFormatter | null {
 	for (const fmt of FORMATTERS) {
 		const local = findLocalBin(fmt.name, startDir);
 		if (local) {
-			return { label: `${fmt.name} (project)`, command: local, argv: fmt.args(filePath) };
+			return { label: `${fmt.name} (project)`, command: local, prefix: [], formatter: fmt };
 		}
 	}
 	for (const fmt of FORMATTERS) {
 		if (onPath(fmt.name)) {
-			return { label: `${fmt.name} (global)`, command: fmt.name, argv: fmt.args(filePath) };
+			return { label: `${fmt.name} (global)`, command: fmt.name, prefix: [], formatter: fmt };
 		}
 	}
 	for (const runner of ["bunx", "npx"]) {
 		if (!onPath(runner)) continue;
 		const fmt = FORMATTERS[0]; // prettier: the one npx can resolve by bare name
-		const prefix = runner === "npx" ? ["--yes", fmt.name] : [fmt.name];
 		return {
 			label: `${fmt.name} (via ${runner})`,
 			command: runner,
-			argv: [...prefix, ...fmt.args(filePath)],
+			prefix: runner === "npx" ? ["--yes", fmt.name] : [fmt.name],
+			formatter: fmt,
 		};
+	}
+	return null;
+}
+
+/** why the formatter would leave `file` untouched, or null when it will format it. */
+function refusalReason(resolved: ResolvedFormatter, file: string, cwd: string): string | null {
+	const { fileInfoArgs } = resolved.formatter;
+	if (!fileInfoArgs) return null;
+	const run = spawnSync(resolved.command, [...resolved.prefix, ...fileInfoArgs(file)], {
+		encoding: "utf-8",
+		timeout: 30_000,
+		cwd,
+	});
+	if (run.status !== 0) {
+		return `${resolved.label} --file-info failed: ${run.stderr?.trim() || run.stdout?.trim() || `exit code ${run.status}`}`;
+	}
+	let info: { ignored?: boolean; inferredParser?: string | null };
+	try {
+		info = JSON.parse(run.stdout);
+	} catch {
+		return `${resolved.label} --file-info returned unreadable output: ${run.stdout.trim().slice(0, 200)}`;
+	}
+	const name = path.basename(file);
+	if (info.ignored) {
+		return `${resolved.label} ignores ${name} (it matches .gitignore or .prettierignore); nothing was formatted.`;
+	}
+	if (!info.inferredParser) {
+		return `${resolved.label} has no parser for ${path.extname(file) || name} files; nothing was formatted.`;
 	}
 	return null;
 }
@@ -117,7 +147,7 @@ export function createFormatFileTool(): ToolDefinition {
 
 		parameters: Type.Object({
 			path: Type.String({
-				description: "The absolute path to the file to format.",
+				description: "Path of the file to format, absolute or relative to the working directory.",
 			}),
 		}),
 
@@ -151,8 +181,8 @@ export function createFormatFileTool(): ToolDefinition {
 						{
 							type: "text" as const,
 							text:
-								"no formatter available. checked, in order: node_modules/.bin of this file's " +
-								"directory and its ancestors, then PATH, then bunx/npx.\n\n" +
+								"no formatter available. checked, in order: node_modules/.bin from this file's " +
+								"directory up to its git root (never $HOME or above), then PATH, then bunx/npx.\n\n" +
 								"fix with one of:\n" +
 								"  npm i -D prettier      (project-local, preferred — pins the version)\n" +
 								"  npm i -g prettier      (global, available everywhere)\n" +
@@ -164,9 +194,14 @@ export function createFormatFileTool(): ToolDefinition {
 			}
 
 			return withFileLock(resolved, async () => {
+				const refusal = refusalReason(formatter, resolved, ctx.cwd);
+				if (refusal) {
+					return { content: [{ type: "text" as const, text: refusal }], isError: true } as any;
+				}
+
 				const before = fs.readFileSync(resolved, "utf-8");
 
-				const result = spawnSync(formatter.command, formatter.argv, {
+				const result = spawnSync(formatter.command, [...formatter.prefix, ...formatter.formatter.args(resolved)], {
 					encoding: "utf-8",
 					timeout: 30_000,
 					cwd: ctx.cwd,

@@ -1,13 +1,15 @@
 /**
- * v3: cheerio HTML→markdown + LLM Q&A + pagination + raw mode.
+ * cheerio HTML→markdown + LLM Q&A + pagination + raw mode.
  *
  * cheerio strips chrome (nav, footer, scripts), finds main content area,
  * converts to clean markdown. ~95% size reduction on typical pages.
  *
- * `prompt` spawns a sub-agent that receives page content
- * and returns AI-generated prose (36/1202 calls use this pattern).
- * `start_index`/`max_length` provide character-level pagination (~16 calls).
- * `raw` skips conversion entirely (1 call).
+ * the fetch is static: curl runs no JavaScript, so content a page builds in
+ * the browser is absent, and every converted result says so. `screenshot`
+ * with `url` renders the page instead.
+ *
+ * `prompt` and `objective` spawn a sub-agent that receives the page content;
+ * `start_index`/`max_length` paginate by character; `raw` skips conversion.
  */
 
 import { spawn } from "node:child_process";
@@ -18,18 +20,25 @@ import { htmlToMarkdown } from "./lib/html-to-md";
 import { emptyAgentModels, modelParams, resolveRoute, type AgentModels, type ModelRoute } from "./lib/agent-models";
 import { runSubAgent, toolError } from "./lib/run-sub-agent";
 import { clip, renderSubAgentResult } from "./lib/sub-agent-render";
-import { OutputBuffer, headTailChars } from "./lib/output-buffer";
+import { headTailChars } from "./lib/output-buffer";
 import { osc8Link } from "./lib/box-format";
 
-const HEAD_LINES = 500;
-const TAIL_LINES = 500;
 const MAX_CHARS = 64_000;
+const MAX_FETCH_BYTES = 10 * 1024 * 1024;
 const CURL_TIMEOUT_SECS = 30;
 const MAX_REDIRECTS = 5;
 
 const DEFAULT_PROMPT_SYSTEM = `Analyze web page content and answer questions. Be concise, answer from provided content only. No filler.`;
 
-function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; error?: string }> {
+/** the note every converted result carries: what a static fetch cannot contain. */
+export function staticFetchNote(html: string): string {
+	const scripts = (html.match(/<script\b/gi) ?? []).length;
+	return scripts > 0
+		? `[static fetch: ${scripts} <script> tag(s) were not run, so content they build is missing — screenshot with url renders the page]`
+		: "[static fetch: the page has no <script> tags, so this is its full content]";
+}
+
+function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; capped?: boolean; error?: string }> {
 	return new Promise((resolve) => {
 		const args = [
 			"-sL",
@@ -44,7 +53,9 @@ function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; er
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 
-		const output = new OutputBuffer(HEAD_LINES, TAIL_LINES);
+		const chunks: Buffer[] = [];
+		let bytes = 0;
+		let capped = false;
 		let stderr = "";
 		let aborted = false;
 
@@ -58,7 +69,13 @@ function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; er
 		}
 
 		child.stdout?.on("data", (data: Buffer) => {
-			output.add(data.toString("utf-8"));
+			if (capped) return;
+			chunks.push(data);
+			bytes += data.length;
+			if (bytes > MAX_FETCH_BYTES) {
+				capped = true;
+				child.kill("SIGTERM");
+			}
 		});
 
 		child.stderr?.on("data", (data: Buffer) => {
@@ -73,12 +90,11 @@ function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; er
 		child.on("close", (code) => {
 			signal?.removeEventListener("abort", onAbort);
 			if (aborted) { resolve({ html: "", error: "fetch aborted" }); return; }
-			if (code !== 0) {
+			if (code !== 0 && !capped) {
 				resolve({ html: "", error: `fetch failed: ${stderr.trim() || `curl exited with code ${code}`}` });
 				return;
 			}
-			const { text } = output.format();
-			resolve({ html: text });
+			resolve({ html: Buffer.concat(chunks).subarray(0, MAX_FETCH_BYTES).toString("utf-8"), capped });
 		});
 	});
 }
@@ -96,7 +112,9 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 		description:
 			"Read the contents of a web page at a given URL.\n\n" +
 			"Returns the page content converted to Markdown.\n\n" +
-			"When an objective is provided, it returns excerpts relevant to that objective.\n\n" +
+			"When an objective is provided, a sub-agent returns verbatim excerpts relevant to that objective.\n\n" +
+			"Static fetch: scripts are not run, so content a page builds with JavaScript is missing. " +
+			"Use `screenshot` with `url` to see a rendered page.\n\n" +
 			"Do NOT use for localhost or local URLs — use `curl` via Bash instead.",
 
 		parameters: Type.Object({
@@ -107,7 +125,7 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 				Type.String({
 					description:
 						"A natural-language description of the research goal. " +
-						"If set, only relevant excerpts will be returned. If not set, the full content is returned.",
+						"If set, a sub-agent returns only relevant verbatim excerpts. If not set, the full content is returned.",
 				}),
 			),
 			prompt: Type.Optional(
@@ -132,11 +150,6 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 					description: "Return raw HTML instead of converting to Markdown.",
 				}),
 			),
-			forceRefetch: Type.Optional(
-				Type.Boolean({
-					description: "Force a live fetch (no caching). Currently always fetches live.",
-				}),
-			),
 			...modelParams(models, "read_web_page"),
 		}),
 
@@ -148,13 +161,13 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 			}
 
 			let route: ModelRoute = {};
-			if (params.prompt) {
+			if (params.prompt || params.objective) {
 				const resolved = resolveRoute(models, "read_web_page", params, ctx.modelRegistry);
 				if ("error" in resolved) return toolError(resolved.error);
 				route = resolved;
 			}
 
-			const { html, error } = await fetchUrl(url, signal);
+			const { html, capped, error } = await fetchUrl(url, signal);
 			if (error) return toolError(error);
 
 			if (!html.trim()) {
@@ -182,21 +195,25 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 			}
 
 			content = headTailChars(content, MAX_CHARS).text;
+			const notes = [staticFetchNote(html)];
+			if (capped) notes.push(`[the response exceeded ${MAX_FETCH_BYTES / 1024 / 1024} MB; only the start was fetched]`);
+			content += `\n\n${notes.join("\n")}`;
 
-			if (params.objective) {
-				content = `Objective: ${params.objective}\n\n---\n\n${content}`;
-			}
-
-			if (params.prompt) {
+			if (params.prompt || params.objective) {
+				const ask = params.prompt
+					? `Answer this question: ${params.prompt}` +
+						(params.objective ? `\n\nResearch goal behind it: ${params.objective}` : "")
+					: `Quote, verbatim, every passage relevant to this goal: ${params.objective}\n\n` +
+						"Quote only — no commentary. If nothing is relevant, say so.";
 				return runSubAgent({
 					agent: "read_web_page",
-					label: params.prompt,
+					label: params.prompt ?? params.objective,
 					working: "(analyzing...)",
 					ctx,
 					signal,
 					onUpdate,
 					spawn: {
-						task: `Here is the content of ${url}:\n\n${content}\n\n---\n\nAnswer this question: ${params.prompt}`,
+						task: `Here is the content of ${url}:\n\n${content}\n\n---\n\n${ask}`,
 						model: route.model,
 						thinkingLevel: route.thinking,
 						builtinTools: ["read"],

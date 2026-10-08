@@ -71,6 +71,7 @@ export function formatHeadTail<T>(
 export function headTailChars(
 	text: string,
 	maxChars: number = 64_000,
+	note?: string,
 ): { text: string; truncated: boolean; totalChars: number } {
 	const total = text.length;
 	if (total <= maxChars) {
@@ -83,7 +84,7 @@ export function headTailChars(
 	const truncated = total - maxChars;
 
 	return {
-		text: `${head}\n\n... [${truncated} characters truncated] ...\n\n${tail}`,
+		text: `${head}\n\n... [${truncated} characters truncated${note ? `; ${note}` : ""}] ...\n\n${tail}`,
 		truncated: true,
 		totalChars: total,
 	};
@@ -155,8 +156,11 @@ export class OutputBuffer {
 	 *
 	 * small output (<= head + tail): dedupes overlap, no truncation marker
 	 * large output: head + marker + tail
+	 *
+	 * `fullOutputPath` is asked only when lines are actually dropped; a path it
+	 * returns is named in the marker so the middle can still be read.
 	 */
-	format(): { text: string; truncatedLines: number } {
+	format(fullOutputPath?: () => string | undefined): { text: string; truncatedLines: number } {
 		// flush any remaining pending line
 		if (this.pendingLine) {
 			this.totalLines++;
@@ -164,10 +168,14 @@ export class OutputBuffer {
 			this.pendingLine = "";
 		}
 
-		return this.formatLines(0);
+		return this.formatLines(0, undefined, fullOutputPath);
 	}
 
-	private formatLines(extraLines: number, pendingLine?: string): { text: string; truncatedLines: number } {
+	private formatLines(
+		extraLines: number,
+		pendingLine?: string,
+		fullOutputPath?: () => string | undefined,
+	): { text: string; truncatedLines: number } {
 		const allLines = this.totalLines + extraLines;
 
 		// no truncation needed: output fits in head + tail combined
@@ -182,10 +190,11 @@ export class OutputBuffer {
 		// truncation: head + marker + tail
 		const truncated = allLines - this.head.length - this.tail.length;
 		const tail = pendingLine ? [...this.tail.slice(1), pendingLine] : this.tail;
+		const file = fullOutputPath?.();
 		const parts = [
 			...this.head,
 			"",
-			`... [${truncated} lines truncated] ...`,
+			file ? `... [${truncated} lines truncated; full output: ${file}] ...` : `... [${truncated} lines truncated] ...`,
 			"",
 			...tail,
 		];
@@ -197,32 +206,22 @@ export class OutputBuffer {
 	 * deduplicate overlapping head/tail for small outputs.
 	 *
 	 * when total lines <= maxHead + maxTail, the tail buffer
-	 * may contain lines already in head. we merge them.
+	 * may contain lines already in head. the overlap is positional: the tail
+	 * holds the last tail.length lines, so it starts at totalLines - tail.length.
+	 * matching it by content breaks on repeated lines (blank lines, `}`).
 	 */
 	private dedupe(totalLines: number): string[] {
-		// output smaller than head: head has everything
+		// copies: preview() appends its pending line to the result, which must
+		// never reach the buffers themselves.
 		if (totalLines <= this.maxHead) {
-			return this.head;
+			return [...this.head];
 		}
 
-		// output smaller than tail: tail has everything
 		if (totalLines <= this.maxTail) {
-			return this.tail;
+			return [...this.tail];
 		}
 
-		// overlap case: tail starts somewhere in head
-		// find where tail's first line appears in head
-		const tailStart = this.tail[0];
-		const overlapIdx = this.head.indexOf(tailStart);
-
-		if (overlapIdx === -1) {
-			// no overlap (shouldn't happen, but handle gracefully)
-			return [...this.head, ...this.tail];
-		}
-
-		// take head up to overlap, then all of tail
-		const headPart = this.head.slice(0, overlapIdx);
-		return [...headPart, ...this.tail];
+		return [...this.head.slice(0, totalLines - this.tail.length), ...this.tail];
 	}
 
 	/**

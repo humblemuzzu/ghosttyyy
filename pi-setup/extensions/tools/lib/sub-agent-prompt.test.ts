@@ -62,6 +62,7 @@ describe("buildSubAgentPrompt", () => {
 
 	test("says no other tool exists", () => {
 		expect(prompt).toMatch(/do not attempt to call any other tool/i);
+		expect(prompt).toContain("an `mcp__tools__` prefix (`mcp__tools__find`). It is the same tool.");
 	});
 
 	test("tells the child it has no parent context", () => {

@@ -156,6 +156,20 @@ function renderWindowTable(windows: WindowInfo[], heading: string): string {
 }
 
 /**
+ * the window list a person would expect: windows of regular (Dock) apps.
+ * agents, helpers and system overlays (WindowManager, AutoFill, loginwindow)
+ * are counted, not listed; `app` still matches them.
+ */
+export function renderOpenWindows(pool: WindowInfo[]): string {
+	const shown = pool.filter((w) => w.regularApp !== false);
+	const hidden = pool.length - shown.length;
+	const table = shown.length ? renderWindowTable(shown, `${shown.length} open windows:`) : "no app windows found.";
+	return hidden > 0
+		? `${table}\n(${hidden} window(s) of background/helper apps not listed; \`app\` still matches them)`
+		: table;
+}
+
+/**
  * What `resolveWindow` decided, so the caller can disclose a choice it made.
  *
  * Auto-picking silently was a real complaint from a test run: `app:"ghostty"`
@@ -231,7 +245,7 @@ export function resolveWindow(params: any, pool: WindowInfo[] = listWindows()): 
 		throw new CaptureError(
 			`no window with id ${params.window_id}. Window ids change when an app relaunches, ` +
 				`so re-read the list rather than reusing an old one.\n\n` +
-				renderWindowTable(pool, "open windows:"),
+				renderOpenWindows(pool),
 		);
 	}
 
@@ -244,7 +258,7 @@ export function resolveWindow(params: any, pool: WindowInfo[] = listWindows()): 
 		const advice = permissionAdvice();
 		throw new CaptureError(
 			`no window matches ${query}.\n\n` +
-				renderWindowTable(pool, "open windows:") +
+				renderOpenWindows(pool) +
 				(advice ? `\n\n${advice}` : ""),
 		);
 	}
@@ -442,9 +456,7 @@ export function createScreenshotTool(): ToolDefinition {
 				if (params.list) {
 					const windows = listWindows();
 					const advice = permissionAdvice();
-					const body = windows.length
-						? renderWindowTable(windows, `${windows.length} open windows:`)
-						: "no windows found.";
+					const body = renderOpenWindows(windows);
 					return {
 						content: [
 							{

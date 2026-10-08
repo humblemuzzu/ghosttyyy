@@ -661,11 +661,12 @@ const collapseWhitespace = (text: string) => text.replace(/\s+/g, " ").trim();
  * a bare failure costs a re-read of the whole file; a five-line window costs
  * nothing and is usually enough to fix the call on the next turn.
  */
-function nearestLinesHint(content: string, needle: string): string {
+function nearestLinesHint(content: string, needle: string, whitespaceCheck = true): string {
 	// this allocates two copies of the file, so it is skipped on very large
 	// ones: a helpful message must not become the reason a call falls over.
 	const AFFORDABLE = 4_000_000;
 	if (
+		whitespaceCheck &&
 		content.length < AFFORDABLE &&
 		collapseWhitespace(content).includes(collapseWhitespace(needle))
 	) {
@@ -677,7 +678,9 @@ function nearestLinesHint(content: string, needle: string): string {
 	let best = -1;
 	let bestScore = 0;
 	for (let index = 0; index < lines.length; index++) {
-		const score = similarity(wanted, lines[index]!.trim());
+		const line = lines[index]!.trim();
+		// the prefix score lets a short needle find its typo in a long line.
+		const score = Math.max(similarity(wanted, line), similarity(wanted, line.slice(0, wanted.length)));
 		if (score > bestScore) {
 			bestScore = score;
 			best = index;
@@ -692,6 +695,22 @@ function nearestLinesHint(content: string, needle: string): string {
 		.map((line, offset) => `  ${String(from + offset + 1).padStart(gutter)} | ${line}`)
 		.join("\n");
 	return `\n\nclosest match:\n${window}\n\n  you sent: ${JSON.stringify(wanted)}\n  file has: ${JSON.stringify(lines[best]!.trim())}`;
+}
+
+/** applyPatchChunks, with a near-miss hint added to a "failed to find" error. */
+function applyChunksWithHint(content: string, chunks: Parameters<typeof applyPatchChunks>[1], file: string): string {
+	try {
+		return applyPatchChunks(content, chunks, file);
+	} catch (error) {
+		const message = (error as Error).message;
+		const missing =
+			message.match(/^failed to find expected lines in [^\n]*:\n([\s\S]*)$/)?.[1] ??
+			message.match(/^failed to find context '([\s\S]*)' in /)?.[1];
+		if (missing === undefined) throw error;
+		// with several hunks, text can exist yet sit before an earlier hunk's
+		// match, so "whitespace differs" would be the wrong diagnosis.
+		throw new Error(message + nearestLinesHint(content, missing, chunks.length === 1));
+	}
 }
 
 /**
@@ -1068,8 +1087,9 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 			'  many files      { "ops": [ { "op": "write", "path": "a.ts", "content": "…" }, { "op": "edit", "path": "b.ts", "old_string": "…", "new_string": "…" } ] }',
 			'  patch envelope  { "input": "*** Begin Patch\\n*** Update File: f.ts\\n@@\\n-old\\n+new\\n*** End Patch" }',
 			"",
-			"old_string must appear exactly once in the file — include a little surrounding",
-			"text if it does not, or pass replace_all: true to change every occurrence.",
+			"old_string must match exactly one place in the file (exact text first, then a",
+			"whitespace-tolerant match) — include a little surrounding text if it matches",
+			"more than one, or pass replace_all: true to change every occurrence.",
 			"Never replace real code with a placeholder such as \"… rest unchanged\".",
 		].join("\n"),
 		promptSnippet: "Create, edit, delete or move files as one atomic batch",
@@ -1196,7 +1216,7 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 							const updated =
 								operation.chunks.length === 0
 									? current
-									: applyPatchChunks(current, operation.chunks, source);
+									: applyChunksWithHint(current, operation.chunks, source);
 							if (destination) {
 								// a move must not clobber an existing destination.
 								if (finalContents.get(destination) !== undefined) {

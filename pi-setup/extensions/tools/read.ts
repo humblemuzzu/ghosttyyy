@@ -184,7 +184,6 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 		label: "Read",
 		description:
 			"Read a file or list a directory from the file system. If the path is a directory, it returns a list of entries. If the file or directory doesn't exist, an error is returned.\n\n" +
-			`- The path parameter MUST be an absolute path.\n` +
 			`- By default, this tool returns the first ${limits.maxLines} lines. To read more, call it multiple times with different read_ranges.\n` +
 			"- Use the Grep tool to find specific content in large files or files with long lines.\n" +
 			"- If you are unsure of the correct file path, use the find tool to look up filenames by glob pattern.\n" +
@@ -195,7 +194,7 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 
 		parameters: Type.Object({
 			path: Type.String({
-				description: "The absolute path to the file or directory (MUST be absolute, not relative).",
+				description: "Path of the file or directory: absolute, relative to the working directory, or ~/...",
 			}),
 			read_range: Type.Optional(
 				Type.Array(Type.Number(), {

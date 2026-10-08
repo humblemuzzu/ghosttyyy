@@ -26,7 +26,7 @@ export function createLsTool(limits: ReadLimits): ToolDefinition {
 		parameters: Type.Object({
 			path: Type.Optional(
 				Type.String({
-					description: "The absolute path to the directory to list. Defaults to cwd.",
+					description: "Directory to list: absolute, relative to the working directory, or ~/... Defaults to cwd.",
 				}),
 			),
 		}),

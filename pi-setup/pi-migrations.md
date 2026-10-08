@@ -12,6 +12,41 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## pi-autoresearch removed; tool honesty pass (2026-10-08)
+
+- **pi-autoresearch deleted**, not just disabled: the git checkout under
+  `~/.pi/agent/git/github.com/davebcn87/` and `extensions/pi-autoresearch.json`
+  (live + repo) went to the trash. Its 3 skills had still been loadable through
+  `skill`, which walked every package dir on disk. It is now on the removed
+  list, and `verify-patches.sh` fails on any trace of it. Earlier entries in
+  this file that mention it are history.
+- **`skill` serves pi's resolved list** (`systemPromptOptions.skills`); it had
+  missed `~/.agents/skills/` and exposed `mcp-scripting`.
+- Full list of fixed tools, each pinned by a test: `format_file` (gitignored or
+  unparsable files reported as errors, home-dir prettier no longer used), bash
+  (codemode `structuredContent`, full-output spill, 50k-char cap, signal deaths
+  are errors), read-only bash (write forms were allowed: `sort -oX`, `sed '1wout'`,
+  `sed --expression`, `curl --remote-name-all`…; `git -C` refused),
+  `read_web_page` (middle of long pages dropped, `objective` was a no-op),
+  `grep` (`context`/`limit` ignored), `search_github` (file `path` matched
+  nothing), `commit_search` (`query` only filtered 50 commits; `offset` was a
+  page number), `list_repositories` (same `offset`), `screenshot` list (system
+  overlays), undo diff labels, output-buffer dedupe (dropped repeated lines).
+- **Found by the live re-test:** `find`/`grep` passed rg an absolute path, so
+  any glob containing `/` (the documented `src/**/*.ts`) matched nothing; rg
+  now runs from the search dir on `.`. And `OutputBuffer.preview()` pushed the
+  streaming partial line into the buffer itself, so a line split across chunks
+  came back duplicated in bash output; `dedupe()` returns copies now.
+- **Found in the restarted session:** `apply_patch` and `format_file` called
+  from a codemode script crashed with ENOENT. Nested calls get the id
+  `<parent>/<n>`, and the `/` turned the undo record path into a missing dir.
+  Records are now filed under the parent call (`ownerId` in file-tracker.ts), so
+  undo/redo treat a script's edits as one change: newest-first on undo,
+  oldest-first on redo. Envelope hunks that miss now carry the same
+  "closest match" hint as `old_string`.
+
+---
+
 ## Packages (2026-10-08) — pi-mcp-adapter 5.0.0 → 5.1.0, tools deps
 
 pi core 1.1.0 was already latest; every other loaded pi package was current.

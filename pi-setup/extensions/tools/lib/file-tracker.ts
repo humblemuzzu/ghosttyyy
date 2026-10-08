@@ -72,14 +72,27 @@ export interface FileChange {
 	 * written before this field existed fall back to the byte heuristic.
 	 */
 	movePartnerUri?: string;
+
+	/** write order within one tool call; breaks timestamp ties between a script's edits */
+	seq?: number;
 }
 
 function sessionDir(sessionId: string): string {
 	return path.join(FILE_CHANGES_DIR, sessionId);
 }
 
+/**
+ * the transcript tool call that owns a change. a call a codemode script makes
+ * gets the id `<parent id>/<n>`: it never appears in the transcript, so undo
+ * could not find it, and its `/` would make the record path a missing dir.
+ * its changes belong to the script's own call.
+ */
+function ownerId(toolCallId: string): string {
+	return toolCallId.split("/")[0]!;
+}
+
 function changePath(sessionId: string, toolCallId: string, changeId: string): string {
-	return path.join(sessionDir(sessionId), `${toolCallId}.${changeId}`);
+	return path.join(sessionDir(sessionId), `${ownerId(toolCallId)}.${changeId}`);
 }
 
 /** ensure the session's file-changes directory exists. */
@@ -90,14 +103,16 @@ function ensureDir(sessionId: string): void {
 	}
 }
 
+let seq = 0;
+
 /**
  * record a file change to disk. call after performing the edit.
  * the toolCallId comes from the execute() function's first argument.
  * returns the change ID (UUID) for the written record.
  *
- * one tool call can produce multiple changes (e.g., a delegate sub-agent
- * creating several files). each gets a unique UUID, stored as
- * {toolCallId}.{uuid}.
+ * one tool call can produce multiple changes (several files, or one file
+ * edited repeatedly by a codemode script). each gets a unique UUID, stored as
+ * {owner id}.{uuid}.
  */
 export function saveChange(
 	sessionId: string,
@@ -110,6 +125,7 @@ export function saveChange(
 		...change,
 		id,
 		reverted: false,
+		seq: seq++,
 	};
 	fs.writeFileSync(changePath(sessionId, toolCallId, id), JSON.stringify(record, null, 2), "utf-8");
 	return id;
@@ -140,7 +156,7 @@ export function loadChanges(sessionId: string, toolCallId: string): FileChange[]
 	const dir = sessionDir(sessionId);
 	if (!fs.existsSync(dir)) return [];
 
-	const prefix = `${toolCallId}.`;
+	const prefix = `${ownerId(toolCallId)}.`;
 	try {
 		return fs.readdirSync(dir)
 			.filter((f) => f.startsWith(prefix))
@@ -363,6 +379,25 @@ export function reapplyChange(
 	return change;
 }
 
+/** oldest write first. */
+export function byWriteOrder(changes: FileChange[]): FileChange[] {
+	return [...changes].sort((a, b) => a.timestamp - b.timestamp || (a.seq ?? 0) - (b.seq ?? 0));
+}
+
+/**
+ * the first and last record per file. one call can edit a file more than once
+ * (a codemode script): only the last `after` is on disk, and only the first
+ * `before` is what the file held when the call started.
+ */
+export function netPerFile(changes: FileChange[]): Map<string, { first: FileChange; last: FileChange }> {
+	const net = new Map<string, { first: FileChange; last: FileChange }>();
+	for (const change of byWriteOrder(changes)) {
+		const seen = net.get(change.uri);
+		net.set(change.uri, { first: seen?.first ?? change, last: change });
+	}
+	return net;
+}
+
 export function findLatestChange(
 	sessionId: string,
 	filePath: string,
@@ -377,7 +412,7 @@ export function findLatestChange(
 		// within a tool call, find the matching file (most recent by timestamp)
 		const match = changes
 			.filter((c) => !c.reverted && c.uri === uri)
-			.sort((a, b) => b.timestamp - a.timestamp)[0];
+			.sort((a, b) => b.timestamp - a.timestamp || (b.seq ?? 0) - (a.seq ?? 0))[0];
 		if (match) {
 			return { toolCallId, change: match };
 		}
@@ -417,8 +452,8 @@ export function simpleDiff(filePath: string, before: string, after: string): str
 			path.basename(filePath),
 			before,
 			after,
-			"original",
-			"modified",
+			undefined,
+			undefined,
 			{ context: 3 },
 		);
 		// strip the Index: and === lines that createPatch prepends —
@@ -433,8 +468,8 @@ export function simpleDiff(filePath: string, before: string, after: string): str
 	const afterLines = after.split("\n");
 
 	const lines: string[] = [
-		`--- ${path.basename(filePath)}\toriginal`,
-		`+++ ${path.basename(filePath)}\tmodified`,
+		`--- ${path.basename(filePath)}`,
+		`+++ ${path.basename(filePath)}`,
 	];
 
 	let i = 0;

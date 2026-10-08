@@ -1,0 +1,3 @@
+[test]
+# pi-sub-patches/grok.test.ts runs only beside the installed pi-sub-core (AGENTS.md, update workflow).
+root = "pi-setup/extensions"

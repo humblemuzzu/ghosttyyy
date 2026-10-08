@@ -17,6 +17,8 @@ import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import {
+	byWriteOrder,
+	netPerFile,
 	findLatestChange,
 	findMovePartner,
 	loadChanges,
@@ -87,7 +89,7 @@ export function createUndoEditTool(): ToolDefinition {
 		parameters: Type.Object({
 			path: Type.String({
 				description:
-					"The absolute path to the file whose last edit should be undone (must be absolute, not relative).",
+					"Path of the file whose last edit should be undone: absolute, relative to the working directory, or ~/...",
 			}),
 			scope: Type.Optional(
 				Type.Union([Type.Literal("call"), Type.Literal("file")], {
@@ -263,21 +265,22 @@ export function createUndoEditTool(): ToolDefinition {
 				 */
 				if ((params as any).scope !== "file") {
 					const siblings = loadChanges(sessionId, latest.toolCallId).filter((c) => !c.reverted);
-					const outside = outsideEdits(siblings);
+					const net = netPerFile(siblings);
+					const outside = outsideEdits([...net.values()].map((n) => n.last));
 					if (!force && outside.length > 0) return refuseDrift(outside);
-					const undone: string[] = [];
-					for (const change of siblings) {
+					const undone = new Set<string>();
+					for (const change of byWriteOrder(siblings).reverse()) {
 						if (revertChange(sessionId, latest.toolCallId, change.id)) {
-							undone.push(change.uri.replace(/^file:\/\//, ""));
+							undone.add(change.uri.replace(/^file:\/\//, ""));
 						}
 					}
-					if (undone.length > 0) {
-						const target = latest.change;
-						const diff = simpleDiff(path.basename(resolved), target.after, target.before);
-						const others = undone.filter((p) => p !== resolved);
+					if (undone.size > 0) {
+						const target = net.get(latest.change.uri)!;
+						const diff = simpleDiff(path.basename(resolved), target.last.after, target.first.before);
+						const others = [...undone].filter((p) => p !== resolved);
 						const note =
 							others.length > 0
-								? `\n\n(this was one change across ${undone.length} files — also restored: ${others
+								? `\n\n(this was one change across ${undone.size} files — also restored: ${others
 										.map((p) => path.basename(p))
 										.join(", ")})`
 								: "";
@@ -385,8 +388,7 @@ function findRedoCandidate(
 ): { toolCallId: string; change: FileChange } | null {
 	const uri = `file://${path.resolve(filePath)}`;
 	for (const toolCallId of activeToolCallIds) {
-		// one record per path per call, so the first match is the only match.
-		const match = loadChanges(sessionId, toolCallId).find((c) => c.reverted && c.uri === uri);
+		const match = byWriteOrder(loadChanges(sessionId, toolCallId)).find((c) => c.reverted && c.uri === uri);
 		if (match) return { toolCallId, change: match };
 	}
 	return null;
@@ -406,7 +408,7 @@ export function createRedoEditTool(): ToolDefinition {
 
 		parameters: Type.Object({
 			path: Type.String({
-				description: "The absolute path to the file whose undone change should be re-applied.",
+				description: "Path of the file whose undone change should be re-applied: absolute, relative, or ~/...",
 			}),
 			force: Type.Optional(
 				Type.Boolean({
@@ -473,7 +475,8 @@ export function createRedoEditTool(): ToolDefinition {
 					}
 				}
 
-				const siblings = loadChanges(sessionId, candidate.toolCallId).filter((c) => c.reverted);
+				const siblings = byWriteOrder(loadChanges(sessionId, candidate.toolCallId).filter((c) => c.reverted));
+				const net = netPerFile(siblings);
 
 				/*
 				 * THE SAME QUESTION UNDO ASKS, POINTED THE OTHER WAY.
@@ -489,7 +492,8 @@ export function createRedoEditTool(): ToolDefinition {
 				 * copy the file should be holding.
 				 */
 				const force = (params as any).force === true;
-				const outside = siblings
+				const outside = [...net.values()]
+					.map((n) => n.first)
 					.filter((c) => !matchesRecordedState(c, "before"))
 					.map((c) => path.basename(c.uri.replace(/^file:\/\//, "")));
 				if (!force && outside.length > 0) {
@@ -501,23 +505,20 @@ export function createRedoEditTool(): ToolDefinition {
 					);
 				}
 
-				const redone: string[] = [];
+				const redone = new Set<string>();
 				for (const change of siblings) {
 					if (reapplyChange(sessionId, candidate.toolCallId, change.id)) {
-						redone.push(change.uri.replace(/^file:\/\//, ""));
+						redone.add(change.uri.replace(/^file:\/\//, ""));
 					}
 				}
-				if (redone.length === 0) return fail(`nothing to redo for ${path.basename(resolved)}.`);
+				if (redone.size === 0) return fail(`nothing to redo for ${path.basename(resolved)}.`);
 
-				const diff = simpleDiff(
-					path.basename(resolved),
-					candidate.change.before,
-					candidate.change.after,
-				);
-				const others = redone.filter((p) => p !== resolved);
+				const target = net.get(candidate.change.uri)!;
+				const diff = simpleDiff(path.basename(resolved), target.first.before, target.last.after);
+				const others = [...redone].filter((p) => p !== resolved);
 				const note =
 					others.length > 0
-						? `\n\n(re-applied ${redone.length} files — also: ${others
+						? `\n\n(re-applied ${redone.size} files — also: ${others
 								.map((p) => path.basename(p))
 								.join(", ")})`
 						: "";

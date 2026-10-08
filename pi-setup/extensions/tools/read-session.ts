@@ -286,7 +286,7 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 			"Read and extract relevant content from a past pi session.\n\n" +
 			"Loads the full session tree (all branches, including abandoned paths), " +
 			"then uses AI to extract only the information relevant to your stated goal. " +
-			"The AI sees the complete tree to understand decision points and context.\n\n" +
+			`The AI sees the whole tree up to ${MAX_CHARS.toLocaleString("en-US")} characters; past that it gets the start and end with the middle cut.\n\n` +
 			"Use `search_sessions` first to find session IDs and branch leaf IDs.\n\n" +
 			"WHEN TO USE:\n" +
 			"- Extracting context from a previous session\n" +

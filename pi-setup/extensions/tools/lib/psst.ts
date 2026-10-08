@@ -203,22 +203,44 @@ export function scrubValues(text: string, values: string[]): string {
 }
 
 /**
- * comprehensive scrub: vault secrets (named) + all other sensitive values.
- * this is what the tool_result hook calls.
+ * comprehensive scrubber: vault secrets (named) + all other sensitive values.
+ * built once per tool result, so every string in it is scrubbed against the
+ * same secrets without re-reading them.
  */
-export async function scrubAll(text: string): Promise<string> {
-	let result = text;
-
-	// vault secrets — named redaction so agent knows which $NAME was involved
+export async function makeScrubber(): Promise<(text: string) => string> {
 	const vaultSecrets = await loadSecrets();
-	result = scrubOutput(result, vaultSecrets);
-
-	// auth.json + env vars — anonymous redaction
-	const allValues = await loadAllScrubValues();
-	// only scrub values NOT already handled by vault secrets (avoid double-processing)
 	const vaultValues = new Set(vaultSecrets.map((s) => s.value));
-	const extraValues = allValues.filter((v) => !vaultValues.has(v));
-	result = scrubValues(result, extraValues);
+	const extraValues = (await loadAllScrubValues()).filter((v) => !vaultValues.has(v));
+	return (text) => scrubValues(scrubOutput(text, vaultSecrets), extraValues);
+}
 
-	return result;
+function scrubJson(value: unknown, scrub: (text: string) => string): unknown {
+	if (typeof value === "string") return scrub(value);
+	if (Array.isArray(value)) return value.map((v) => scrubJson(v, scrub));
+	if (value !== null && typeof value === "object") {
+		return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, scrubJson(v, scrub)]));
+	}
+	return value;
+}
+
+type ToolResultLike = { content: Array<{ type: string; text?: string }>; structuredContent?: unknown };
+
+/** whether a result carries text or structuredContent that scrubbing could change. */
+export function hasScrubbableContent(result: ToolResultLike): boolean {
+	return result.structuredContent !== undefined || result.content.some((c) => c.type === "text" && c.text);
+}
+
+/**
+ * scrub a tool result's text and its structuredContent. pi drops
+ * structuredContent when a tool_result handler replaces only `content`, so
+ * both go back together. undefined when there is nothing to scrub.
+ */
+export function scrubToolResult<T extends ToolResultLike>(
+	result: T,
+	scrub: (text: string) => string,
+): Pick<T, "content" | "structuredContent"> | undefined {
+	if (!hasScrubbableContent(result)) return undefined;
+	const content = result.content.map((c) => (c.type === "text" && c.text ? { ...c, text: scrub(c.text) } : c));
+	if (result.structuredContent === undefined) return { content } as Pick<T, "content" | "structuredContent">;
+	return { content, structuredContent: scrubJson(result.structuredContent, scrub) } as Pick<T, "content" | "structuredContent">;
 }

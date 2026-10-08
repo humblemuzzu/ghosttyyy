@@ -399,7 +399,7 @@ export function createAgentMessageTool(
     name: "agent_message",
     label: "Agent Message",
     description:
-      "Send a durable message to another pi agent session. The message is queued while the target is inactive or busy, then delivered with explicit source-session provenance. Use search_sessions first when the target session id is unknown.",
+      "Send a durable message to another pi agent session. The message is queued while the target is inactive or busy, then delivered with explicit source-session provenance. Use search_sessions first when the target session id is unknown. Only main sessions can receive messages, not delegate/chad sub-agent sessions.",
     promptSnippet:
       "Queue a provenance-marked message for another pi agent session",
     parameters: AGENT_MESSAGE_PARAMETERS,

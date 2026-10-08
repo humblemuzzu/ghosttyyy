@@ -26,7 +26,7 @@ node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check   # exit 0 = 
 
 ## What's Inside
 
-### Extensions (15)
+### Extensions
 
 pi auto-discovers every `.ts` in `extensions/` — there is no "present but disabled" state; to
 disable one, delete it or move it out of `extensions/`. An extension can still ship its own
@@ -36,7 +36,7 @@ loader level turns one off.
 | Extension | What it does |
 |---|---|
 | `editor/` | Custom box-drawing bordered editor with labels (context %, cost, model, git branch), enlarged prompt bar, inline `[image #N]` clipboard-paste, and a cache line below the box (hit %, read/write totals, and a TTL countdown where the provider declares one) |
-| `tools/` | Full replacement tool suite — 29 tools. See below. |
+| `tools/` | Full replacement tool suite. See below. |
 | `system-prompt.ts` | Injects the full Amp system prompt with runtime template vars (parent sessions); a sub-agent instead gets a short generated prompt naming exactly its own `--tools` allowlist |
 | `mentions.ts` | `@mention` resolution (`@session`, `@commit`, `@handoff`) + agent directives (`@oracle`, `@finder`, `@codereview`, `@task` → `delegate`) |
 | `session-name.ts` | Auto-generates session names from the first message (Claude Haiku) |
@@ -51,7 +51,7 @@ loader level turns one off.
 | `theme-studio/` | `/studio`, `/theme`, `Ctrl+Shift+K` — live-preview a pi theme and the Ghostty theme/font/size; Esc reverts, Enter keeps |
 | `you-should-know/` | `/ysk` — a side agent on `deepseek-flash` that flags what you might have missed, and inlines what each sub-agent actually did as evidence. **Off until `/ysk on`**; ~0.1–0.3¢ per check |
 
-### Custom Tools (29)
+### Custom Tools
 
 The `tools/` extension replaces pi's built-ins and adds new tools:
 
@@ -61,29 +61,28 @@ mutex locking, secret scrubbing, permission rules, and sub-agent compact modes.
 it replaced `edit`/`write`, and pi's natives are hidden at session start.
 `format_file`, `skill`, `undo_edit` / `redo_edit` round out the replacements.
 
-**Dedicated sub-agents** (provider-aware auth via `pi-spawn`):
-- `finder` — Grok 4.6 high concept-based code search (read-only)
-- `oracle` — Grok 4.6 high technical advisor
-- `librarian` — Grok 4.6 high GitHub repo explorer
-- `code_review` — two-phase Grok 4.6 high review
-- `delegate` — full resumable sub-agent (Grok 4.6 high) for parallel independent work
-- `read_web_page` — web page reader + optional Q&A child
-- `read_session` / `search_sessions` — past-session reader / search
-- `screenshot`, `web_search` (Parallel AI), `agent_message`, `redo_edit`
+**Dedicated sub-agents** — each runs on the model and thinking level `agent-models.json` names
+for it; a call can pass `model` / `thinking` to override:
+- `finder` — concept-based code search (read-only)
+- `oracle` — technical advisor that returns a verdict
+- `chad` — read-only research agent that returns cited evidence
+- `librarian` — GitHub repo explorer
+- `code_review` — two-phase review
+- `delegate` — full resumable sub-agent for parallel independent work
+- `read_web_page` — static web page reader; `prompt` / `objective` spawn a Q&A / excerpt child
+- `read_session` — past-session reader
+
+**Other tools:** `search_sessions`, `screenshot`, `web_search` (Parallel AI), `agent_message`.
 
 **New GitHub tools** (GitHub API): `read_github`, `search_github`, `list_directory_github`,
 `glob_github`, `list_repositories`, `commit_search`, `diff`
 
-**Web search:** our self-contained Parallel AI `web_search` tool (the `pi-web-access` package
-was removed 2026-07-30 — its `web_search` was dead on every provider). Also adds `/psst*`
-secret-vault commands + a tool-output secret-scrub hook.
+Also adds `/psst*` secret-vault commands + a tool-output secret-scrub hook.
 
-### Agent Prompts (9)
+### Agent Prompts (`agents/`)
 
-`prompt.amp.system.md`, `prompt.harness-docs.pi.md`, `agent.amp.finder.md`, `agent.amp.oracle.md`,
-`agent.amp.librarian.md`, `prompt.amp.code-review-system.md`, `prompt.amp.code-review-report.md`,
-`prompt.amp.read-web-page.md`, `prompt.amp.handoff-extraction.md` (kept for reference; the handoff
-extension was removed).
+The parent system prompt (`prompt.amp.system.md`), the shared rules (`rules.amp.md`), the pi
+harness notes, and one prompt per sub-agent. `verify-patches.sh` checks each one is deployed.
 
 ### Claude Integration
 
@@ -93,30 +92,33 @@ custom bridge/provider needed.
 
 ```bash
 /login anthropic
-/model anthropic/claude-opus-5
+/model anthropic/claude-opus-5-5
 ```
 
 ### Providers / Models
 
+`enabledModels` in `settings.json` is what `/model` lists: the three Claude models (Max OAuth via
+pi-claude-code-use, default `claude-opus-5-5`), `deepseek/deepseek-flash` and
+`deepseek/deepseek-v4-pro` (`$DEEPSEEK_API_KEY`), and two openrouter models.
+
 | Provider | Access |
 |---|---|
-| `xai` (`grok-4.6`, `grok-4.5`) | Grok OAuth (`/login xai`) |
-| `anthropic` (default `claude-opus-5-5`; `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context natively) |
-| `deepseek` (`deepseek-flash` = V4.1 Flash) | `$DEEPSEEK_API_KEY`, 1M context, vision |
-| `openai-codex`, `kimi-coding` | pi built-in providers |
+| `anthropic` | Claude Max OAuth (`/login anthropic`) via pi-claude-code-use |
+| `deepseek` | `$DEEPSEEK_API_KEY` |
+| `openrouter`, `xai`, `openai-codex`, `kimi-coding` | `/login`; xai/codex/kimi models are in the catalog but not in `enabledModels` |
 | `llama-local` (`LFM2.5-2.6B`) | local llama.cpp router, managed via `/local` |
 
-### Themes (2)
-- **gruvbox** (active) — warm retro colors
-- **nightowl** — dark blue Night Owl
+### Themes (`themes/`)
+gruvbox (active), nightowl, catppuccin-mocha, black-metal.
 
-### Skills (12 config-level)
+### Skills
+Config-level (`config-skills/` → `~/.config/agents/skills/`):
 `chrome-cdp`, `dataforseo`, `design-port`, `dig`, `git`, `jev`, `review`, `tmux`
-4 external skills adapted for pi (author-prefixed):
+plus external skills adapted for pi (author-prefixed):
 `c-sqr` (cursor — strict quality review), `mat-design` / `mat-tdd` (matt pocock), `dm-antislop` (dmmulroy).
 Mnemonic: `c-` cursor, `mat-` matt, `dm-` dmmulroy.
-(`find-skills` + `userinterface-wiki` are pi-package-managed symlinks, auto-created on install — 14 total;
-3 `autoresearch-*` load only while pi-autoresearch is enabled.)
+`find-skills` and `userinterface-wiki` live in `~/.agents/skills/`; they are not part of this repo
+and `install.sh` does not create them.
 
 ### Settings
 - Default provider/model: `anthropic` / `claude-opus-5-5` (thinking high)
@@ -128,23 +130,24 @@ Mnemonic: `c-` cursor, `mat-` matt, `dm-` dmmulroy.
 - Blocks force push
 - Blocks `rm` (use `trash` instead)
 
-### Pi Packages (7, active)
-`pi-token-burden`, `@benvargas/pi-claude-code-use`, `@marckrenn/pi-sub-bar`,
-`pi-autoresearch`, `pi-tool-display` (config'd), `pi-codex-goal`, `pi-mcp-adapter`.
-See `AGENTS.md` → "Packages (npm)" for versions, purposes, and which are patched.
-(`pi-context`, `todos.ts`, `pi-web-access`, `pi-tasks`, `@tomooshi/condensed-milk-pi`,
-`@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`, `pi-ask` were removed — do not reinstall.)
+### Pi Packages
+`settings.json` `packages` is the list: `pi-token-burden`, `@benvargas/pi-claude-code-use`,
+`@marckrenn/pi-sub-bar`, `pi-tool-display` (config'd), `pi-codex-goal`, `pi-mcp-adapter`.
+See `AGENTS.md` → "Packages (npm)" for versions and patches, and "Removed — do not reinstall"
+for the packages that were taken out on purpose (`verify-patches.sh` fails if one comes back).
 
 ## Directory Structure
 
 ```
 pi-setup/
 ├── install.sh                  # One-command installer (deploys + re-applies patches)
+├── update-pi.sh                # The only supported way to update pi itself
 ├── settings.json               # Pi settings (provider: anthropic, model: claude-opus-5-5)
+├── agent-models.json           # Sub-agent model list + per-agent default model/thinking
 ├── keybindings.json            # Custom keybindings
 ├── models.json                 # Custom providers + context-window overrides
 ├── permissions.json            # Tool permission rules
-├── mcp.json                    # pi-mcp-adapter global MCP servers (astro, paper)
+├── mcp.json                    # pi-mcp-adapter global MCP servers
 ├── pi-sub-bar-settings.json    # sub-bar widget layout
 ├── pi-sub-core-settings.json   # sub-core provider/refresh config
 ├── verify-patches.sh           # Read-only audit of every patch/config
@@ -156,15 +159,16 @@ pi-setup/
 │   ├── deepseek-peak/          # /deepseek — peak/off-peak clock
 │   ├── guardrails/             # apply_patch comment gate
 │   ├── you-should-know/        # /ysk — side agent (off until asked)
-│   ├── tools/                  # 29 custom tools + shared lib/
+│   ├── tools/                  # custom tools + shared lib/ (tests run here: bun test)
 │   ├── pi-tool-display/        # config.json (all tool overrides false — required)
 │   ├── system-prompt.ts  mentions.ts  session-name.ts  session-breakdown.ts
 │   └── md-export.ts  notify.ts  local-model.ts
-├── agents/                     # 9 agent prompt markdown files
-├── themes/                     # gruvbox.json, nightowl.json
-├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 12 skills (→ ~/.config/agents/skills/)
+├── agents/                     # system prompt, rules, sub-agent prompts
+├── themes/                     # pi themes
+├── pi-skills/                  # pi-level skills (→ ~/.pi/agent/skills/); currently empty
+├── config-skills/              # config skills (→ ~/.config/agents/skills/)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
+├── pi-sub-patches/             # grok usage provider; manifest.txt maps files to destinations
 └── README.md                   # This file
 ```
 

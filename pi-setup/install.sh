@@ -15,18 +15,18 @@
 #   ~/.pi/agent/skills/         — pi-level skills
 #   ~/.pi/agent/settings.json   — settings (anthropic default, gruvbox theme, compaction on, etc.)
 #   ~/.pi/agent/keybindings.json
-#   ~/.pi/agent/models.json     — custom providers (llama-local, crof)
+#   ~/.pi/agent/models.json     — custom providers and model overrides
 #   ~/.pi/agent/agent-models.json — sub-agent model list + per-agent default model/thinking
 #   ~/.pi/agent/permissions.json
-#   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers (astro, paper)
+#   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
 #   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
-#   ~/.config/agents/skills/    — 12 skills (git, review, tmux, dig, jev, mat-tdd, etc.)
-#   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, tool-display, codex-goal, mcp-adapter
+#   ~/.config/agents/skills/    — config skills (pi-setup/config-skills/)
+#   pi packages                 — the `packages` array below, mirrored from settings.json
 #
 # NO global npm packages are installed. Every pi package lives in
 # ~/.pi/agent/npm/node_modules (installed by `pi install`), which is the ONLY
-# place pi loads them from. See the duplicate-copy cleanup note below.
+# place pi loads them from; a global copy is unloadable and ships an unpatched pi-tui.
 #
 # Safe: backs up existing files before overwriting.
 
@@ -93,25 +93,6 @@ info "Creating directories..."
 mkdir -p "$PI_AGENT"
 mkdir -p "$CONFIG_SKILLS"
 
-# ── Global npm packages: DELIBERATELY NONE (2026-08-14) ──
-# This block used to install pi-claude-bridge globally. It was removed because
-# it was BROKEN and because global installs are dead weight:
-#
-#   1. `npm list -g` / `npm install -g` resolve to whatever `npm root -g` points
-#      at — here the nvm root (~/.nvm/versions/node/<v>/lib/node_modules) — while
-#      the patch block below hardcoded /opt/homebrew/lib/node_modules. So the
-#      check always failed, the install went to one root, and the patch was
-#      applied to a copy in a DIFFERENT root. It had been silently wrong for
-#      months; nobody noticed because the bridge is inactive.
-#   2. pi loads `npm:` packages ONLY from ~/.pi/agent/npm/node_modules
-#      (`getManagedNpmInstallPath`, dist/core/package-manager.js:1710-1719). A
-#      globally installed pi package is unreachable — it is not "inactive", it
-#      is unloadable.
-#
-# 2026-08-14 cleanup removed ~3 GB of such copies from both global roots. Do not
-# reintroduce a global install here; it will not be loaded and it will bring an
-# UNPATCHED pi-tui copy back onto the machine (see the width-patch section).
-
 # ── Extensions ──
 info "Installing extensions..."
 sync_dir "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"
@@ -127,7 +108,7 @@ ok "Extensions installed"
 # ── Themes ──
 info "Installing themes..."
 sync_dir "$SCRIPT_DIR/themes" "$PI_AGENT/themes"
-ok "Themes installed (gruvbox, nightowl)"
+ok "Themes installed"
 
 # ── Agents (prompt files) ──
 info "Installing agent prompts..."
@@ -147,7 +128,7 @@ sync_dir "$SCRIPT_DIR/config-skills" "$CONFIG_SKILLS"
 if [ -f "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs" ]; then
     chmod +x "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs"
 fi
-ok "Config skills installed (24 skills)"
+ok "Config skills installed"
 
 # ── Settings ──
 info "Installing settings..."
@@ -160,7 +141,7 @@ if [ -f "$SCRIPT_DIR/models.json" ]; then
     info "Installing model overrides..."
     backup_if_exists "$PI_AGENT/models.json"
     cp "$SCRIPT_DIR/models.json" "$PI_AGENT/models.json"
-    ok "Custom providers installed (llama-local, crof)"
+    ok "Custom providers installed (models.json)"
 fi
 
 # ── Sub-agent models ──
@@ -187,7 +168,7 @@ if [ -f "$SCRIPT_DIR/mcp.json" ]; then
     mkdir -p "$HOME/.config/mcp"
     backup_if_exists "$HOME/.config/mcp/mcp.json"
     cp "$SCRIPT_DIR/mcp.json" "$HOME/.config/mcp/mcp.json"
-    ok "Global MCP config installed (astro @ 127.0.0.1:8089, paper @ 127.0.0.1:29979)"
+    ok "Global MCP config installed (~/.config/mcp/mcp.json)"
 fi
 if [ -f "$PI_AGENT/mcp.json" ]; then
     backup_if_exists "$PI_AGENT/mcp.json"
@@ -212,7 +193,7 @@ ok "Pi package configs installed (sub-bar, sub-core)"
 
 # ── Pi packages (npm, discovered by pi at runtime) ──
 info "Installing pi packages..."
-# Mirror of settings.json "packages" (source of truth). pi-claude-bridge removed.
+# Mirror of settings.json "packages"; never re-add one AGENTS.md lists as removed.
 packages=(
     "npm:pi-token-burden"
     "npm:@benvargas/pi-claude-code-use@2.2.1"
@@ -221,28 +202,15 @@ packages=(
     "npm:pi-codex-goal@0.6.0"
     "npm:pi-mcp-adapter@5.1.0"
 )
-# NOTE: pi-context, todos.ts, pi-web-access, pi-tasks and
-# @tomooshi/condensed-milk-pi were removed deliberately — do NOT re-add them
-# here. See AGENTS.md.
-# pi-web-access was still listed above until 2026-08-05, directly contradicting
-# this comment: any fresh `install.sh` run silently reinstalled the package the
-# rest of the setup assumes is gone, and its `web_search` collides with ours.
 for pkg in "${packages[@]}"; do
     info "  Installing $pkg..."
     pi install "$pkg" 2>/dev/null || warn "Failed to install $pkg (install manually with: pi install $pkg)"
 done
 ok "Pi packages installed (${#packages[@]} packages)"
 
-
-# ── condensed-milk: REMOVED 2026-07-30, nothing to patch ──
-# It needed three local patches and still silently corrupted data: its
-# git-mutations filter rewrote a REJECTED `git add -A` into "ok (1 files
-# staged)", and its context masking blanked older tool results at 30% context
-# use. Removed rather than carrying a fourth patch. Do not reinstall.
-
 # ── pi core patches (dist/) ──
 # These patch the pi CLI itself. resource-loader.js is CRITICAL — without it pi
-# refuses to start (our web_search override conflicts with pi-web-access).
+# refuses to start (our tools override built-in tool names).
 # session-selector.js + keybindings.js add session pinning (Ctrl+B in /resume).
 # pi-tui-utils.js is CRITICAL — conservative grapheme widths; without it heavy
 # output containing Indic matras/conjuncts or text-presentation emoji desyncs
@@ -265,8 +233,7 @@ if [ -d "$PI_CORE_DIST" ] && [ -d "$SCRIPT_DIR/pi-core-patches" ]; then
     else
         warn "apply-pi-tui-width-patch.mjs missing — TUI smears on exotic unicode without it"
     fi
-    # pi-server: 0.85.0 modular cli.js imports it but the npm package forgets
-    # the dependency — every command crashes without it.
+    # pi-server: some pi versions import it without declaring the dependency.
     if [ -f "$SCRIPT_DIR/pi-core-patches/install-pi-server.sh" ]; then
         bash "$SCRIPT_DIR/pi-core-patches/install-pi-server.sh" || \
             warn "pi-server install failed — pi may not start (see AGENTS.md)"
@@ -280,23 +247,17 @@ fi
 # Local addition of a Grok usage provider to pi-sub-core/shared/bar. Upstream
 # has no provider plugin hook — PROVIDER_FACTORIES is a hardcoded map — so the
 # only way in is patching the installed package copies after every `pi install`.
-# Stock copies are restored by `pi update --extensions`; re-run install.sh (or
-# the cp block below) after any sub-bar/sub-core update.
+# Re-run install.sh after any sub-bar/sub-core update (pi update restores stock).
 SUB_NM="$PI_AGENT/npm/node_modules/@marckrenn"
 SUB_PATCH="$SCRIPT_DIR/pi-sub-patches"
-if [ -d "$SUB_NM/pi-sub-core" ] && [ -d "$SUB_PATCH" ]; then
+if [ -d "$SUB_NM/pi-sub-core" ] && [ -f "$SUB_PATCH/manifest.txt" ]; then
     info "Applying pi-sub grok provider patch..."
-    [ -f "$SUB_PATCH/pi-sub-shared-index.ts" ] && \
-        cp "$SUB_PATCH/pi-sub-shared-index.ts" "$SUB_NM/pi-sub-shared/index.ts"
-    [ -f "$SUB_PATCH/registry.ts" ] && \
-        cp "$SUB_PATCH/registry.ts" "$SUB_NM/pi-sub-core/src/providers/registry.ts"
-    [ -f "$SUB_PATCH/grok.ts" ] && \
-        cp "$SUB_PATCH/grok.ts" "$SUB_NM/pi-sub-core/src/providers/impl/grok.ts"
-    [ -f "$SUB_PATCH/bar-metadata.ts" ] && \
-        cp "$SUB_PATCH/bar-metadata.ts" "$SUB_NM/pi-sub-bar/src/providers/metadata.ts"
-    [ -f "$SUB_PATCH/bar-settings-types.ts" ] && \
-        cp "$SUB_PATCH/bar-settings-types.ts" "$SUB_NM/pi-sub-bar/src/settings-types.ts"
-    ok "pi-sub grok provider patch applied"
+    sub_failed=0
+    while read -r src dest || [ -n "$src" ]; do
+        [ -z "$src" ] && continue
+        cp "$SUB_PATCH/$src" "$SUB_NM/$dest" || { warn "pi-sub patch: could not copy $src → $dest"; sub_failed=1; }
+    done < "$SUB_PATCH/manifest.txt"
+    if [ "$sub_failed" -eq 0 ]; then ok "pi-sub grok provider patch applied"; else warn "pi-sub grok provider patch INCOMPLETE — see above"; fi
 else
     warn "pi-sub packages or pi-sub-patches missing — grok usage provider not installed"
 fi
@@ -323,19 +284,19 @@ echo "│   ✅ All done!                          │"
 echo "│                                         │"
 echo "│   Installed:                            │"
 echo "│   • custom extensions                   │"
-echo "│   • 28 custom tools               │"
-echo "│   • 4 pi themes (gruvbox active)        │"
-echo "│   • 24 config skills                    │"
-echo "│   • 9 agent prompts                     │"
+echo "│   • custom tools                        │"
+echo "│   • pi themes (gruvbox active)          │"
+echo "│   • config skills                       │"
+echo "│   • agent prompts                       │"
 echo "│   • Settings, keybindings, permissions  │"
 echo "│   • Sub-bar, sub-core configs           │"
-echo "│   • 7 pi packages                       │"
+echo "│   • pi packages                         │"
 echo "│   • pi core patched (conflict + pins)   │"
 echo "│   • pi-tool-display configured          │"
 echo "│                                         │"
 echo "│   Claude Max (OAuth):                   │"
 echo "│   /login anthropic                      │"
-echo "│   /model anthropic/claude-opus-5      │"
+echo "│   /model anthropic/claude-opus-5-5      │"
 echo "│   (pi-claude-code-use patches payloads) │"
 echo "│                                         │"
 echo "│   Debug: PI_DEBUG=1 pi                  │"

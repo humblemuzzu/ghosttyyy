@@ -50,7 +50,7 @@ export function delegateAllowlist(): string[] {
 }
 
 /** parameter names models actually reach for, canonical first. */
-const PROMPT_PARAMS = ["prompt", "task", "instructions"] as const;
+const PROMPT_PARAMS = ["prompt", "task", "instructions", "query", "question"] as const;
 const DESCRIPTION_PARAMS = ["description", "title", "summary"] as const;
 
 export interface DelegateConfig {
@@ -88,7 +88,7 @@ export function createDelegateTool(config: DelegateConfig = {}): ToolDefinition 
 				description:
 					"The task for the sub-agent. It shares none of your context, so include the working " +
 					"directory, the goal, the files involved, and how to verify success. " +
-					"(Also accepted: task, query, question, description.)",
+					`(Also accepted: ${PROMPT_PARAMS.slice(1).join(", ")}.)`,
 			}),
 			description: Type.Optional(
 				Type.String({

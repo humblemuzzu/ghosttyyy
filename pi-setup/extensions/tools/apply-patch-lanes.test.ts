@@ -608,6 +608,23 @@ describe("batch lane", () => {
 // ---------------------------------------------------------------------------
 
 describe("envelope lane", () => {
+	test("a short typo'd old_string still finds its long line", async () => {
+		const name = fixture("export const add = (a: number, b: number) => a + b;\n");
+		const text = await refuse({ path: name, old_string: "export const ad = ", new_string: "x" });
+		expect(text).toContain("closest match:");
+		expect(text).toContain('file has: "export const add = (a: number, b: number) => a + b;"');
+	});
+
+	test("a hunk that matches nothing shows the closest line, like the edit lane does", async () => {
+		const name = fixture("export const size = 28;\nexport const other = 1;\n");
+		const text = await refuse({
+			input: `*** Begin Patch\n*** Update File: ${name}\n@@\n-export const size = 99;\n+export const size = 1;\n*** End Patch`,
+		});
+		expect(text).toContain("failed to find expected lines");
+		expect(text).toContain('you sent: "export const size = 99;"');
+		expect(text).toContain('file has: "export const size = 28;"');
+	});
+
 	test("still applies a canonical patch", async () => {
 		const name = fixture("old line\n");
 		const result = await call({
@@ -1404,6 +1421,45 @@ describe("undo and redo as one operation", () => {
 		undoTool.execute("undo-call", args, undefined, undefined, branchCtx(ids));
 	const runRedo = (ids: string[], args: unknown) =>
 		redoTool.execute("redo-call", args, undefined, undefined, branchCtx(ids));
+
+	test("undo and redo diffs read in the direction they act, with no before/after labels", async () => {
+		const f = fixture("old-line\n");
+		const id = `direction-${calls}`;
+		await tool.execute(id, { path: f, old_string: "old-line", new_string: "new-line" }, undefined, undefined, ctx);
+
+		const undone = (await runUndo([id], { path: path.join(DIR, f) })).content[0].text as string;
+		expect(undone).toContain("-new-line");
+		expect(undone).toContain("+old-line");
+		expect(undone).not.toMatch(/\t(original|modified)/);
+
+		const redone = (await runRedo([id], { path: path.join(DIR, f) })).content[0].text as string;
+		expect(redone).toContain("-old-line");
+		expect(redone).toContain("+new-line");
+		expect(redone).not.toMatch(/\t(original|modified)/);
+	});
+
+	test("edits a codemode script makes (ids `<parent>/<n>`) save, and undo/redo them as the script's one change", async () => {
+		const f = fixture("v1\n");
+		const other = fixture("o1\n");
+		const parent = `script-${calls}`;
+		const first = await tool.execute(`${parent}/1`, { path: f, old_string: "v1", new_string: "v2" }, undefined, undefined, ctx);
+		expect(first.isError).toBeFalsy();
+		await tool.execute(`${parent}/2`, { path: f, old_string: "v2", new_string: "v3" }, undefined, undefined, ctx);
+		await tool.execute(`${parent}/3`, { path: other, old_string: "o1", new_string: "o2" }, undefined, undefined, ctx);
+		expect(read(f)).toBe("v3\n");
+
+		const undone = await runUndo([parent], { path: path.join(DIR, f) });
+		expect(undone.isError).toBeFalsy();
+		expect(read(f)).toBe("v1\n");
+		expect(read(other)).toBe("o1\n");
+		expect(undone.content[0].text).toContain("-v3");
+		expect(undone.content[0].text).toContain("+v1");
+
+		const redone = await runRedo([parent], { path: path.join(DIR, f) });
+		expect(redone.isError).toBeFalsy();
+		expect(read(f)).toBe("v3\n");
+		expect(read(other)).toBe("o2\n");
+	});
 
 	test("one undo reverts the WHOLE batch, not one file of it", async () => {
 		// grok-4.5's main daily complaint: a 7-file batch needed 7 undos.

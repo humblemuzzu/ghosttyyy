@@ -117,9 +117,8 @@ node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs --check   # audit
 
 cp pi-setup/extensions/pi-tool-display/config.json ~/.pi/agent/extensions/pi-tool-display/config.json
 
-# grok provider: 5 files from pi-setup/pi-sub-patches/ into
-# ~/.pi/agent/npm/node_modules/@marckrenn/{pi-sub-shared,pi-sub-core,pi-sub-bar}
-# — exact destinations are in install.sh
+# grok provider: pi-sub-patches/manifest.txt maps each file to its destination
+while read -r s d; do cp "pi-setup/pi-sub-patches/$s" ~/.pi/agent/npm/node_modules/@marckrenn/"$d"; done < pi-setup/pi-sub-patches/manifest.txt
 node pi-setup/pi-sub-patches/apply-sub-core-stale-guard.mjs          # idempotent; --check audits
 ```
 
@@ -160,7 +159,6 @@ skills do not contain `mcp-scripting`. pi's built-in `mcp` extension is
 | `pi-tool-display` | 0.5.0 | thinking labels, user msg box | **config** |
 | `pi-codex-goal` | 0.6.0 (pinned) | `/goal` | no |
 | `pi-mcp-adapter` | 5.1.0 (pinned) | one `mcp` proxy tool, lazy servers | **config** |
-| `pi-autoresearch` | 1.8.1 | experiment loop (git install) | **disabled** |
 
 **Pinned versions** live in `settings.json` and `install.sh`'s package list;
 change both. To move a pin: edit the source in both, then
@@ -170,19 +168,15 @@ without installing), then re-check the settings entry kept its shape.
 `warnings.anthropicExtraUsage: false` silences pi's Max-OAuth extra-usage
 banner; it is UI, not a billing signal.
 
-**`pi-autoresearch` stays disabled.** Its `promptGuidelines` appear and vanish
-mid-session, and conditional text in the system prompt re-writes the whole
-prompt cache each time it flips. To re-enable, add it back to `packages` in
-settings.json and install.sh.
-
 ### Removed — do not reinstall
 
 `pi-context`, `todos.ts`, `pi-web-access`, `pi-tasks` (array params arrived
 JSON-stringified), `@tomooshi/condensed-milk-pi` (**reported failed git
-commands as successes**; `verify-patches.sh` fails if a copy reappears),
-`claude-agent-sdk-pi`, `@sting8k/pi-vcc`, `pi-computer-use`, `pi-gpt-config`,
-`pi-ask`, `pi-grok-cli`, `pi-claude-bridge`, `lsp-pi`, `pi-powerline-footer`,
-`pi-anycopy`.
+commands as successes**), `claude-agent-sdk-pi`, `@sting8k/pi-vcc`,
+`pi-computer-use`, `pi-gpt-config`, `pi-ask`, `pi-grok-cli`, `pi-claude-bridge`,
+`lsp-pi`, `pi-powerline-footer`, `pi-anycopy`, `pi-autoresearch` (its
+`promptGuidelines` flip mid-session, re-writing the prompt cache).
+`verify-patches.sh` `REMOVED_PKGS` must match this list; it fails on any trace.
 
 ### One install, no duplicates
 
@@ -216,7 +210,7 @@ load twice. Lazy: nothing connects until a tool is called.
 | `chrome-devtools` | **stdio**, pinned `chrome-devtools-mcp@1.7.0`: perf traces + Insights, Lighthouse, network, console, heap, Puppeteer |
 | `astro` | `127.0.0.1:8089/mcp`, `auth: false`; runs inside the Astro Mac app (Settings → MCP Server) |
 | `paper` | `127.0.0.1:29979/mcp`, `auth: false`; inside Paper Desktop, **read+write** on the open file |
-| 16 × `cloudflare*` | remote HTTP, `protocolVersion: "auto"`. See `pi-setup/2026-08-13-cloudflare-mcp.md` |
+| `cloudflare*` | remote HTTP, `protocolVersion: "auto"`. See `pi-setup/2026-08-13-cloudflare-mcp.md` |
 
 **chrome-devtools flags are load-bearing.** `--isolated` (the default profile
 is persistent, single-browser and readable by the agent),
@@ -236,7 +230,7 @@ row; `collapsedResultLines` (1–3) sets collapsed height.
 
 ---
 
-## Extensions (15 from this repo, in `extensions/`)
+## Extensions (`extensions/`)
 
 pi auto-discovers every `.ts` here — there is **no** disabled state; delete or
 move out to disable. From a subdirectory pi loads **only `index.ts`**, so tests
@@ -259,7 +253,7 @@ installed by herdr, not from this repo; leave it.
 | `local-model.ts` | `/local` llama.cpp router; bare system prompt for `llama-local` and `llama.cpp` |
 | `guardrails/` | comment gate on `apply_patch` |
 | `you-should-know/` | `/ysk` side agent on deepseek-flash. **Off until `/ysk on`**; costs per check |
-| `tools/` | 29 custom tools |
+| `tools/` | custom tools |
 
 ### guardrails — the comment gate, and where the rules live
 
@@ -295,10 +289,9 @@ Edit the rules in that .md, never in an extension. **`COMMENTS` in
 
 ---
 
-## Custom tools (29)
+## Custom tools
 
-29 = 28 `pi.registerTool` call sites + `agent_message`. `web_search` and
-`agent_message` can be disabled in ext-config; both default on.
+`web_search` and `agent_message` can be disabled in ext-config; both default on.
 
 `codemode` is a pi built-in, enabled by `defaultTools: ["+codemode"]` (a list
 of only `+name`/`-name` changes the inherited selection; `settings.md`, `cli.md`
@@ -310,7 +303,7 @@ separate (`read_github` … `diff`); **there is no tool named `github`**.
 
 ### Sub-agents
 
-- **One spawn path.** All 8 spawning tools (chad, delegate, oracle, finder,
+- **One spawn path.** All spawning tools (chad, delegate, oracle, finder,
   librarian, code_review, read_session, read_web_page with `prompt`) build their
   task and `--tools` list, then call `lib/run-sub-agent.ts` → `lib/pi-spawn.ts`.
   Progress, error mapping and the result footer (`model: <id> · <level>`,
@@ -329,12 +322,12 @@ separate (`read_github` … `diff`); **there is no tool named `github`**.
 ### chad — read-only
 
 `readOnlyBash: true` sets `PI_BASH_READ_ONLY=1`; `lib/read-only-bash.ts` is an
-**allowlist** that fails closed and names what it refused. **A command name is
-not a capability**: `WRITE_FLAGS` / `POSITIONAL_OUTPUT` catch write/exec flags
-(`sort -o`, `yq -i`, `rg --pre`, `fd -x`, `sed` `w`/`e`, `git reflog delete` …),
-and `awk` is removed outright. Anything added must be checked for output/exec
-flags. Command substitution is live inside double quotes, inert inside single.
-A guardrail on our own agent, not a sandbox.
+**allowlist** of command names (fails closed) plus a **denylist** of write/exec
+flags, `WRITE_FLAGS` / `POSITIONAL_OUTPUT`, matched as `-oFILE`, `-so`, and `--out`
+(only for `GETOPT_LONG_ABBREVIATES`); sed scripts are parsed command by command
+(`w`, `s///w`, `e`); `awk` is out. git `-c`/`--config-env`/`--exec-path=`
+are refused (config names commands to run). Check anything added for
+output/exec flags. A guardrail, not a sandbox.
 
 `oracle` returns a **verdict** and has unrestricted bash; `chad` returns
 **evidence** and can write nothing. Finding out → chads; deciding → oracle.
@@ -384,6 +377,10 @@ Overrides: `PI_BASH_MAX_TIMEOUT_SEC`, `PI_BASH_IDLE_KILL_SEC` (0 disables),
   with no `tool_result`, which is a provider 400 on replay.
 - 900s sits above pi's own HTTP idle (300s) + retry; re-check those before
   shrinking it.
+- **bash keeps pi's codemode contract**: `structuredContent` on every exit code
+  (a script's `grep` miss is data, not a throw); timeout/idle/abort/signal stay
+  errors. The `tool_result` scrub hook must return `structuredContent` too —
+  `content` alone makes pi drop it.
 
 ### screenshot / vision budget
 
@@ -438,9 +435,9 @@ If it returns: `apply-pi-tui-width-patch.mjs --check` first, then
 ## Sub-agent models
 
 **`pi-setup/agent-models.json` is the only place a sub-agent model is named.**
-`models` maps a short name to a `provider/model` id; `agents` gives each of the
-8 spawning tools a default `model` + `thinking`. Changing a default is a
-one-line edit there, deployed by `install.sh`, read at session start.
+`models` maps a short name to a `provider/model` id; `agents` gives each
+spawning tool a default `model` + `thinking`. Changing a default is a one-line
+edit there, deployed by `install.sh`, read at session start.
 
 - Every spawning tool takes optional `model` (enum of the names) and `thinking`
   (pi's 7 levels; "med" etc. accepted). `lib/agent-models.ts` resolves them;
@@ -481,17 +478,15 @@ real TUI); `toLocaleString()` follows the en-IN system locale — always pass
 
 ## Skills
 
-12 in `~/.config/agents/skills/` (source: `pi-setup/config-skills/`) plus
-`find-skills` and `userinterface-wiki` in `~/.agents/skills/`. `pi-skills/` in
-the repo is empty. `mcp-scripting` is deliberately suppressed. A skill's
-`description` is sent on every request — keep it to what decides loading.
+`~/.config/agents/skills/` (source: `pi-setup/config-skills/`) plus
+`~/.agents/skills/` (not from this repo). A skill's `description` is sent on
+every request — keep it to what decides loading. **The `skill` tool serves
+exactly pi's resolved skills** (`systemPromptOptions.skills`) with no discovery
+of its own, so a package's `skills: []` hides its skills from both.
 
 Ports with author prefixes — **`c-` cursor, `mat-` matt pocock, `dm-`
 dmmulroy** — had Claude-Code/Cursor machinery mapped to pi tools or cut; every
 subagent they spawn is read-only.
-
-`skill.ts` also discovers package skills (`~/.pi/agent/npm/node_modules/<pkg>/skills/`,
-`~/.pi/agent/git/.../skills/`); user/config skills win on name collision.
 
 ---
 
@@ -529,6 +524,8 @@ injected in the `context` hook telling the model to call that tool
    providers are `anthropic copilot gemini antigravity codex kiro zai` + our
    `grok`; there is **no `kimi`, no `crofai`** — a provider with no factory
    breaks usage refresh only at refresh time, so boot looks clean.
+   `pi-sub-patches/grok.test.ts` runs only beside `impl/grok.ts` in the
+   installed pi-sub-core: copy it there, `bun test` it, trash the copy.
 6. **pi-tool-display** → verify `config.json` still exists. The rest are
    unpatched; check for new tool/skill name collisions.
 7. **tools extension deps** (`extensions/tools/package.json`) → `npm outdated`

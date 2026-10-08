@@ -6,12 +6,32 @@ import {
 	createScreenshotTool,
 	displayedSibling,
 	normalizeRegion,
+	renderOpenWindows,
 	resolveWindow,
 	tabRescueAdvice,
 } from "./screenshot";
 import { evaluatePermission, type PermissionRule } from "./lib/permissions";
 
 const tool = createScreenshotTool() as any;
+
+describe("the window list shows app windows and counts the rest", () => {
+	const w = (id: number, app: string, regularApp: boolean): WindowInfo => ({
+		id, app, title: "", layer: 0, onScreen: false, x: 0, y: 0, width: 500, height: 500, regularApp,
+	});
+	const pool = [w(1, "Ghostty", true), w(2, "WindowManager", false), w(3, "WindowManager", false), w(4, "Raycast", false)];
+
+	test("helper and overlay windows are counted, not listed", () => {
+		const text = renderOpenWindows(pool);
+		expect(text).toStartWith("1 open windows:");
+		expect(text).toContain("Ghostty");
+		expect(text).not.toContain("WindowManager");
+		expect(text).toContain("(3 window(s) of background/helper apps not listed; `app` still matches them)");
+	});
+
+	test("matching by app still reaches a hidden helper app's window", () => {
+		expect(resolveWindow({ app: "raycast" }, pool).window.id).toBe(4);
+	});
+});
 
 describe("normalizeRegion tolerates what models actually send", () => {
 	const expected = { x: 10, y: 20, width: 300, height: 400 };

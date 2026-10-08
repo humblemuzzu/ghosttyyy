@@ -472,6 +472,175 @@ describe("git: read subcommands only", () => {
 	});
 });
 
+describe("git global options are parsed, not mistaken for the subcommand", () => {
+	const allowed = [
+		"git -C . log -1",
+		"git -C /some/repo status --short",
+		"git -C .. stash list",
+		"git --git-dir=.git log --oneline",
+		"git --git-dir .git --work-tree . diff --stat",
+		"git --no-pager log -5",
+		"git -P show HEAD",
+		"git -C . --no-pager blame -L 1,5 f.ts",
+	];
+	for (const cmd of allowed) {
+		test(`allows ${cmd}`, () => expect(allows(cmd)).toBe(true));
+	}
+
+	const refused = [
+		// config names commands git runs: fsmonitor, pager, aliases
+		"git -c core.fsmonitor=evil status",
+		"git -c core.pager=evil log",
+		"git -c alias.x=!evil x",
+		"git --config-env=core.pager=EVIL log",
+		"git --exec-path=/tmp/evil status",
+		"git --unknown-global log",
+		"git -C . commit -m x",
+		"git -C . stash",
+		"git -C",
+	];
+	for (const cmd of refused) {
+		test(`refuses ${cmd}`, () => expect(refuses(cmd)).toBe(true));
+	}
+
+	test("the refusal names the real subcommand or option, never the -C path", () => {
+		expect(evaluateReadOnlyCommand("git -C . commit -m x").reason).toBe("`git commit` can modify the repository");
+		expect(evaluateReadOnlyCommand("git -c core.pager=x log").reason).toContain("git global option `-c`");
+	});
+
+	test("a mutating word inside the -C path is not mistaken for a mutation", () => {
+		expect(allows("git -C ./delete log -1")).toBe(true);
+	});
+});
+
+describe("write flags are matched in every spelling getopt accepts", () => {
+	const refused = [
+		"sort -oout.txt in.txt",
+		"sort -o out.txt in.txt",
+		"sort -ro out.txt in.txt",
+		"sort --output=out.txt in.txt",
+		"sort --out=out.txt in.txt",
+		"sort --o=out.txt in.txt",
+		"curl -sSo page.html https://example.com",
+		"curl -oX https://example.com",
+		"curl -sd 'a=1' https://example.com",
+		"base64 -oout.b64 -i in",
+		"tree -ofile.txt",
+		"fd -xrm",
+		"rg --pre=evil x",
+		"yq -i '.a=1' f.yaml",
+	];
+	for (const cmd of refused) {
+		test(`refuses ${cmd}`, () => expect(refuses(cmd)).toBe(true));
+	}
+
+	const allowed = [
+		"sort -rn f",
+		"sort -k2,2n f",
+		"sort -u -t, -k1 f",
+		"curl -sSL https://example.com",
+		"curl -fsSL https://example.com",
+		"rg --pretty x",
+		"rg --pcre2 x",
+		"rg --hidden x",
+		"fd -H -e ts",
+	];
+	for (const cmd of allowed) {
+		test(`allows ${cmd}`, () => expect(allows(cmd)).toBe(true));
+	}
+});
+
+describe("sed scripts are found wherever they are written", () => {
+	const refused = [
+		"sed --expression='1w out' f",
+		"sed --expression '1w out' f",
+		"sed -e '1w out' f",
+		"sed -e'1w out' f",
+		"sed -ne '1w out' f",
+		"sed -n -e p -e '1w out' f",
+		"sed -f script.sed f",
+		"sed -nf script.sed f",
+		"sed --file=script.sed f",
+	];
+	for (const cmd of refused) {
+		test(`refuses ${cmd}`, () => expect(refuses(cmd)).toBe(true));
+	}
+
+	const allowed = ["sed -n '1,5p' f", "sed -e 's/a/b/' f", "sed -E 's/(a)/\\1/' f", "sed --expression='s/a/b/' f"];
+	for (const cmd of allowed) {
+		test(`allows ${cmd}`, () => expect(allows(cmd)).toBe(true));
+	}
+});
+
+describe("sed scripts are parsed command by command", () => {
+	const refused = [
+		"sed -n 'wout' in",
+		"sed '1wout' in",
+		"sed 's/a/b/wout' in",
+		"sed 's|a|b|w out' in",
+		"sed -n '/re/w out' in",
+		"sed -n '/a/,/b/wout' in",
+		"sed -n '1!wout' in",
+		"sed -n 'p;wout' in",
+		"sed '{wout}' in",
+		"sed 's/a/b/gw out' in",
+		"sed 'y/ab/xy/;wout' in",
+		"sed 's/a/b/e' in",
+		"sed '1e date' in",
+	];
+	for (const cmd of refused) {
+		test(`refuses ${cmd}`, () => expect(refuses(cmd)).toBe(true));
+	}
+
+	const allowed = [
+		"sed 's/a w b/x/' in",
+		"sed 's/x/wout/' in",
+		"sed -n '/write/p' in",
+		"sed 's/\\/w/x/' in",
+		"sed -n p words.txt",
+		"sed -e p write.log",
+		"sed 'y/w/x/' in",
+	];
+	for (const cmd of allowed) {
+		test(`allows ${cmd}`, () => expect(allows(cmd)).toBe(true));
+	}
+});
+
+describe("long-option abbreviations count only where the command accepts them", () => {
+	test("sort and base64 parse with getopt_long, so a prefix is the option", () => {
+		expect(refuses("sort --out=x in")).toBe(true);
+		expect(refuses("base64 --out=x -i in")).toBe(true);
+	});
+
+	test("curl takes no abbreviations: --cookie is not --cookie-jar", () => {
+		expect(allows("curl --cookie a=b https://example.com")).toBe(true);
+	});
+
+	test("curl's other file-writing and body-sending options are refused", () => {
+		for (const flag of ["--remote-name-all", "--json '{}'", "--libcurl x.c", "--stderr e.txt", "--etag-save e"]) {
+			expect(refuses(`curl ${flag} https://example.com`)).toBe(true);
+		}
+	});
+});
+
+describe("git info flags need no subcommand", () => {
+	for (const cmd of ["git --version", "git -v", "git --help"]) {
+		test(`allows ${cmd}`, () => expect(allows(cmd)).toBe(true));
+	}
+});
+
+describe("positional output counts operands the way each command parses flags", () => {
+	test("uniq's getopt bundle ending in a value flag consumes the value", () => {
+		expect(allows("uniq -cf 2 in.txt")).toBe(true);
+		expect(refuses("uniq -cf 2 in.txt out.txt")).toBe(true);
+	});
+
+	test("xxd's -ps is one option, so it cannot hide an output operand", () => {
+		expect(allows("xxd -ps in.bin")).toBe(true);
+		expect(refuses("xxd -ps in.bin out.txt")).toBe(true);
+	});
+});
+
 describe("curl fetches but does not write or mutate", () => {
 	test("a plain fetch is allowed", () => {
 		expect(allows("curl -s https://example.com")).toBe(true);

@@ -133,12 +133,14 @@ ElementsDatasetStore uses QueryResult.datasetId
 
 ## appendices
 
-- [datasetNames-extraction-points.md](./datasetNames-extraction-points.md) — complete list of extraction points
-- [fieldsMetaMap-investigation.md](./fieldsMetaMap-investigation.md) — field metadata flow and fallback logic
-- [dashboard-join-limitation.md](./dashboard-join-limitation.md) — dashboard query submission analysis
-- [url-params-dataset.md](./url-params-dataset.md) — complete URL parameter mapping
-- [knowledge-gaps-resolved.md](./knowledge-gaps-resolved.md) — questions answered by igor
-- [component-files-activeDataset.md](./component-files-activeDataset.md) — 39 component files referencing `activeDataset`
+_The original investigation's appendix files are not bundled with this skill; the list shows the shape a report's appendices take._
+
+- `datasetNames-extraction-points.md` — complete list of extraction points
+- `fieldsMetaMap-investigation.md` — field metadata flow and fallback logic
+- `dashboard-join-limitation.md` — dashboard query submission analysis
+- `url-params-dataset.md` — complete URL parameter mapping
+- `knowledge-gaps-resolved.md` — questions answered by igor
+- `component-files-activeDataset.md` — 39 component files referencing `activeDataset`
 
 ---
 

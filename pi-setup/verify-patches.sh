@@ -6,6 +6,7 @@
 #
 # Exit 0 = everything in place. Exit 1 = something needs re-applying
 # (run install.sh, or the specific fix printed next to each FAIL).
+# Fix commands assume the repo root as cwd.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PI_DIST="/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist"
@@ -16,10 +17,9 @@ pass() { printf '\033[32mPASS\033[0m  %s\n' "$1"; }
 fail() { printf '\033[31mFAIL\033[0m  %s\n    fix: %s\n' "$1" "$2"; FAIL=1; }
 
 # ── pi entrypoint: modular CLI, not the bundled runtime ──
-# The npm package's bin is dist/bundle/cli.js, which inlines its own copies of
-# resource-loader, keybindings, session-selector and pi-tui. The bundle never
-# loads the on-disk files the checks below verify, so a bundle switch would
-# silently disable every core patch while this script still reports PASS.
+# dist/bundle/cli.js inlines its own resource-loader, keybindings,
+# session-selector and pi-tui, so under the bundle every core patch below is
+# inert while its check still passes.
 PI_BIN_TARGET="$(readlink "$(command -v pi)" 2>/dev/null || command -v pi)"
 if [[ "$PI_BIN_TARGET" != *"dist/bundle/cli.js" ]]; then
     pass "pi entrypoint: modular CLI (dist/cli.js — patches load)"
@@ -43,22 +43,19 @@ if grep -q "LOCAL PATCH" "$PI_DIST/modes/interactive/components/session-selector
     pass "pi core: session pinning (Ctrl+B in /resume)"
 else
     fail "pi core: session pinning" \
-         "cp pi-setup/pi-core-patches/{session-selector.js,keybindings.js} into dist (see AGENTS.md)"
+         "cp pi-setup/pi-core-patches/session-selector.js $PI_DIST/modes/interactive/components/session-selector.js && cp pi-setup/pi-core-patches/keybindings.js $PI_DIST/core/keybindings.js"
 fi
 
-# ── pi core: compaction must be STOCK (0.84.4 fixed the toolChoice bug) ──
-# 0.84.3 sent toolChoice:"none" on every summarization request, which xAI/OpenAI
-# reject with a 400 when no tools are in the context — /compact died. Upstream
-# 0.84.4 removed toolChoice entirely and added getSummarizationFailure. The old
-# local patch (pi-setup/pi-core-patches/compaction.js) is RETIRED: re-applying
-# it would wipe the upstream fix. Do NOT copy a stored file over this one.
+# ── pi core: compaction must be STOCK ──
+# pi-core-patches/compaction.js is retired; copying it would undo upstream's
+# toolChoice fix and break /compact on xAI/OpenAI.
 if [ -f "$PI_DIST/core/compaction/compaction.js" ] && \
    ! grep -q "toolChoice" "$PI_DIST/core/compaction/compaction.js" && \
    grep -q "getSummarizationFailure" "$PI_DIST/core/compaction/compaction.js"; then
-    pass "pi core: compaction is stock (upstream toolChoice fix — /compact OK)"
+    pass "pi core: compaction is stock (/compact OK)"
 else
-    fail "pi core: compaction drifted — stock since 0.84.4 has no toolChoice and defines getSummarizationFailure" \
-         "do not copy pi-setup/pi-core-patches/compaction.js (retired). restore stock compaction.js from the installed pi tarball"
+    fail "pi core: compaction drifted — stock has no toolChoice and defines getSummarizationFailure" \
+         "reinstall pi with: bash pi-setup/update-pi.sh <current version>  # never copy pi-core-patches/compaction.js"
 fi
 
 # ── pi-tui: conservative widths in ALL copies (TUI smears without it) ──
@@ -69,7 +66,7 @@ else
          "node pi-setup/pi-core-patches/apply-pi-tui-width-patch.mjs"
 fi
 
-# ── pi-server: 0.85.0 modular cli.js imports it but upstream forgot the dep ──
+# ── pi-server: some pi versions import it without declaring the dependency ──
 PI_PKG="$(dirname "$PI_DIST")"
 if ! grep -q "@earendil-works/pi-server" "$PI_DIST/experimental/server.js" 2>/dev/null; then
     pass "pi core: pi-server not needed (not imported by this pi)"
@@ -80,31 +77,58 @@ else
          "bash pi-setup/pi-core-patches/install-pi-server.sh"
 fi
 
-# ── condensed-milk: REMOVED 2026-07-30 ──
-# Uninstalled deliberately. It required three local patches (\$-prefix strip, cmd
-# param support, and a guard against compressing failed calls) and still produced
-# silent data-integrity bugs: its git-mutations filter rewrote a REJECTED
-# `git add -A` into "ok (1 files staged)". Its context masking also blanked older
-# tool results at 30% context use, which actively hampered debugging.
-# If any copy reappears (e.g. a stale global install), flag it — nothing should
-# be patching or loading it any more.
-cm_copies=$(find "$HOME/.pi/agent/npm" /opt/homebrew/lib/node_modules -path '*/@tomooshi/condensed-milk-pi/index.ts' 2>/dev/null)
-if [ -z "$cm_copies" ]; then
-    pass "condensed-milk: fully removed (no copies installed)"
+# ── removed packages must stay removed (AGENTS.md "Removed — do not reinstall") ──
+REMOVED_PKGS=(
+    pi-context todos pi-web-access pi-tasks @tomooshi/condensed-milk-pi
+    claude-agent-sdk-pi @sting8k/pi-vcc pi-computer-use pi-gpt-config pi-ask
+    pi-grok-cli pi-claude-bridge lsp-pi pi-powerline-footer pi-anycopy
+    pi-autoresearch
+)
+NPM_GLOBAL="$(npm root -g 2>/dev/null || true)"
+removed_found=""
+for pkg in "${REMOVED_PKGS[@]}"; do
+    for root in "$PI_AGENT/npm/node_modules" /opt/homebrew/lib/node_modules ${NPM_GLOBAL:+"$NPM_GLOBAL"}; do
+        [ -d "$root/$pkg" ] && removed_found+=" $root/$pkg"
+    done
+    git_hit=$(find "$PI_AGENT/git" -mindepth 3 -maxdepth 3 -type d -name "${pkg##*/}" 2>/dev/null)
+    [ -n "$git_hit" ] && removed_found+=" $git_hit"
+    for ext in json ts; do
+        [ -e "$PI_AGENT/extensions/${pkg##*/}.$ext" ] && removed_found+=" $PI_AGENT/extensions/${pkg##*/}.$ext"
+    done
+    grep -qE "\"npm:${pkg}(@[^\"]*)?\"|\"git:[^\"]*/${pkg##*/}(@[^\"]*)?\"" "$PI_AGENT/settings.json" 2>/dev/null \
+        && removed_found+=" settings.json→$pkg"
+done
+if [ -z "$removed_found" ]; then
+    pass "removed packages: none installed, configured or listed in settings.json"
 else
-    fail "condensed-milk: a copy is still installed at $(dirname "$cm_copies")" \
-         "pi remove npm:@tomooshi/condensed-milk-pi  # it was removed deliberately, see AGENTS.md"
+    fail "removed packages are back:$removed_found" \
+         "pi remove <source> for each, and trash any leftover dir or config named above"
 fi
 
 # ── pi-tool-display: config with ALL tool overrides disabled ──
 TDCFG="$PI_AGENT/extensions/pi-tool-display/config.json"
-if [ -f "$TDCFG" ] && ! grep -q "true" <(python3 -c "
-import json; c = json.load(open('$TDCFG'))
-print(any(c.get('registerToolOverrides', {}).values()))" 2>/dev/null); then
+if [ -f "$TDCFG" ] && python3 -c '
+import json, sys
+overrides = json.load(open(sys.argv[1])).get("registerToolOverrides", {})
+sys.exit(1 if any(overrides.values()) else 0)' "$TDCFG" 2>/dev/null; then
     pass "pi-tool-display: config present, all tool overrides false"
 else
-    fail "pi-tool-display: config missing or overrides enabled (clobbers our custom tools)" \
+    fail "pi-tool-display: config missing, unreadable, or an override is true (clobbers our custom tools)" \
          "cp pi-setup/extensions/pi-tool-display/config.json $TDCFG"
+fi
+
+# ── agent prompts: every repo prompt is deployed ──
+# pi-spawn reads sub-agent prompts from here; a missing file silently
+# degrades that agent to the default body.
+agents_missing=""
+for f in "$SCRIPT_DIR"/agents/*.md; do
+    [ -f "$PI_AGENT/agents/$(basename "$f")" ] || agents_missing+=" $(basename "$f")"
+done
+if [ -z "$agents_missing" ]; then
+    pass "agent prompts: every pi-setup/agents/*.md is deployed"
+else
+    fail "agent prompts missing from $PI_AGENT/agents:$agents_missing" \
+         "mkdir -p $PI_AGENT/agents && cp pi-setup/agents/*.md $PI_AGENT/agents/"
 fi
 
 # ── our extensions: smear fixes present in the LIVE deployed copies ──
@@ -113,20 +137,20 @@ if grep -q "flattenLabelText" "$PI_AGENT/extensions/editor/index.ts" 2>/dev/null
     pass "editor extension: label newline guards (describeToolCall + sinks)"
 else
     fail "editor extension: label guards missing (multiline bash cmds smear the TUI)" \
-         "cp pi-setup/extensions/editor/* ~/.pi/agent/extensions/editor/"
+         "cp -R pi-setup/extensions/editor/. $PI_AGENT/extensions/editor/"
 fi
 
 if grep -q "normalizeForDisplay" "$PI_AGENT/extensions/tools/lib/box-format.ts" 2>/dev/null; then
     pass "tools extension: box-format display normalization"
 else
     fail "tools extension: box-format normalization missing" \
-         "cp -R pi-setup/extensions/tools ~/.pi/agent/extensions/"
+         "cp -R pi-setup/extensions/tools/. $PI_AGENT/extensions/tools/ && (cd $PI_AGENT/extensions/tools && npm install --no-package-lock)"
 fi
 
 # ── sub-agents: agent-models.json loads cleanly and every model is in pi's catalog ──
 # Parsed by the deployed loader itself, so this cannot drift from what the tools
 # read. A model missing from `pi --list-models` would be refused at call time.
-AM_REPORT=$(cd "$PI_AGENT/extensions/tools" && bun -e '
+AM_REPORT=$(cd "$PI_AGENT/extensions/tools" 2>/dev/null && bun -e '
 const { loadAgentModels } = await import("./lib/agent-models.ts");
 const { execFileSync } = await import("node:child_process");
 const config = loadAgentModels();
@@ -142,17 +166,23 @@ else
          "cp pi-setup/agent-models.json $PI_AGENT/agent-models.json  # then fix the named entries"
 fi
 
-# ── pi-sub: grok usage provider (local patch) ──
-# Factory + PROVIDERS entry must land together. A settings entry without the
-# factory throws PROVIDER_FACTORIES[name] is not a function on every refresh.
+# ── pi-sub: grok usage provider (local patch, files listed in manifest.txt) ──
 SUB_NM="$PI_AGENT/npm/node_modules/@marckrenn"
-if grep -q 'grok: () => new GrokProvider' "$SUB_NM/pi-sub-core/src/providers/registry.ts" 2>/dev/null && \
-   grep -q '"grok"' "$SUB_NM/pi-sub-shared/index.ts" 2>/dev/null && \
-   [ -f "$SUB_NM/pi-sub-core/src/providers/impl/grok.ts" ]; then
-    pass "pi-sub: grok provider factory + shared PROVIDERS entry"
+SUB_MANIFEST="$SCRIPT_DIR/pi-sub-patches/manifest.txt"
+sub_stale=""
+if [ -f "$SUB_MANIFEST" ]; then
+    while read -r src dest || [ -n "$src" ]; do
+        [ -z "$src" ] && continue
+        cmp -s "$SCRIPT_DIR/pi-sub-patches/$src" "$SUB_NM/$dest" || sub_stale+=" $dest"
+    done < "$SUB_MANIFEST"
 else
-    fail "pi-sub: grok provider patch missing" \
-         "re-run pi-setup/install.sh (pi-sub-patches block) or cp pi-setup/pi-sub-patches/* into ~/.pi/agent/npm/node_modules/@marckrenn/"
+    sub_stale=" (pi-sub-patches/manifest.txt is missing)"
+fi
+if [ -z "$sub_stale" ]; then
+    pass "pi-sub: grok provider patch (every manifest file matches pi-sub-patches/)"
+else
+    fail "pi-sub: grok provider patch missing or stale:$sub_stale" \
+         "while read -r s d; do cp \"pi-setup/pi-sub-patches/\$s\" \"$SUB_NM/\$d\"; done < pi-setup/pi-sub-patches/manifest.txt"
 fi
 
 # ── pi-sub-core: stale-ctx guard ──
@@ -164,15 +194,12 @@ else
 fi
 
 # ── shiki-diff: pi-diff render pipeline (edit/write syntax-highlighted diffs) ──
-# The edit/write tools call @heyhuynhgiabuu/pi-diff's __testing render functions.
-# They fall back to the plain box renderer if this breaks, so it's non-fatal —
-# but a FAIL here means the pretty diffs are silently off (adapter degraded).
-# NOTE: this probes with plain `node`; pi loads extensions under jiti, so this is
-# a strong signal but not a 100%-fidelity check of the runtime import path.
+# Non-fatal at runtime (falls back to the plain box renderer), but a FAIL means
+# the pretty diffs are silently off. Probed with plain node; pi loads under jiti.
 TOOLS_DIR="$PI_AGENT/extensions/tools"
 if [ ! -d "$TOOLS_DIR/node_modules/@heyhuynhgiabuu/pi-diff" ]; then
     fail "shiki-diff: @heyhuynhgiabuu/pi-diff not installed (edit/write diffs fall back to plain)" \
-         "(cd \"$TOOLS_DIR\" && npm install)"
+         "(cd \"$TOOLS_DIR\" && npm install --no-package-lock)"
 else
     # exit 0 = full pipeline incl renderSplit; 2 = mandatory ok but renderSplit
     # missing (edit degrades to unified — non-fatal); 3 = mandatory API missing.
@@ -184,7 +211,7 @@ else
         pass "shiki-diff: pi-diff __testing pipeline present; renderSplit missing — edit uses unified"
     else
         fail "shiki-diff: pi-diff __testing API changed — edit/write diffs degraded to plain fallback" \
-             "update extensions/tools/lib/shiki-diff.ts to the new pi-diff export shape (see AGENTS.md)"
+             "update extensions/tools/lib/shiki-diff.ts to the new pi-diff export shape"
     fi
 fi
 

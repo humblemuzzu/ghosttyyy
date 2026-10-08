@@ -33,6 +33,11 @@ describe("delegate tool allowlist", () => {
 		expect(new Set(allowlist).size).toBe(allowlist.length);
 	});
 
+	test("has no undo_edit/redo_edit: undo history is keyed to the child's own session, and apply_patch rolls back its own failures", () => {
+		expect(allowlist).not.toContain("undo_edit");
+		expect(allowlist).not.toContain("redo_edit");
+	});
+
 	test("resolves the glob alias to find", () => {
 		expect(allowlist).toContain("find");
 		expect(allowlist).not.toContain("glob");

@@ -75,6 +75,40 @@ describe("OutputBuffer", () => {
 			expect(text.split("\n")).toEqual(["1", "2", "3", "4"]);
 		});
 
+		it("keeps every line when lines repeat across the head/tail overlap", () => {
+			// head=["",a,""], tail=["",b,c]: the overlap is positional, not tail[0]'s first match.
+			const buf = new OutputBuffer(3, 3);
+			buf.add("\na\n\nb\nc\n");
+			const { text, truncatedLines } = buf.format();
+			expect(truncatedLines).toBe(0);
+			expect(text.split("\n")).toEqual(["", "a", "", "b", "c"]);
+		});
+
+		it("streaming previews never leak a partial line into the final output", () => {
+			// [50, 50] hits the head branch of dedupe, [1, 50] after two lines the tail branch.
+			for (const [head, tail, before] of [[50, 50, ""], [1, 50, "a\nb\n"]] as const) {
+				const buf = new OutputBuffer(head, tail);
+				buf.add(before);
+				buf.add("x".repeat(10));
+				buf.preview();
+				buf.add("x".repeat(10));
+				buf.preview();
+				buf.add("y\n");
+				expect(buf.format().text).toBe(`${before}${"x".repeat(20)}y`);
+			}
+		});
+
+		it("names the full-output file in the marker only when lines are dropped", () => {
+			const asked: string[] = [];
+			const small = new OutputBuffer(2, 2);
+			small.add("a\nb\n");
+			expect(small.format(() => (asked.push("small"), "/tmp/f")).text).toBe("a\nb");
+			const big = new OutputBuffer(2, 2);
+			big.add("1\n2\n3\n4\n5\n6\n");
+			expect(big.format(() => (asked.push("big"), "/tmp/f")).text).toContain("... [2 lines truncated; full output: /tmp/f] ...");
+			expect(asked).toEqual(["big"]);
+		});
+
 		it("dedupes when output smaller than tail capacity", () => {
 			const buf = new OutputBuffer(50, 50);
 			buf.add("a\nb\nc\n"); // 3 lines, tail has all
