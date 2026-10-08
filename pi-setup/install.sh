@@ -20,7 +20,7 @@
 #   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
 #   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
-#   ~/.config/agents/skills/    — 19 skills (git, review, tmux, dig, jev, s-improve, mat-tdd, etc.)
+#   ~/.config/agents/skills/    — 12 skills (git, review, tmux, dig, jev, mat-tdd, etc.)
 #   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, tool-display, codex-goal, mcp-adapter
 #
 # NO global npm packages are installed. Every pi package lives in
@@ -118,7 +118,8 @@ sync_dir "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"
 # Install tool dependencies if npm is available
 if [ -f "$PI_AGENT/extensions/tools/package.json" ] && command -v npm &>/dev/null; then
     info "Installing tool extension dependencies (npm install)..."
-    (cd "$PI_AGENT/extensions/tools" && npm install --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
+    # the copied lockfile stores the file: links relative to the repo checkout, which sits at a different depth
+    (cd "$PI_AGENT/extensions/tools" && npm install --no-package-lock --silent 2>/dev/null) || warn "npm install failed — you may need to run it manually"
 fi
 ok "Extensions installed"
 

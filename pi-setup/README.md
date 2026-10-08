@@ -110,14 +110,13 @@ custom bridge/provider needed.
 - **gruvbox** (active) — warm retro colors
 - **nightowl** — dark blue Night Owl
 
-### Skills (24 config-level)
-`amp-voice`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `document`, `git`,
-`nexus-fix`, `remember`, `report`, `review`, `rounds`, `shepherd`, `spar`, `spawn`, `tmux`, `write`
-5 external skills adapted for pi (author-prefixed): `s-improve` (shadcn — audit→plans),
-`c-sqr` (cursor — strict quality review), `mat-cr2axis` / `mat-design` / `mat-tdd` (matt pocock).
-Mnemonic: `s-` shadcn, `c-` cursor, `mat-` matt.
-(`find-skills` + `userinterface-wiki` are pi-package-managed symlinks, auto-created on install;
-3 `autoresearch-*` from pi-autoresearch — 29 total.)
+### Skills (12 config-level)
+`chrome-cdp`, `dataforseo`, `design-port`, `dig`, `git`, `jev`, `review`, `tmux`
+4 external skills adapted for pi (author-prefixed):
+`c-sqr` (cursor — strict quality review), `mat-design` / `mat-tdd` (matt pocock), `dm-antislop` (dmmulroy).
+Mnemonic: `c-` cursor, `mat-` matt, `dm-` dmmulroy.
+(`find-skills` + `userinterface-wiki` are pi-package-managed symlinks, auto-created on install — 14 total;
+3 `autoresearch-*` load only while pi-autoresearch is enabled.)
 
 ### Settings
 - Default provider/model: `xai` / `grok-4.6` (thinking high)
@@ -164,7 +163,7 @@ pi-setup/
 ├── agents/                     # 9 agent prompt markdown files
 ├── themes/                     # gruvbox.json, nightowl.json
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 24 skills (→ ~/.config/agents/skills/)
+├── config-skills/              # 12 skills (→ ~/.config/agents/skills/)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
 └── README.md                   # This file
 ```

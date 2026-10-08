@@ -1,6 +1,6 @@
 ---
 name: c-sqr
-description: "strict quality review (cursor). harsh maintainability critique of a branch diff — abstraction quality, oversized files (>1k lines), spaghetti conditionals, and 'delete-the-complexity' restructurings. invoke explicitly when you want a demanding structural review of changes. not a spec or standards check — that's mat-cr2axis; not a bug hunt."
+description: "strict quality review (cursor). harsh maintainability critique of a branch diff — abstraction quality, oversized files (>1k lines), spaghetti conditionals, and 'delete-the-complexity' restructurings. invoke explicitly when you want a demanding structural review of changes. not a bug hunt."
 ---
 
 # Strict Code Quality Review

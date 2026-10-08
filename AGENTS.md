@@ -207,6 +207,11 @@ satisfies any unpinned package) and brings an unpatched pi-tui copy.
 `~/.pi/agent/npm/node_modules/*/package.json`, nowhere else.
 `extensions/tools/node_modules` is gitignored **deployment source**: `install.sh`
 copies it into the loaded path, so the width patcher scans the repo too.
+Its pi packages are `file:` links to the installed pi (devDeps + `overrides` for
+pi-diff), so tests run against the real pi-tui. **Never put `"*"` back** — it
+installs stale pi copies. pi itself never loads them: it aliases every pi
+import to its own copy (`dist/core/extensions/loader.js`). The lockfile stores
+those links relative to the checkout, hence `--no-package-lock` in the live dir.
 
 ---
 
@@ -297,10 +302,8 @@ the rules in a `rules` section instead, delivered every turn from the cached
 head at no recurring cost. Do not move them back. Edit the rules in that .md,
 never in an extension. Skipped for llama-local / llama.cpp; sub-agents get them too.
 
-**Do not re-add a why-essay comment rule anywhere.** `document/SKILL.md`,
-`AGENTS.md` and `prompt.amp.system.md` used to disagree about comments while
-the skill shipped a 6-line JSDoc as its worked example; the example won every
-time. They now agree, and the agreement is the point.
+**Do not re-add a why-essay comment rule anywhere** — `COMMENTS` in
+`rules.amp.md` is the only copy.
 
 ### Extension rules learned the hard way
 
@@ -593,16 +596,15 @@ work — always timeout it.
 
 ## Skills
 
-**21 loadable by name**: 19 in `~/.config/agents/skills/` + `find-skills` +
+**14 loadable by name**: 12 in `~/.config/agents/skills/` + `find-skills` +
 `userinterface-wiki`. The 3 `autoresearch-*` skills load only while that
 package is enabled.
 `mcp-scripting` is deliberately suppressed.
 
-Six are external ports with author prefixes — **`s-` shadcn, `c-` cursor,
-`mat-` matt pocock, `dm-` dmmulroy**. Claude-Code/Cursor machinery was mapped to
-pi tools or cut (no worktree isolation for pi sub-agents). `code-review` was
-renamed `mat-cr2axis` to avoid clashing with the `code_review` **tool**. As
-adapted, **every subagent they spawn is read-only**.
+Four are external ports with author prefixes — **`c-` cursor, `mat-` matt
+pocock, `dm-` dmmulroy**. Claude-Code/Cursor machinery was mapped to pi tools or
+cut (no worktree isolation for pi sub-agents). As adapted, **every subagent they
+spawn is read-only**.
 
 `skill.ts` also discovers package skills (`~/.pi/agent/npm/node_modules/<pkg>/
 skills/`, `~/.pi/agent/git/.../skills/`); user/config skills win on name

@@ -1,6 +1,6 @@
 # 👻 ghosttyyy
 
-A curated, aesthetic Ghostty terminal setup with **22 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 29 custom tools, 8 packages, 30 skills, multi-provider support, and a custom agent identity.
+A curated, aesthetic Ghostty terminal setup with **22 dark themes**, **11 developer fonts**, and **live-switching** — plus a **full portable pi (coding agent) setup** with 12 extensions, 29 custom tools, 8 packages, 14 skills, multi-provider support, and a custom agent identity.
 
 Scroll through themes and fonts and watch your terminal change **in real-time**. Press Enter to keep it, Esc to revert.
 
@@ -357,7 +357,7 @@ The theme will also appear in the `gt` switcher automatically.
 
 # Part 2: Pi Coding Agent Setup
 
-Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.84.1) coding agent environment — 12 extensions, 29 custom tools, 6 dedicated sub-agents with @mention routing, 8 packages, 30 skills, 3 pi-core patches, multi-provider support, and a custom system prompt.
+Full portable backup of my [pi](https://github.com/badlogic/pi-mono) (v0.84.1) coding agent environment — 12 extensions, 29 custom tools, 6 dedicated sub-agents with @mention routing, 8 packages, 14 skills, 3 pi-core patches, multi-provider support, and a custom system prompt.
 
 ## 🚀 Installation
 
@@ -488,9 +488,9 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ---
 
-## 🧠 Skills (29 loadable)
+## 🧠 Skills (14 loadable)
 
-24 config-level (`~/.config/agents/skills/`): `amp-voice`, `c-sqr`, `chrome-cdp`, `coordinate`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `document`, `git`, `mat-cr2axis`, `mat-design`, `mat-tdd`, `nexus-fix`, `remember`, `report`, `review`, `rounds`, `s-improve`, `shepherd`, `spar`, `spawn`, `tmux`, `write` — plus `find-skills`, `userinterface-wiki`, and 3 `autoresearch-*` at pi level.
+12 config-level (`~/.config/agents/skills/`): `c-sqr`, `chrome-cdp`, `dataforseo`, `design-port`, `dig`, `dm-antislop`, `git`, `jev`, `mat-design`, `mat-tdd`, `review`, `tmux` — plus `find-skills` and `userinterface-wiki` at pi level (3 `autoresearch-*` load only while pi-autoresearch is enabled).
 
 ---
 
@@ -535,7 +535,7 @@ pi-setup/
 ├── agents/                     # 9 prompt templates (main + sub-agents)
 ├── themes/                     # gruvbox + nightowl
 ├── pi-skills/                  # empty (find-skills + userinterface-wiki auto-created by packages)
-├── config-skills/              # 24 skills
+├── config-skills/              # 12 skills
 └── extensions/
     ├── tools/                  # 28 custom tools + lib/
     ├── editor/, command-palette/, subagent-inspector/, pi-tool-display/

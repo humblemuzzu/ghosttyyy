@@ -103,7 +103,7 @@ function runningPiRoot() {
 
 // This repo checkout, because it is the DEPLOYMENT SOURCE: install.sh does
 // `cp -R "$SCRIPT_DIR/extensions" "$PI_AGENT/extensions"`, which copies
-// pi-setup/extensions/tools/node_modules (gitignored build output, 3 pi-tui
+// pi-setup/extensions/tools/node_modules (gitignored build output, any pi-tui
 // copies) straight into the loaded path. install.sh happens to re-patch
 // afterwards (cp at :102, npm install at :107, this script at :250), but that
 // makes correctness depend on step ORDER inside one script — anyone deploying
