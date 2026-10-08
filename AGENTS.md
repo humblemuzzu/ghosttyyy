@@ -38,7 +38,7 @@ continuing to add.
 ## Provider chain
 
 ```
-pi CLI (v1.0.0) — @earendil-works/pi-coding-agent
+pi CLI (v1.1.0) — @earendil-works/pi-coding-agent
   ├─ xai (native)                               → Grok OAuth         [DEFAULT]
   ├─ anthropic (native) + pi-claude-code-use    → Claude Max OAuth
   ├─ kimi-coding (native)                       → Kimi Code OAuth (/login)
@@ -150,7 +150,7 @@ setting makes that explicit and silences the boot warning.
 
 | Package | Ver | Purpose | Patched |
 |---|---|---|---|
-| `@earendil-works/pi-coding-agent` | 1.0.0 | pi itself | 3 core patches |
+| `@earendil-works/pi-coding-agent` | 1.1.0 | pi itself | 3 core patches |
 | `@benvargas/pi-claude-code-use` | **2.2.1 (pinned `@2.2.1`)** | Claude Max OAuth payload shim | no |
 | `pi-token-burden` | 0.6.5 | token usage display | no |
 | `@marckrenn/pi-sub-bar` | 1.5.0 | quota widget | **grok patch** |
@@ -348,7 +348,7 @@ so the shim aliases it on Anthropic OAuth.
 | `chad` | `chad.ts` | read-only research, pinned xai/grok-4.6, built to swarm |
 | `librarian` | `librarian.ts` | external repos via GitHub API |
 | `agent_message` | `agent-message.ts` | inter-session mailbox (`setupAgentMessage(pi)`) |
-| `web_search` | `web-search.ts` | Parallel AI Search; results judged by TypeSafe Jev when a classifier is available (`lib/jev-judge.ts`, fail-open, `TYPESAFE_API_KEY` in `~/.zshrc`, else `openrouter/typesafe/jev-1.13`) |
+| `web_search` | `web-search.ts` | Parallel AI Search, plain results. Jev is not in the search path; it is a codemode decision tool (`jev` skill, `TYPESAFE_API_KEY` in `~/.zshrc`) |
 | `read_web_page` | `read-web-page.ts` | cheerio → markdown |
 | `read_session` / `search_sessions` | `read-session.ts` / `search-sessions.ts` | session history |
 | `code_review` | `code-review.ts` | diff review |
@@ -583,7 +583,7 @@ work — always timeout it.
 
 ## Skills
 
-**29 loadable by name**: 24 in `~/.config/agents/skills/` + `find-skills` +
+**30 loadable by name**: 25 in `~/.config/agents/skills/` + `find-skills` +
 `userinterface-wiki` + 3 `autoresearch-*`.
 `mcp-scripting` is deliberately suppressed.
 

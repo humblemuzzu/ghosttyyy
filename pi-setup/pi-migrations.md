@@ -12,6 +12,76 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## Jev out of `web_search`, in as the `jev` skill (2026-10-08)
+
+`lib/jev-judge.ts` (added 10-02, ported from GaganSD/pi-extensions) is gone;
+`web_search` returns plain Parallel results. The calling model already judges
+relevance and sufficiency, and better, since it knows the real task. The
+judge's own verdicts were wrong in a pattern: compound objectives ("founders,
+funding, traction of X") got "not sufficient — consider another search", and
+legit pages got "held — safety unverified" from a 5-way safety Choice. A
+per-passage rebuild on TypeSafe's RAG-passage cookbook fixed both (planted
+injection 0.99 on 6/6 sets, legit pages ≤ 0.11) but still only duplicated the
+model's own judgement, so it was dropped rather than kept.
+
+Jev is now a codemode decision tool, documented in `config-skills/jev/SKILL.md`:
+exact `models.classify` call, pi's `bool`/`choice`/`score` shapes (pi rejects
+TypeSafe's `noul`), the batch pattern, and the jev-1.13 accuracy rules. The
+skill exists so a model does not read `codemode.md` + `models.md` (~26k chars)
+and TypeSafe's docs every time it needs a decision.
+
+---
+
+## 1.1.0 (2026-10-08) — from 1.0.3 (via 1.0.4), `resource-loader.js` re-derived
+
+**Patch drift (stock 1.0.3 vs stock 1.1.0, registry tarballs):**
+- `resource-loader.js` drifted: upstream added `disabledBuiltinExtensions`
+  (field, constructor line, a `.filter` on `extensionPaths`) for `--no-mcp`.
+  None of it overlaps our conflict-diagnostics hunk. Re-derived by applying
+  upstream's three hunks to the stored patch; `diff stock-1.1.0 stored` now
+  shows only our hunk.
+- `session-selector.js`, `keybindings.js`: byte-identical, copied.
+- pi-tui 1.1.0: `utils.js` unchanged, width patcher applied clean.
+
+**Changes checked against our setup:**
+- `--tools` (1.0.4 + 1.1.0): plain names stay a strict allowlist; `*` patterns
+  and `+name`/`-name` lists are new; an allowlist without an `mcp__` entry now
+  keeps `mcp__*` tools registered for codemode. `pi-spawn.ts:482` sends plain
+  names only, built-in MCP is off, and the adapter's tool is `mcp`, so
+  sub-agent surfaces are unchanged. Mixing `+x` with plain names is now an error.
+- OSC 7501 program status: interactive mode only, written only after the
+  terminal answers a `7501;?` query. Cannot reach `--mode json` stdout.
+  `PI_PROGRAM_STATUS=0|1` overrides.
+- `outputPad` defaults to 1, the padding tool boxes already had, so tool
+  renderer widths are unchanged. `durationMs` and `agent_settled.aborted` are
+  additive.
+- pi-ai: Anthropic OAuth login falls back to a free callback port; request
+  path untouched, so pi-claude-code-use is unaffected. Haiku 5.5 added.
+- Verified: `verify-patches.sh` 14/14 PASS, headless smoke reply, `finder` ran
+  on 1.1.0, headless session lists 38 tools incl. `codemode` + `mcp`, no
+  `mcpScript`.
+- Backup: `~/pi-update-backup-1.0.3-20261008-113647`.
+
+---
+
+## 1.0.3 (2026-10-05) — from 1.0.2, via `update-pi.sh`
+
+No patch drift: stock `resource-loader.js`, `session-selector.js` and
+`keybindings.js` are byte-identical between 1.0.0 and 1.0.3, so the stored
+patches were copied as-is and `base-version` moved to 1.0.3.
+
+- **Breaking, not ours:** Azure provider renamed `azure-openai-responses` →
+  `azure`. No azure entry in settings, models or auth.
+- `Home`/`End` now always move the editor cursor; transcript top/bottom moved to
+  `Ctrl+Home`/`Ctrl+End`. `keybindings.json` and `editor/` reference neither.
+- 1.0.1 dropped `npm-shrinkwrap.json` (transitive deps no longer pinned) and
+  1.0.1 made `pi update` on global npm installs recommend the installer; we
+  keep using `update-pi.sh`.
+- Verified: `verify-patches.sh` all PASS, headless smoke reply, `finder` ran.
+- Backup: `~/pi-update-backup-1.0.2-20261005-195420`.
+
+---
+
 ## Jev + theme studio (2026-10-02)
 
 - `web_search` judges Parallel results with a Jev classifier (`lib/jev-judge.ts`,

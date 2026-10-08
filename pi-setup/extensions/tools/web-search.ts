@@ -42,13 +42,6 @@ import {
 	type Excerpt,
 } from "./lib/box-format";
 import { getEnabledExtensionConfig, type ExtensionConfigSchema } from "./lib/config";
-import {
-	DEFAULT_JEV_CONFIG,
-	isJevConfig,
-	judgeResults,
-	type JevConfig,
-	type JudgeOutcome,
-} from "./lib/jev-judge";
 import { withPromptPatch } from "./lib/prompt-patch";
 import type { ToolCostDetails } from "./lib/tool-cost";
 
@@ -88,7 +81,6 @@ type WebSearchExtConfig = {
   endpoint: string;
   curlTimeoutSecs: number;
   defaultMode: SearchMode;
-  jev: JevConfig;
 };
 
 const CONFIG_DEFAULTS: WebSearchExtConfig = {
@@ -96,7 +88,6 @@ const CONFIG_DEFAULTS: WebSearchExtConfig = {
   endpoint: "https://api.parallel.ai/v1beta/search",
   curlTimeoutSecs: 30,
   defaultMode: "one-shot",
-  jev: { ...DEFAULT_JEV_CONFIG, weights: { ...DEFAULT_JEV_CONFIG.weights } },
 };
 
 function isWebSearchConfig(
@@ -114,8 +105,7 @@ function isWebSearchConfig(
     // reject an unknown mode at config load rather than on every search:
     // v1beta answers a hard error for names it does not know (e.g. "turbo").
     typeof value.defaultMode === "string" &&
-    (SEARCH_MODES as readonly string[]).includes(value.defaultMode) &&
-    isJevConfig(value.jev)
+    (SEARCH_MODES as readonly string[]).includes(value.defaultMode)
   );
 }
 
@@ -247,10 +237,7 @@ function searchParallel(
   });
 }
 
-function formatResults(
-  results: SearchResult[],
-  heldFlags?: readonly boolean[],
-): {
+function formatResults(results: SearchResult[]): {
   text: string;
   headerLineIndices: number[];
 } {
@@ -265,7 +252,6 @@ function formatResults(
     headerLineIndices.push(lines.length);
     lines.push(`### ${r.title || "(untitled)"}`);
     lines.push(r.url!);
-    if (heldFlags?.[i]) lines.push("*jev: held — safety unverified*");
     if (r.publish_date) lines.push(`*${r.publish_date}*`);
     if (r.excerpts?.length) {
       lines.push("");
@@ -287,16 +273,10 @@ function formatResults(
 }
 
 /** convert raw SearchResult[] into BoxSection[] for box-format rendering. */
-function resultsToSections(
-  results: SearchResult[],
-  heldFlags?: readonly boolean[],
-): BoxSection[] {
-  return results.map((r, i) => {
+function resultsToSections(results: SearchResult[]): BoxSection[] {
+  return results.map((r) => {
     const lines = [];
     lines.push({ text: osc8Link(r.url, r.url), highlight: true });
-    if (heldFlags?.[i]) {
-      lines.push({ text: "jev: held — safety unverified", highlight: true });
-    }
     if (r.publish_date) lines.push({ text: r.publish_date, highlight: true });
     if (r.excerpts?.length) {
       lines.push({ text: "", highlight: false });
@@ -371,7 +351,7 @@ export function createWebSearchTool(
       ),
     }),
 
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal) {
       const p = params as WebSearchParams;
       const apiKey = process.env.PARALLEL_API_KEY;
       if (!apiKey) {
@@ -421,54 +401,14 @@ export function createWebSearchTool(
         } as any;
       }
 
-      let judged: JudgeOutcome;
-      try {
-        judged = await judgeResults(p.objective, data.results, {
-          registry: ctx?.modelRegistry,
-          config: config.jev,
-          signal,
-        });
-      } catch {
-        return {
-          content: [{ type: "text" as const, text: "search aborted" }],
-          isError: true,
-        } as any;
-      }
-
-      let displayResults = data.results;
-      let heldFlags: boolean[] | undefined;
-      const jevNotes: string[] = [];
-      if (judged.status === "judged") {
-        displayResults = judged.rankedIndices.map((i) => data.results[i]!);
-        const held = new Set(judged.heldIndices);
-        heldFlags = judged.rankedIndices.map((i) => held.has(i));
-        jevNotes.push(...judged.notes);
-      } else if (judged.status === "failed") {
-        jevNotes.push(judged.warning);
-      }
-
-      const { text, headerLineIndices } = formatResults(
-        displayResults,
-        heldFlags,
-      );
+      const { text, headerLineIndices } = formatResults(data.results);
       let output = text;
 
       if (data.warnings?.length) {
         output += `\n\n**Warnings:** ${data.warnings.join("; ")}`;
       }
-      if (jevNotes.length) {
-        output += `\n\n${jevNotes.join("\n")}`;
-      }
 
-      const resultSections = resultsToSections(displayResults, heldFlags);
-      if (jevNotes.length) {
-        resultSections.unshift({
-          header: "jev",
-          blocks: [
-            { lines: jevNotes.map((note) => ({ text: note, highlight: true })) },
-          ],
-        });
-      }
+      const resultSections = resultsToSections(data.results);
       const details: ToolCostDetails & {
         matchLineIndices?: number[];
         resultSections?: BoxSection[];
@@ -480,9 +420,6 @@ export function createWebSearchTool(
       return {
         content: [{ type: "text" as const, text: output }],
         details,
-        ...(judged.status === "judged" && judged.usage
-          ? { usage: judged.usage }
-          : {}),
       };
     },
 

@@ -20,7 +20,7 @@
 #   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
 #   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
-#   ~/.config/agents/skills/    — 23 skills (git, review, spawn, tmux, dig, s-improve, mat-tdd, etc.)
+#   ~/.config/agents/skills/    — 25 skills (git, review, spawn, tmux, dig, jev, s-improve, mat-tdd, etc.)
 #   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, tool-display, codex-goal, mcp-adapter
 #
 # NO global npm packages are installed. Every pi package lives in
