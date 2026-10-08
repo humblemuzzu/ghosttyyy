@@ -28,4 +28,3 @@ tmux select-window -t "name"           # switch to
 tmux list-windows                      # list all
 ```
 
-for spawning amp agents with thread linkage, use the `spawn` skill.

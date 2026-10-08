@@ -20,7 +20,7 @@
 #   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
 #   ~/.pi/agent/pi-sub-core-settings.json — seed only; never overwrites live provider on/off
-#   ~/.config/agents/skills/    — 25 skills (git, review, spawn, tmux, dig, jev, s-improve, mat-tdd, etc.)
+#   ~/.config/agents/skills/    — 19 skills (git, review, tmux, dig, jev, s-improve, mat-tdd, etc.)
 #   pi packages (npm/git)       — token-burden, claude-code-use, sub-bar, tool-display, codex-goal, mcp-adapter
 #
 # NO global npm packages are installed. Every pi package lives in
@@ -142,9 +142,6 @@ info "Installing config skills..."
 sync_dir "$SCRIPT_DIR/config-skills" "$CONFIG_SKILLS"
 
 # Make scripts executable
-if [ -f "$CONFIG_SKILLS/spawn/scripts/spawn-amp" ]; then
-    chmod +x "$CONFIG_SKILLS/spawn/scripts/spawn-amp"
-fi
 if [ -f "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs" ]; then
     chmod +x "$CONFIG_SKILLS/chrome-cdp/scripts/cdp.mjs"
 fi

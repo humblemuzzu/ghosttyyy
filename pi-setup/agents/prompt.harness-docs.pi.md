@@ -1,8 +1,8 @@
 ## pi Notes
 
 **delegate children are fresh pi processes.** They load the same extensions as
-you, so they see this same system prompt template and your custom tools — but
-they share **none of your conversation context**. Write self-contained delegate
+you, but get their own short prompt naming only their tools, and they share
+**none of your conversation context**. Write self-contained delegate
 prompts: include the working directory, the goal, the files to touch, and how
 the child should verify success.
 

@@ -59,17 +59,27 @@ sends flats + aliases together.
 
 **When changing the default provider, also update `pi-sub-core-settings.json`**
 — its `defaultProvider` is what the status bar reports, and a provider left
-`enabled: false` there returns `{}` regardless.
+`enabled: false` there returns `{}` regardless. Its `tools.usageTool` and
+`allUsageTool` stay `false`: the bar does not need them, and `true` adds 4
+usage tools to every request.
 
 ### System prompt assembly
 
-1. `extensions/system-prompt.ts` — **parent sessions only**: loads
-   `agents/prompt.amp.system.md`, interpolates `{identity} {harness} {date}
-   {cwd} {roots} {os} {repo} {sessionId} {ls} {harness_docs_section}`.
-2. `tools/lib/sub-agent-prompt.ts` — **sub-agents**: a short generated prompt
-   naming exactly that child's tools. Driven by `PI_SUBAGENT_TOOLS`, which
-   `pi-spawn.ts` sets from the same array it builds `--tools` from, so prompt
-   and registry cannot disagree. Missing var → falls back to old behaviour.
+1. `extensions/system-prompt.ts` sets `systemPromptOptions.customPrompt`, which
+   replaces pi's default preamble, tool list, rules and docs block; pi still
+   renders project context, skills and cwd. Parent: `agents/prompt.amp.system.md`
+   interpolated (`{identity} {harness} {date} {cwd} {roots} {os} {repo}
+   {sessionId} {ls} {harness_docs_section}`). Parent and children both get
+   `rules.amp.md` as a `rules` section, every tool's own registered guidelines
+   as `tool_guidelines`, and pi's docs block as `docs`, the last two re-rendered
+   because `customPrompt` turns pi's versions off. **Never return `systemPrompt`
+   from `before_agent_start`**: it forces one opaque prompt and freezes the text
+   before later handlers' edits. Edit `systemPromptOptions.sections` (psst does).
+2. `tools/lib/sub-agent-prompt.ts` — **sub-agents**: `customPrompt` is a short
+   generated prompt naming exactly that child's tools. Driven by
+   `PI_SUBAGENT_TOOLS`, which `pi-spawn.ts` sets from the same array it builds
+   `--tools` from. Missing var → falls back to old behaviour. The child's agent
+   prompt arrives as `--append-system-prompt`.
 3. `tools/lib/pi-spawn.ts` — per-agent `--tools` allowlists.
 
 ---
@@ -282,10 +292,10 @@ Re-appending `agents/rules.amp.md` from `context` mutated the message list on
 every model call, and a changed list makes pi collapse the system prompt and the
 tool declarations (`dist/core/extensions/runner.js`), which invalidated the
 Anthropic prompt cache on every turn: measured 83% of each request re-written as
-cache-write, 99% of all metered subscription tokens. `system-prompt.ts` appends
-the rules instead, delivered every turn from the cached head at no recurring
-cost. Do not move them back. Edit the rules in that .md, never in an extension.
-Skipped for llama-local / llama.cpp; sub-agents get them too.
+cache-write, 99% of all metered subscription tokens. `system-prompt.ts` puts
+the rules in a `rules` section instead, delivered every turn from the cached
+head at no recurring cost. Do not move them back. Edit the rules in that .md,
+never in an extension. Skipped for llama-local / llama.cpp; sub-agents get them too.
 
 **Do not re-add a why-essay comment rule anywhere.** `document/SKILL.md`,
 `AGENTS.md` and `prompt.amp.system.md` used to disagree about comments while
@@ -583,8 +593,9 @@ work — always timeout it.
 
 ## Skills
 
-**30 loadable by name**: 25 in `~/.config/agents/skills/` + `find-skills` +
-`userinterface-wiki` + 3 `autoresearch-*`.
+**21 loadable by name**: 19 in `~/.config/agents/skills/` + `find-skills` +
+`userinterface-wiki`. The 3 `autoresearch-*` skills load only while that
+package is enabled.
 `mcp-scripting` is deliberately suppressed.
 
 Six are external ports with author prefixes — **`s-` shadcn, `c-` cursor,

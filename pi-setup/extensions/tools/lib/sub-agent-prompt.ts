@@ -46,8 +46,8 @@ export function parseToolList(csv: string): string[] {
 /**
  * build the sub-agent system prompt.
  *
- * deliberately short. the child already receives pi's base prompt, and then
- * its own agent prompt (`agent.amp.finder.md` and friends) via
+ * deliberately short. it replaces pi's base prompt in the child; the child's
+ * own agent prompt (`agent.amp.finder.md` and friends) follows via
  * `--append-system-prompt`. this block adds only what those cannot carry:
  *
  *   - the tools this particular child holds, named exactly

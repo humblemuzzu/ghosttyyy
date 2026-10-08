@@ -1,23 +1,14 @@
 /**
- * system-prompt — injects interpolated prompt.amp.system.md into the agent's system prompt.
+ * system-prompt — makes the interpolated prompt.amp.system.md the session's system prompt.
  *
- * muzz's built-in system prompt only provides date + cwd. this extension appends
- * the full amp system prompt with runtime-interpolated template vars: workspace root,
- * OS info, git remote, session ID, and directory listing.
- *
- * uses the undocumented before_agent_start return value { systemPrompt } to modify
- * the system prompt per-turn. handlers chain — each receives the previous handler's
- * systemPrompt via event.systemPrompt.
- *
- * identity/harness decoupling: {identity} and {harness} are interpolated with
- * configurable values. {harness_docs_section} is populated by reading the
- * appropriate harness docs file (prompt.harness-docs.<harness>.md).
- *
- * SUB-AGENTS TAKE A DIFFERENT PATH. a child pi process loads these same
- * extensions, so this hook runs there too — and the parent prompt describes a
- * ~40-tool surface the child does not have. see tools/lib/sub-agent-prompt.ts.
+ * `systemPromptOptions.customPrompt` replaces pi's default preamble, tool list, rules
+ * and docs block; pi still renders project context, skills and cwd. The tool
+ * guidelines and docs block pi would have rendered are re-added as sections, so
+ * nothing a tool registers is lost. Sub-agents get buildSubAgentPrompt instead.
  */
 
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readAgentPrompt } from "./tools/lib/pi-spawn";
 import { interpolatePromptVars } from "./tools/lib/interpolate";
@@ -29,53 +20,78 @@ import {
 
 /** harness configuration. TODO: make this configurable via settings or env. */
 const HARNESS = "pi";
-const IDENTITY = "Amp";
+const IDENTITY = "Coding agent";
+
+// pi's built-in bash guideline; our bash override does not set PI_* model or session vars.
+const UNTRUE_HERE = new Set(["You can inspect PI_* environment variables for current model and session details."]);
+
+function piPackageDir(): string | undefined {
+	try {
+		let dir = dirname(realpathSync(process.argv[1] ?? ""));
+		for (let i = 0; i < 4; i++) {
+			if (existsSync(join(dir, "docs", "codemode.md"))) return dir;
+			dir = dirname(dir);
+		}
+	} catch {}
+	return undefined;
+}
+
+function piDocs(dir: string): string {
+	return `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: ${join(dir, "README.md")}
+- Additional docs: ${join(dir, "docs")}
+- Examples: ${join(dir, "examples")} (extensions, custom tools, SDK)
+- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
+- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md), codemode scripts and non-LLM models such as classifiers and image models (docs/codemode.md)
+- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+}
+
+function toolGuidelines(options: any): string {
+	const hidden: string[] = options.hiddenTools ?? [];
+	const declared: string[] = options.selectedTools.filter((name: string) => !hidden.includes(name));
+	const rules = [...declared.flatMap((name) => options.toolGuidelines[name] ?? []), ...options.promptGuidelines]
+		.map((rule: string) => rule.trim())
+		.filter((rule: string) => rule && !UNTRUE_HERE.has(rule));
+	return [...new Set(rules)].map((rule) => `- ${rule}`).join("\n");
+}
 
 export default function (pi: ExtensionAPI) {
 	const body = readAgentPrompt("prompt.amp.system.md");
 	if (!body) return;
 
-	// load harness docs based on harness name
 	const harnessDocs = readAgentPrompt(`prompt.harness-docs.${HARNESS}.md`) || "";
 	const rules = readAgentPrompt("rules.amp.md").trim();
-
-	const compose = (...parts: (string | undefined)[]) =>
-		parts.filter((part): part is string => !!part && part.trim().length > 0).join("\n\n");
+	const piDir = piPackageDir();
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		/*
-		 * SUB-AGENT PATH.
-		 *
-		 * piSpawn sets SUB_AGENT_TOOLS_ENV from the SAME array it turns into
-		 * `--tools`, so the prompt can never name a tool this child lacks. each
-		 * agent brings its own list — finder 4, oracle 8, code_review 8,
-		 * librarian 7, delegate 12, chad 16, read_web_page/read_session 1 — and a
-		 * grandchild (delegate spawning finder) gets its own, because every
-		 * piSpawn call sets the variable fresh for that spawn.
-		 *
-		 * the parent template is skipped entirely rather than patched with a
-		 * correction line: a child reading "apply_patch — every file
-		 * modification" and "your dedicated sub-agents are exactly six tools"
-		 * has already been misled by the time any footnote arrives.
-		 */
+		const options = event.systemPromptOptions;
+		const addShared = () => {
+			const guidelines = toolGuidelines(options);
+			if (guidelines) options.sections.tool_guidelines = guidelines;
+			if (piDir) options.sections.docs = piDocs(piDir);
+		};
+
+		// a child gets its own prompt instead of the parent template, not the template plus a
+		// correction: a child reading "every file modification" or "exactly six sub-agents" is
+		// misled before any footnote arrives. its agent prompt arrives as appendSystemPrompt.
 		const childTools = process.env[SUB_AGENT_TOOLS_ENV]?.trim();
 		if (childTools && parseToolList(childTools).length > 0) {
-			return {
-				systemPrompt: compose(event.systemPrompt, buildSubAgentPrompt(IDENTITY, childTools), rules),
-			};
+			options.customPrompt = buildSubAgentPrompt(IDENTITY, childTools);
+			if (rules) options.sections.rules = rules;
+			addShared();
+			return;
 		}
 
 		if (ctx.model?.provider === "llama-local" || ctx.model?.provider === "llama.cpp") return;
 
-		const interpolated = interpolatePromptVars(body, ctx.cwd, {
+		options.customPrompt = interpolatePromptVars(body, ctx.cwd, {
 			sessionId: ctx.sessionManager.getSessionId(),
 			identity: IDENTITY,
 			harness: HARNESS,
 			harnessDocsSection: harnessDocs,
 		});
-
-		return {
-			systemPrompt: compose(event.systemPrompt, interpolated, rules),
-		};
+		if (rules) options.sections.rules = rules;
+		addShared();
 	});
 }
