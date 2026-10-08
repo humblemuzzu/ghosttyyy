@@ -1,21 +1,8 @@
 /**
- * Screenshot a web page, including the parts below the fold.
- *
- * `screencapture` can only ever photograph what is rendered on the glass. For a
- * page that scrolls, that is the wrong tool — you get the visible third and no
- * way to ask for the rest. A headless browser can render the whole document and
- * hand back one tall image, which `planView` then slices into readable strips
- * rather than shrinking into a smear.
- *
- * The determinism CSS and the shoot-the-element-not-a-clip rule are lifted from
- * the `caliper` project's src/capture.ts, where they were arrived at the hard
- * way. See the comments on each for what breaks without them.
- *
- * OPTIONAL DEPENDENCY. `playwright-core` is resolved at call time, and we drive
- * the ALREADY-INSTALLED Google Chrome via `channel: "chrome"` rather than
- * downloading a browser. Full `playwright` ships a ~150MB Chromium per platform;
- * `playwright-core` is a few MB and brings none. If either is missing the tool
- * says exactly what to install rather than throwing a module-resolution stack.
+ * Screenshot a web page, including the parts below the fold, by driving the
+ * installed Google Chrome through `playwright-core` (no browser download).
+ * The determinism CSS and the shoot-the-element rule come from caliper's
+ * src/capture.ts.
  */
 
 import { createRequire } from "node:module";
@@ -24,26 +11,12 @@ import path from "node:path";
 export class WebCaptureError extends Error {}
 
 /**
- * Chromium cannot render a full-page screenshot taller than its maximum texture
- * size, 16384px (2^14). Past that it does NOT fail — it returns an image of the
- * requested height whose lower portion is simply BLANK.
- *
- * Measured on a 51,320px fixture (`port-harness/tall-page-limit.ts`): sections
- * 1-13 rendered, sections 14-40 came back empty, with the boundary falling
- * inside 15,506..16,719 — i.e. straddling 16384. The tool then sliced that
- * empty space and handed it over as if it were page content, which is worse
- * than capturing nothing: a caller cannot tell blank-because-empty from
- * blank-because-broken.
- *
- * So we clip to what Chromium can actually draw and say the page was longer.
+ * Chromium's texture limit. Past it a full-page screenshot does not fail: the
+ * lower part comes back blank, so captures are clipped here and reported.
  */
 const MAX_RENDERABLE_HEIGHT = 16384;
 
-/**
- * Sticky headers overlap whatever is scrolled under them, and a half-finished
- * transition makes the same page produce two different screenshots. Both are
- * removed before anything is captured, so two runs of the same URL agree.
- */
+/** Finish every transition instantly, so two runs of the same URL agree. */
 const DETERMINISM_CSS = `
   *, *::before, *::after {
     animation-duration: 0s !important;
@@ -55,12 +28,14 @@ const DETERMINISM_CSS = `
   html { scroll-behavior: auto !important; }
 `;
 
+const REVEAL_IMAGE_WAIT_MS = 3_000;
+const REVEAL_NETWORK_WAIT_MS = 5_000;
+
 function loadPlaywright(): any {
 	const require = createRequire(import.meta.url);
 	const candidates = [
 		"playwright-core",
 		"playwright",
-		// the tools extension's own node_modules, when resolution is anchored elsewhere
 		path.join(__dirname, "..", "node_modules", "playwright-core"),
 	];
 	for (const candidate of candidates) {
@@ -82,19 +57,11 @@ export interface WebCaptureOptions {
 	/** Viewport width in CSS pixels. Height is incidental for a full-page shot. */
 	width?: number;
 	height?: number;
-	/**
-	 * Capture the whole scrollable document rather than just the viewport.
-	 * On by default: seeing only the fold is what makes `screencapture` the
-	 * wrong tool for a page in the first place.
-	 */
+	/** Capture the whole scrollable document rather than just the viewport. On by default. */
 	fullPage?: boolean;
 	/** Shoot one element instead of the page. */
 	selector?: string;
-	/**
-	 * Device pixel ratio. Deliberately defaults to 1, NOT 2: the token budget is
-	 * counted in device pixels, so dsf 2 quadruples the cost of the same layout
-	 * for detail a downscale is about to throw away.
-	 */
+	/** Defaults to 1: the image budget counts device pixels, and a downscale would discard the extra detail. */
 	deviceScaleFactor?: number;
 	waitMs?: number;
 	timeoutMs?: number;
@@ -110,6 +77,39 @@ export interface WebCaptureResult {
 	clipped?: { capturedHeight: number; documentHeight: number };
 }
 
+/**
+ * Scroll through the page once and back, so lazy-loaded images and
+ * scroll-triggered sections exist before the full-page screenshot.
+ */
+async function revealLazyContent(page: any): Promise<void> {
+	await page.evaluate(async (limit: number) => {
+		const step = Math.max(200, Math.floor(window.innerHeight * 0.8));
+		const end = Math.min(document.documentElement.scrollHeight, limit);
+		for (let y = 0; y < end; y += step) {
+			window.scrollTo(0, y);
+			await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
+		}
+		window.scrollTo(0, 0);
+	}, MAX_RENDERABLE_HEIGHT);
+	await page.waitForLoadState("networkidle", { timeout: REVEAL_NETWORK_WAIT_MS }).catch(() => {});
+	await page.evaluate(
+		(waitMs: number) =>
+			Promise.all(
+				[...document.images]
+					.filter((img) => !img.complete)
+					.map(
+						(img) =>
+							new Promise((resolve) => {
+								img.addEventListener("load", resolve, { once: true });
+								img.addEventListener("error", resolve, { once: true });
+								setTimeout(resolve, waitMs);
+							}),
+					),
+			),
+		REVEAL_IMAGE_WAIT_MS,
+	);
+}
+
 export async function captureWebPage(
 	out: string,
 	opts: WebCaptureOptions,
@@ -121,11 +121,8 @@ export async function captureWebPage(
 	let browser: any;
 	try {
 		try {
-			// `channel: "chrome"` uses the installed Google Chrome. Without it,
-			// playwright-core looks for a bundled browser it does not ship.
 			browser = await chromium.launch({ channel: "chrome" });
 		} catch {
-			// A machine with a real Chromium download available can still work.
 			browser = await chromium.launch();
 		}
 	} catch (err: any) {
@@ -147,10 +144,8 @@ export async function captureWebPage(
 
 		try {
 			await page.goto(opts.url, { waitUntil: "networkidle", timeout });
-		} catch (err: any) {
-			// networkidle never settles on pages with long-polling or analytics
-			// beacons. A page that loaded but never went quiet is still worth
-			// photographing, so fall back to the weaker condition.
+		} catch {
+			// Pages with long-polling or beacons never go network-idle.
 			await page.goto(opts.url, { waitUntil: "domcontentloaded", timeout });
 		}
 
@@ -158,8 +153,10 @@ export async function captureWebPage(
 		try {
 			await page.evaluate(() => (document as any).fonts?.ready);
 		} catch {
-			/* no font loading API, or it rejected; not worth failing over */
+			/* no font loading API */
 		}
+		const fullPage = opts.fullPage !== false;
+		if (fullPage && !opts.selector) await revealLazyContent(page);
 		if (opts.waitMs) await page.waitForTimeout(Math.min(opts.waitMs, 15_000));
 
 		const info = await page.evaluate(() => ({
@@ -179,27 +176,19 @@ export async function captureWebPage(
 			if ((await locator.count()) === 0) {
 				throw new WebCaptureError(`no element matches selector ${JSON.stringify(opts.selector)}`);
 			}
-			// Shoot the ELEMENT. A page-level clip silently returns the wrong
-			// region once the element is below the fold, because the clip is in
-			// viewport coordinates and the element is not.
+			// Shoot the element, not a page clip: a clip is in viewport
+			// coordinates and misses an element below the fold.
 			await locator.scrollIntoViewIfNeeded();
 			await locator.screenshot({ path: out });
+		} else if (fullPage && info.scrollHeight > MAX_RENDERABLE_HEIGHT) {
+			clipped = { capturedHeight: MAX_RENDERABLE_HEIGHT, documentHeight: info.scrollHeight };
+			await page.screenshot({
+				path: out,
+				fullPage: true,
+				clip: { x: 0, y: 0, width, height: MAX_RENDERABLE_HEIGHT },
+			});
 		} else {
-			const fullPage = opts.fullPage !== false;
-			const tooTall = fullPage && info.scrollHeight > MAX_RENDERABLE_HEIGHT;
-			if (tooTall) {
-				clipped = {
-					capturedHeight: MAX_RENDERABLE_HEIGHT,
-					documentHeight: info.scrollHeight,
-				};
-				await page.screenshot({
-					path: out,
-					fullPage: true,
-					clip: { x: 0, y: 0, width, height: MAX_RENDERABLE_HEIGHT },
-				});
-			} else {
-				await page.screenshot({ path: out, fullPage });
-			}
+			await page.screenshot({ path: out, fullPage });
 		}
 
 		return {

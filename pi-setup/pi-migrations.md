@@ -978,6 +978,9 @@ so it returns `wasResized: false` and the original bytes pass through unchanged 
 **no double resample, no injected dimension-hint text**. It does decode every
 image in a worker to discover that, which defeats the `asis` never-decode fast
 path; `images.autoResize: false` disables it if that cost ever matters.
+*Correction (2026-10-08):* the pass-through held only under 4.5 MiB — pi also
+re-encodes on bytes, and our cap was the API's 10 MB. `image-fit` now caps at
+pi's `maxBytes`; keep `autoResize` on, since it also clamps other tools' images.
 
 **Packages (targeted `pi update npm:<pkg>`, never `--extensions`):**
 - **pi-codex-goal 0.1.39 → 0.2.0** — minor number, trivial diff: 3 imports moved

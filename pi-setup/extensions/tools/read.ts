@@ -22,14 +22,8 @@ import { expandPath, resolveToAbsolute } from "./lib/fs";
 import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
-import {
-	DegenerateImageError,
-	defaultOutDir,
-	fitImageFile,
-	fitResultBlocks,
-	pruneOutDir,
-	UnusableImageError,
-} from "./lib/image-fit";
+import { defaultOutDir, fitImageFile, fitResultBlocks, pruneOutDir } from "./lib/image-fit";
+import { planToolImages, recordReturnedImages, sessionNote } from "./lib/image-budget";
 
 // --- limits ---
 
@@ -59,13 +53,10 @@ const SECRET_PATTERNS = [/^\.env$/, /^\.env\..+$/];
 const SECRET_FILENAMES = new Set(["auth.json"]);
 const SECRET_EXCEPTIONS = new Set([".env.example", ".env.sample", ".env.template"]);
 
-const IMAGE_MIME: Record<string, string> = {
-	".jpg": "image/jpeg",
-	".jpeg": "image/jpeg",
-	".png": "image/png",
-	".gif": "image/gif",
-	".webp": "image/webp",
-};
+/** Which files `read` treats as images. What they contain is decided from their bytes. */
+const IMAGE_EXTENSIONS = new Set([
+	".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".avif", ".tif", ".tiff", ".bmp",
+]);
 
 export { expandPath, resolveToAbsolute };
 
@@ -98,8 +89,8 @@ export function isSecretFile(filePath: string): boolean {
 	return SECRET_PATTERNS.some((p) => p.test(basename));
 }
 
-function getImageMime(filePath: string): string | undefined {
-	return IMAGE_MIME[path.extname(filePath).toLowerCase()];
+function isImagePath(filePath: string): boolean {
+	return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 // --- directory listing ---
@@ -258,7 +249,7 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			return text;
 		},
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const resolved = resolveWithVariants(params.path, ctx.cwd);
 
 			if (isSecretFile(resolved)) {
@@ -296,58 +287,33 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			}
 
 			// --- image ---
-			const mime = getImageMime(resolved);
-			if (mime) {
+			if (isImagePath(resolved)) {
+				const images = planToolImages(ctx);
+				if (!images.ok) {
+					return { content: [{ type: "text" as const, text: images.reason }], isError: true } as any;
+				}
+				// No raw-bytes fallback: an image that cannot be fitted is corrupt or
+				// over the limits, and sending it anyway fails the whole request.
 				try {
-					// fit to the vision budget first. an unfitted 6000x4000 capture is a
-					// ~30MB base64 payload against a 10MB cap, and even when it squeaks
-					// through the API resamples it — so the model reads text that was
-					// resampled by someone whose filter we did not choose.
-					//
-					// falls back to the raw bytes on ANY failure: `read` becoming more
-					// fragile than it was would be a worse bug than a large payload.
-					try {
-						// `screenshot` prunes before every capture; `read` has to as well,
-						// or a session that opens many images grows the scratch dir with
-						// nothing ever sweeping it.
-						pruneOutDir(defaultOutDir());
-						const fit = fitImageFile(resolved, { basename: `read-${Date.now()}` });
-						const blocks = fitResultBlocks(fit);
-						// asis is the common case; saying nothing about it keeps the
-						// result identical to the old behaviour for images that fit.
-						if (fit.plan === "asis" && fit.resamples === 0) {
-							return {
-								content: [
-									{ type: "image" as const, data: fit.outputs[0]!.base64, mimeType: mime },
-								],
-							} as any;
-						}
-						return { content: blocks, details: { header: resolved, plan: fit.plan } } as any;
-					} catch (fitErr: any) {
-						// The fallback exists so that a FIT failure never makes `read`
-						// worse than the five-line version it replaced. But it must not
-						// fire for an image that CANNOT be rendered: sending the raw
-						// bytes would deliver the exact payload the API rejects with
-						// "Could not process image", and that 400 fails the whole
-						// request rather than this one call. Report it instead — a
-						// readable error beats a dead turn.
-						if (fitErr instanceof UnusableImageError) {
-							return {
-								content: [
-									{
-										type: "text" as const,
-										text: `cannot read ${resolved}: ${fitErr.message}`,
-									},
-								],
-								isError: true,
-							} as any;
-						}
-						const base64 = fs.readFileSync(resolved).toString("base64");
-						return { content: [{ type: "image" as const, data: base64, mimeType: mime }] } as any;
+					pruneOutDir(defaultOutDir());
+					const fit = fitImageFile(resolved, {
+						basename: `read-${Date.now()}`,
+						tier: images.tier,
+						limits: images.limits,
+						budget: images.budget,
+					});
+					recordReturnedImages(ctx, toolCallId, fit.totalBase64, fit.outputs.length);
+					const note = sessionNote(images.limits, images.usage, fit.totalBase64);
+					const untouched = fit.outputs.length === 1 && fit.outputs[0]!.path === resolved;
+					if (untouched && !note) {
+						const out = fit.outputs[0]!;
+						return { content: [{ type: "image" as const, data: out.base64, mimeType: out.mimeType }] } as any;
 					}
+					if (note) fit.notes.push(note);
+					return { content: fitResultBlocks(fit), details: { header: resolved, plan: fit.plan } } as any;
 				} catch (err: any) {
 					return {
-						content: [{ type: "text" as const, text: `failed to read image: ${err.message}` }],
+						content: [{ type: "text" as const, text: `cannot read ${resolved}: ${err?.message ?? err}` }],
 						isError: true,
 					} as any;
 				}

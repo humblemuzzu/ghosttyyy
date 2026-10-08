@@ -64,7 +64,7 @@ check("a very tall page slices rather than downscales", fit.plan === "slice");
 check("more than one slice", fit.outputs.length > 1);
 check(
 	"every slice is inside the tier budget",
-	// The default tier is high (4784), not standard — slices are 1988px tall.
+	// The default tier is high (4784), not standard — slices are 2000px tall.
 	fit.outputs.every((o) => o.tokens <= 4784),
 	`max ${Math.max(...fit.outputs.map((o) => o.tokens))} tokens`,
 );

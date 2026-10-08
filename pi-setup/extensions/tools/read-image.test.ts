@@ -1,19 +1,18 @@
-/**
- * `read` on an image must not hand the API a payload it will reject, and must
- * not become more fragile than the five-line version it replaced.
- */
+/** `read` on an image must never hand the API a payload it rejects. */
 
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createReadTool, NORMAL_LIMITS } from "./read";
 import { save, type Image } from "./lib/image";
-import { base64Bytes, countImageTokens, TIERS } from "./lib/vision";
+import { countImageTokens, TIERS } from "./lib/vision";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-read-image-"));
 const tool = createReadTool(NORMAL_LIMITS) as any;
 const ctx = { cwd: dir, sessionManager: { getSessionId: () => "test" } };
+const MiB = 1024 * 1024;
 
 function noise(width: number, height: number, seed = 1): Image {
 	const rgb = new Uint8Array(width * height * 3);
@@ -25,68 +24,117 @@ function noise(width: number, height: number, seed = 1): Image {
 	return { width, height, rgb };
 }
 
-const run = (p: string) => tool.execute("call-1", { path: p }, undefined, undefined, ctx);
+function convert(src: string, format: string, name: string): string {
+	const out = path.join(dir, name);
+	execFileSync("sips", ["-s", "format", format, src, "--out", out], { stdio: "ignore" });
+	return out;
+}
+
+let callId = 0;
+const run = (p: string, context: any = ctx) =>
+	tool.execute(`call-${++callId}`, { path: p }, undefined, undefined, context);
 
 describe("read: images are fitted before they reach the model", () => {
-	test("a small image is returned exactly as before — one image block, no commentary", async () => {
+	test("a small image is returned as before: one image block, no commentary", async () => {
 		const p = path.join(dir, "small.png");
 		save(noise(400, 300), p);
 		const result = await run(p);
-
 		expect(result.content).toHaveLength(1);
 		expect(result.content[0].type).toBe("image");
 		expect(result.content[0].mimeType).toBe("image/png");
 		expect(result.isError).toBeFalsy();
 	});
 
-	test("an oversized image is downscaled instead of shipped whole", async () => {
+	test("an oversized image is downscaled, and stays under pi's 4.5 MiB re-encode threshold", async () => {
 		const p = path.join(dir, "huge.png");
 		save(noise(3000, 2000), p);
-		const raw = fs.statSync(p).size;
 		const result = await run(p);
-
 		const image = result.content.find((c: any) => c.type === "image");
 		const text = result.content.find((c: any) => c.type === "text");
-		expect(image).toBeDefined();
 		expect(text.text).toContain("1 pass");
-
-		const sent = Buffer.from(image.data, "base64").length;
-		expect(sent).toBeLessThan(raw);
-		expect(base64Bytes(sent)).toBeLessThan(10_000_000);
-	});
-
-	test("what is sent actually fits the token budget", async () => {
-		const p = path.join(dir, "budget.png");
-		save(noise(3000, 2000, 9), p);
-		const result = await run(p);
-		const text = result.content.find((c: any) => c.type === "text").text;
-		const [, w, h] = /(\d+)×(\d+)\s*\((\d+) tokens/.exec(text) ?? [];
-		// `read` goes through the same seam as `screenshot`, so it gets the high
-		// tier by default too — an image the model OPENS deserves the same
-		// treatment as one it TAKES.
-		expect(countImageTokens(Number(w), Number(h))).toBeLessThanOrEqual(TIERS.highRes.maxTokens);
-	});
-
-	test("base64 stays padded through the fitted path", async () => {
-		const p = path.join(dir, "pad.png");
-		save(noise(2400, 1600, 3), p);
-		const result = await run(p);
-		const image = result.content.find((c: any) => c.type === "image");
+		expect(image.data.length).toBeLessThan(4.5 * MiB);
 		expect(image.data.length % 4).toBe(0);
 	});
 
-	test("a corrupt image still errors rather than throwing", async () => {
+	test("what is sent fits the high-res token budget", async () => {
+		const p = path.join(dir, "budget.png");
+		save(noise(3000, 2000, 9), p);
+		const text = (await run(p)).content.find((c: any) => c.type === "text").text;
+		const [, w, h] = /→ (\d+)×(\d+)/.exec(text) ?? [];
+		expect(countImageTokens(Number(w), Number(h))).toBeLessThanOrEqual(TIERS.highRes.maxTokens);
+	});
+});
+
+describe("read: the media type comes from the bytes, never the extension", () => {
+	test("PNG bytes named .jpg are sent as image/png", async () => {
+		const src = path.join(dir, "real.png");
+		save(noise(300, 200), src);
+		const p = path.join(dir, "liar.jpg");
+		fs.copyFileSync(src, p);
+		const result = await run(p);
+		expect(result.content[0].mimeType).toBe("image/png");
+	});
+
+	test("JPEG bytes named .png are sent as image/jpeg", async () => {
+		const src = path.join(dir, "jsrc.png");
+		save(noise(300, 200), src);
+		const result = await run(convert(src, "jpeg", "liar.png"));
+		expect(result.isError).toBeFalsy();
+		expect(result.content[0].mimeType).toBe("image/jpeg");
+	});
+
+	test("a HEIC photo is converted to PNG", async () => {
+		const src = path.join(dir, "hsrc.png");
+		save(noise(600, 400), src);
+		const result = await run(convert(src, "heic", "photo.heic"));
+		const image = result.content.find((c: any) => c.type === "image");
+		expect(image.mimeType).toBe("image/png");
+	});
+});
+
+describe("read: failures are reported, never shipped", () => {
+	test("a corrupt image is an error, not raw bytes", async () => {
 		const p = path.join(dir, "broken.png");
 		fs.writeFileSync(p, Buffer.from("nowhere near a png"));
 		const result = await run(p);
-		// Either the raw fallback ships the bytes, or it reports an error — but it
-		// must not reject the promise, which would surface as a tool crash.
-		expect(result).toBeDefined();
-		expect(Array.isArray(result.content)).toBe(true);
+		expect(result.isError).toBe(true);
+		expect(result.content.some((c: any) => c.type === "image")).toBe(false);
+		expect(result.content[0].text).toContain("not an image format");
 	});
 
-	test("a missing file is still a clean error", async () => {
-		const result = await run(path.join(dir, "nope.png"));
+	test("a missing file is a clean error", async () => {
+		expect((await run(path.join(dir, "nope.png"))).isError).toBe(true);
+	});
+
+	test("refuses when another image would push the session past the request-size limit", async () => {
+		const p = path.join(dir, "late.png");
+		save(noise(300, 200), p);
+		const full = {
+			...ctx,
+			sessionManager: {
+				buildSessionProjection: () => ({
+					messages: [{ role: "user", content: [{ type: "image", data: "A".repeat(31 * MiB), mimeType: "image/png" }] }],
+				}),
+			},
+		};
+		const result = await run(p, full);
 		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toContain("/compact");
+	});
+
+	test("past half the request limit, the result says so", async () => {
+		const p = path.join(dir, "busy.png");
+		save(noise(300, 200), p);
+		const busy = {
+			...ctx,
+			sessionManager: {
+				buildSessionProjection: () => ({
+					messages: [{ role: "user", content: [{ type: "image", data: "A".repeat(20 * MiB), mimeType: "image/png" }] }],
+				}),
+			},
+		};
+		const result = await run(p, busy);
+		expect(result.isError).toBeFalsy();
+		expect(result.content.find((c: any) => c.type === "text").text).toContain("session size");
 	});
 });

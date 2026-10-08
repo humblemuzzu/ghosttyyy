@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PNG } from "pngjs";
-import { crop, encode, type Image, load, readPngSize, save } from "./image";
+import { crop, encode, type Image, load, orient, readPngSize, save } from "./image";
 
 const dir = mkdtempSync(join(tmpdir(), "pi-image-test-"));
 
@@ -55,6 +55,13 @@ describe("readPngSize", () => {
     const path = join(dir, "tiny.png");
     writeFileSync(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     expect(() => readPngSize(path)).toThrow(/only 4 bytes/);
+  });
+
+  test("reads only the header, so a file cut short after it still reports its size", () => {
+    const path = join(dir, "header-only.png");
+    const full = encode(solid(300, 200, 5, 5, 5));
+    writeFileSync(path, full.subarray(0, 24));
+    expect(readPngSize(path)).toEqual({ width: 300, height: 200 });
   });
 });
 
@@ -127,5 +134,45 @@ describe("crop", () => {
     const img = solid(3, 3, 9, 8, 7);
     const whole = crop(img, { x: 0, y: 0, width: 3, height: 3 });
     expect(Array.from(whole.rgb)).toEqual(Array.from(img.rgb));
+  });
+});
+
+describe("orient", () => {
+  // A 3×2 image whose pixels are numbered 0..5 in reading order:
+  //   0 1 2
+  //   3 4 5
+  const numbered: Image = { width: 3, height: 2, rgb: new Uint8Array([0, 1, 2, 3, 4, 5].flatMap((v) => [v, v, v])) };
+  const grid = (img: Image) => {
+    const rows: number[][] = [];
+    for (let y = 0; y < img.height; y += 1) {
+      rows.push(Array.from({ length: img.width }, (_, x) => img.rgb[(y * img.width + x) * 3]!));
+    }
+    return rows;
+  };
+
+  // The EXIF definitions, as ImageMagick's -auto-orient applies them.
+  const expected: Record<number, number[][]> = {
+    1: [[0, 1, 2], [3, 4, 5]],
+    2: [[2, 1, 0], [5, 4, 3]],
+    3: [[5, 4, 3], [2, 1, 0]],
+    4: [[3, 4, 5], [0, 1, 2]],
+    5: [[0, 3], [1, 4], [2, 5]],
+    6: [[3, 0], [4, 1], [5, 2]],
+    7: [[5, 2], [4, 1], [3, 0]],
+    8: [[2, 5], [1, 4], [0, 3]],
+  };
+  for (const [orientation, rows] of Object.entries(expected)) {
+    test(`orientation ${orientation}`, () => {
+      expect(grid(orient(numbered, Number(orientation)))).toEqual(rows);
+    });
+  }
+
+  test("6 and 8 undo each other", () => {
+    expect(grid(orient(orient(numbered, 6), 8))).toEqual(grid(numbered));
+  });
+
+  test("an out-of-range value leaves the image alone", () => {
+    expect(orient(numbered, 0)).toBe(numbered);
+    expect(orient(numbered, 9)).toBe(numbered);
   });
 });

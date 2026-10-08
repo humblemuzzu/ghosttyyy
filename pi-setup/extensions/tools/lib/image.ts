@@ -1,33 +1,14 @@
 /**
- * Minimal PNG decode / encode / crop for the screenshot pipeline.
- *
- * Adapted from the `caliper` project's src/png.ts. Two deliberate deviations:
- *
- *  1. NO grayscale plane. caliper computes Rec.709 luma at load because every
- *     one of its measurement primitives reads it. We do no measurement, so on a
- *     3840×2160 capture that plane is 8.3 MB of allocation and one extra full
- *     pass over 8.3M pixels bought for nothing.
- *
- *  2. `readPngSize` reads the IHDR header only. The `asis` path must be able to
- *     answer "does this already fit?" without decoding an 8-megapixel image,
- *     and when it does fit we ship the original bytes rather than a re-encode.
- *     Decoding to re-encode an unchanged image is a pure loss: slower, and PNG
- *     round-trips are only lossless for pixels, not for whatever the encoder
- *     chose about filtering and chunk layout.
+ * Minimal PNG decode / encode / crop / orient for the vision pipeline,
+ * adapted from caliper's src/png.ts.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { PNG } from "pngjs";
 import type { Box } from "./vision";
 
-/*
- * DEPENDENCY NOTE: `pngjs` is ^7 but `@types/pngjs` is ^6.0.5, because 6.0.5 is
- * the newest version DefinitelyTyped publishes — there is no @types/pngjs@7 to
- * bump to, and pngjs ships no types of its own. The gap is safe only because
- * this file touches nothing but `PNG`, `PNG.sync.read` and `PNG.sync.write`,
- * which are unchanged across the major. Do not reach for newer pngjs APIs here
- * without checking them against the runtime rather than the types.
- */
+// pngjs is ^7 but @types/pngjs stops at 6.0.5. Only PNG.sync.read/write and
+// the PNG constructor are used, and those did not change across the major.
 
 /** A decoded image. `rgb` is 3 bytes per pixel, row-major, no padding. */
 export interface Image {
@@ -38,23 +19,25 @@ export interface Image {
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-/**
- * Pixel dimensions straight out of the IHDR chunk — 24 bytes read, no decode.
- *
- * This is the "pixel truth" step. It must never be replaced by a logical or
- * point size: on this 2× display a window whose CGWindowBounds says 1400×900 is
- * captured at 2800×1800, and ClaudeImageResizer shipped a bug for exactly that
- * reason (NSImage.size reports points, so a 3136×2000 Retina capture read as
- * 1568×1000 and sailed past the budget check untouched).
- */
+/** Width and height from the IHDR chunk; reads 24 bytes, decodes nothing. */
 export function readPngSize(path: string): { width: number; height: number } {
-  const fd = readFileSync(path, { flag: "r" });
-  if (fd.length < 24) throw new Error(`not a PNG: ${path} is only ${fd.length} bytes`);
-  if (!fd.subarray(0, 8).equals(PNG_SIGNATURE)) {
+  const head = Buffer.alloc(24);
+  const fd = openSync(path, "r");
+  let got: number;
+  try {
+    got = readSync(fd, head, 0, 24, 0);
+  } finally {
+    closeSync(fd);
+  }
+  return pngSizeFromHeader(head.subarray(0, got), path);
+}
+
+export function pngSizeFromHeader(head: Buffer, path = "image"): { width: number; height: number } {
+  if (head.length < 24) throw new Error(`not a PNG: ${path} is only ${head.length} bytes`);
+  if (!head.subarray(0, 8).equals(PNG_SIGNATURE)) {
     throw new Error(`not a PNG: ${path} has a bad signature`);
   }
-  // 8-byte signature, then the IHDR chunk: 4 length + 4 type + width + height.
-  return { width: fd.readUInt32BE(16), height: fd.readUInt32BE(20) };
+  return { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
 }
 
 export function load(path: string): Image {
@@ -63,10 +46,8 @@ export function load(path: string): Image {
   const rgb = new Uint8Array(pixels * 3);
   for (let i = 0; i < pixels; i += 1) {
     const alpha = png.data[i * 4 + 3] as number;
-    // Flatten onto white. `screencapture -o` still leaves alpha at a window's
-    // rounded corners; carrying an alpha channel through to the API would hand
-    // Claude a composite decision we cannot predict, so we make it here and
-    // make it the same way every time.
+    // Flattened onto white here so transparent corners of a window capture
+    // look the same every time, instead of however the API composites them.
     for (let channel = 0; channel < 3; channel += 1) {
       const value = png.data[i * 4 + channel] as number;
       rgb[i * 3 + channel] = Math.round((value * alpha + 255 * (255 - alpha)) / 255);
@@ -109,4 +90,37 @@ export function crop(img: Image, box: Box): Image {
     rgb.set(img.rgb.subarray(from * 3, (from + box.width) * 3), y * box.width * 3);
   }
   return { width: box.width, height: box.height, rgb };
+}
+
+/**
+ * Apply an EXIF orientation (1-8) so the pixels are upright. For each output
+ * pixel, `source` returns where it comes from in the stored image.
+ */
+export function orient(img: Image, orientation: number): Image {
+  if (orientation < 2 || orientation > 8) return img;
+  const { width: W, height: H } = img;
+  const swap = orientation >= 5;
+  const outW = swap ? H : W;
+  const outH = swap ? W : H;
+  const source: (x: number, y: number) => number = {
+    2: (x: number, y: number) => y * W + (W - 1 - x),
+    3: (x: number, y: number) => (H - 1 - y) * W + (W - 1 - x),
+    4: (x: number, y: number) => (H - 1 - y) * W + x,
+    5: (x: number, y: number) => x * W + y,
+    6: (x: number, y: number) => (H - 1 - x) * W + y,
+    7: (x: number, y: number) => (H - 1 - x) * W + (W - 1 - y),
+    8: (x: number, y: number) => x * W + (W - 1 - y),
+  }[orientation]!;
+
+  const rgb = new Uint8Array(outW * outH * 3);
+  for (let y = 0; y < outH; y += 1) {
+    for (let x = 0; x < outW; x += 1) {
+      const from = source(x, y) * 3;
+      const to = (y * outW + x) * 3;
+      rgb[to] = img.rgb[from] as number;
+      rgb[to + 1] = img.rgb[from + 1] as number;
+      rgb[to + 2] = img.rgb[from + 2] as number;
+    }
+  }
+  return { width: outW, height: outH, rgb };
 }

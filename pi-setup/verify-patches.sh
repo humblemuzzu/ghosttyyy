@@ -117,6 +117,33 @@ else
          "cp pi-setup/extensions/pi-tool-display/config.json $TDCFG"
 fi
 
+# ── images: pi still normalizes tool images with the profile lib/image-budget.ts assumes ──
+# Our tools size every image to pass pi's normalizer untouched; that normalizer
+# is also what clamps every OTHER tool's images under the API's many-image limit.
+IMG_REPORT=$(python3 - "$PI_AGENT/settings.json" "$PI_DIST/utils/image-resize-core.js" "$PI_DIST/core/agent-session.js" <<'PY'
+import json, re, sys
+settings, core, session = sys.argv[1:4]
+problems = []
+try:
+    if json.load(open(settings)).get("images", {}).get("autoResize") is False:
+        problems.append("settings.json sets images.autoResize false")
+except FileNotFoundError:
+    pass
+src = open(core).read()
+if not re.search(r"maxWidth:\s*2000", src) or not re.search(r"maxHeight:\s*2000", src) or "4.5 * 1024 * 1024" not in src:
+    problems.append("pi's default resize profile is no longer 2000x2000 / 4.5 MiB (update PI_DEFAULT_RESIZE)")
+if "normalizeToolResultImages" not in open(session).read():
+    problems.append("agent-session.js no longer normalizes tool result images")
+print("; ".join(problems))
+PY
+)
+if [ -z "$IMG_REPORT" ]; then
+    pass "images: pi normalizes tool images, default profile 2000px / 4.5 MiB, autoResize on"
+else
+    fail "images: $IMG_REPORT" \
+         "re-check lib/image-budget.ts against pi's utils/image-resize-core.js, then re-run bun test lib/image-fit.test.ts"
+fi
+
 # ── agent prompts: every repo prompt is deployed ──
 # pi-spawn reads sub-agent prompts from here; a missing file silently
 # degrades that agent to the default body.

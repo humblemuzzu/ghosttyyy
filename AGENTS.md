@@ -384,23 +384,28 @@ Overrides: `PI_BASH_MAX_TIMEOUT_SEC`, `PI_BASH_IDLE_KILL_SEC` (0 disables),
 
 ### screenshot / vision budget
 
-`lib/vision.ts` is a behaviour-identical port of caliper's `src/vision.ts`
-(same algorithm as ClaudeImageResizer's `ImageBudget.swift`). **Change a
-constant in all three and re-run `lib/vision.test.ts`.**
+`resizedSize`/`countImageTokens` must match Anthropic's reference code (fuzzed
+in `vision.test.ts`). Tiers: standard 1568px/1568 tokens, high-res (Claude
+4.7+) 2576px/4784; `tierForModel` picks from `ctx.model`.
 
-- Claude's budget is **two** limits: 1568px padded edge AND 1568 visual tokens
-  (`ceil(w/28) × ceil(h/28)`); the token limit usually binds first, which is
-  why `sips -Z` is wrong.
 - **`fitImageFile` is the only path from pixels to a vision model** (`screenshot`
   and `read`). `sips` is a codec, never a resizer; `planView` decides geometry.
-- `high` is the default tier; `resolveTier()` clamps it to **2000px**
-  (`MANY_IMAGE_MAX_EDGE`) because past 20 images per request the ceiling drops
-  and a tool cannot see the image count.
+- **Every output must pass pi's tool-image normalizer untouched**
+  (`agent-session.js` → `normalizeToolResultImages`): side ≤ 2000px and base64
+  < `inputLimits.images.resize.maxBytes` (4.5 MiB). Anything over is silently
+  re-encoded by pi. `image-fit.test.ts` runs pi's real normalizer to pin this.
+- Side cap 2000px (`maxSide`): past 20 images per request the API rejects
+  larger ones, and history is resent every turn.
+- **pi does not enforce the 32 MiB request limit**; one oversized request is a
+  413 on every later turn. `lib/image-budget.ts` measures the context
+  (`buildSessionProjection`) plus in-flight calls and refuses before it.
+- Media type comes from the bytes, never the extension (a mismatch is a 400).
+  sips ignores EXIF orientation, so `orient()` applies it.
 - `MAX_IMAGES_PER_CALL = 12`, truncating from the top. **Chromium returns BLANK
   past 16384px** without erroring; `MAX_RENDERABLE_HEIGHT` clips and reports it.
-- 0x0 and truncated PNGs **kill the whole request** — both throw
-  `UnusableImageError` before `planView`; `read.ts`'s raw-bytes fallback must
-  skip that class.
+  Full-page captures scroll through once first, or lazy content is missing.
+- 0x0, truncated and unreadable files throw `UnusableImageError`; `read` has
+  no raw-bytes fallback.
 - `collectSubAgentImages` returns the **2 most recent** images from
   oracle/delegate/code_review/chad.
 - macOS: every tab is its own `NSWindow`; `CGWindowListCopyWindowInfo` option

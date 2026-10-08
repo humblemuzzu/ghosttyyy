@@ -1,22 +1,7 @@
 /**
- * screenshot tool — capture the screen, a window, or a region, and hand back an
- * image that is already inside Claude's vision budget.
- *
- * WHY THIS EXISTS
- *
- * Agents were doing this by hand:
- *
- *   screencapture -x -o -l 12237 /tmp/shot.png && sips -Z 1400 /tmp/shot.png
- *
- * Both halves are wrong. `sips -Z 1400` picks a long edge that satisfies the
- * 1568px edge limit and blows the 1568-token limit — a 1400×900 result costs
- * 1650 tokens, so the API resizes it AGAIN to 1372×882. Text gets resampled
- * twice for a 2% size change. And on a 2× display the capture was 2800×1800 to
- * begin with, so that is a 3.2× reduction pushed through two filters.
- *
- * This tool resamples exactly once, to the exact dimensions Anthropic's own
- * resizer would have chosen, using a filter picked for UI rather than for
- * photographs. See lib/vision.ts and lib/image-fit.ts.
+ * screenshot: capture the screen, a window, a region or a web page, and return
+ * it already inside the model's image limits (see lib/image-fit.ts), so neither
+ * pi nor the API resamples it again.
  */
 
 import fs from "node:fs";
@@ -43,6 +28,7 @@ import {
 	imageSize,
 	pruneOutDir,
 } from "./lib/image-fit";
+import { planToolImages, recordReturnedImages, sessionNote } from "./lib/image-budget";
 import { crop, load, save } from "./lib/image";
 import { captureWebPage, WebCaptureError } from "./lib/web-capture";
 import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
@@ -53,12 +39,7 @@ const COLLAPSED_EXCERPTS: Excerpt[] = [{ focus: "head" as const, context: 6 }];
 /** Cap the candidate list so an ambiguous match cannot flood the context. */
 const MAX_CANDIDATES = 25;
 
-/**
- * Models send a four-number region as an array, a JSON string, a bare
- * "x,y,w,h" string, or an object. Librarian's `normalizeRepositories` exists
- * for the same reason; rejecting the shape a model happens to pick teaches it
- * nothing and costs a turn.
- */
+/** Accepts the shapes models actually send: an array, a JSON or "x,y,w,h" string, or an object. */
 export function normalizeRegion(
 	value: unknown,
 ): { x: number; y: number; width: number; height: number } | undefined {
@@ -97,15 +78,8 @@ export function normalizeRegion(
 }
 
 /**
- * Render a window list, folding tab groups into one entry each.
- *
- * A flat list is actively misleading on a tab-heavy machine: 4 visible terminals
- * produced 17 rows that differed only by id, and the row you can actually
- * capture was buried among 15 you cannot. Grouping by frame shows the same
- * information at a third of the length and puts the capturable id first.
- *
- * Falls back to the flat list when nothing groups, so ordinary apps read exactly
- * as before.
+ * A window list with native-tab groups folded into one entry each, the
+ * capturable (on-screen) tab first. Ungrouped lists render flat.
  */
 function renderWindowTable(windows: WindowInfo[], heading: string): string {
 	const groups = groupLikelyTabs(windows);
@@ -125,14 +99,10 @@ function renderWindowTable(windows: WindowInfo[], heading: string): string {
 	];
 	for (const g of groups.slice(0, MAX_CANDIDATES)) {
 		const head = g[0]!;
-		// A frame with one window is just a window. Folding it adds a "1 tab(s)"
-		// header and an indent around a single line, which is pure noise — only
-		// the genuinely grouped entries earn the extra structure.
 		if (g.length === 1) {
 			lines.push(describeWindow(head));
 			continue;
 		}
-		// The on-screen tab is the one that can actually be captured, so it leads.
 		const live = g.find((w) => w.onScreen);
 		const lead = live ?? head;
 		const state = live ? "on screen" : "not on screen";
@@ -155,11 +125,7 @@ function renderWindowTable(windows: WindowInfo[], heading: string): string {
 	return lines.join("\n");
 }
 
-/**
- * the window list a person would expect: windows of regular (Dock) apps.
- * agents, helpers and system overlays (WindowManager, AutoFill, loginwindow)
- * are counted, not listed; `app` still matches them.
- */
+/** Windows of regular (Dock) apps; helper and system windows are counted, not listed. */
 export function renderOpenWindows(pool: WindowInfo[]): string {
 	const shown = pool.filter((w) => w.regularApp !== false);
 	const hidden = pool.length - shown.length;
@@ -169,28 +135,15 @@ export function renderOpenWindows(pool: WindowInfo[]): string {
 		: table;
 }
 
-/**
- * What `resolveWindow` decided, so the caller can disclose a choice it made.
- *
- * Auto-picking silently was a real complaint from a test run: `app:"ghostty"`
- * matched 12 windows and captured one with no signal, while `app` + a
- * `window_title` matched 5 and refused outright. Both behaviours are defensible;
- * the problem was that the caller could not tell which had happened, so it had
- * no reason to doubt it got the window it meant.
- */
 export interface WindowChoice {
 	window: WindowInfo;
-	/** Set when more than one window matched and one was picked for the caller. */
+	/** Set when several windows matched and one was picked, so the caller can say so. */
 	autoPicked?: { total: number; query: string };
 }
 
 /**
- * The sibling of `target` that is currently on screen, if its tab group has one.
- *
- * Capturing any tab grabs the whole group as it is *currently displayed*, so a
- * background tab is never capturable on its own — but the group usually is,
- * under a different id. Without this, "13707 cannot be captured" is a dead end
- * when a perfectly good capture of that same window is one id away.
+ * The on-screen window sharing `target`'s app and exact frame: its tab group
+ * as currently displayed. Undefined when `target` is itself on screen.
  */
 export function displayedSibling(target: WindowInfo, pool: WindowInfo[]): WindowInfo | undefined {
 	if (target.onScreen) return undefined;
@@ -207,19 +160,9 @@ export function displayedSibling(target: WindowInfo, pool: WindowInfo[]): Window
 }
 
 /**
- * What to tell a caller whose target is a background tab.
- *
- * Only ever reached AFTER a capture has actually failed. Do not claim a
- * background tab is uncapturable in principle — measured, it often is
- * capturable: `window_id 13861`, a background tab, captured fine at 3840×2080
- * (exactly bounds×2, without the group's tab bar). An earlier draft of this
- * message asserted "a background tab can never be captured on its own" and a
- * single live test disproved it.
- *
- * Deliberately does NOT auto-capture the sibling either: the group renders
- * whichever tab is active, so capturing it returns different CONTENT than was
- * asked for. Silently substituting it would be the same class of bug as the
- * silent auto-pick — right pixels, wrong subject, no disclosure.
+ * Advice after a background tab failed to capture. Background tabs often do
+ * capture, so this is only used after a real failure, and the sibling is never
+ * captured in its place: it shows the active tab's content, not the one asked for.
  */
 export function tabRescueAdvice(target: WindowInfo, sibling: WindowInfo): string {
 	return (
@@ -231,13 +174,7 @@ export function tabRescueAdvice(target: WindowInfo, sibling: WindowInfo): string
 	);
 }
 
-/**
- * Resolve a window target, or explain the ambiguity well enough to fix it.
- *
- * `pool` is injectable because the interesting branches depend on which Spaces
- * happen to be active, which makes them untestable against the live desktop —
- * the ambiguous case stops being ambiguous the moment a window moves.
- */
+/** Resolve a window target, or explain the ambiguity well enough to fix it. `pool` is injectable for tests. */
 export function resolveWindow(params: any, pool: WindowInfo[] = listWindows()): WindowChoice {
 	if (params.window_id !== undefined) {
 		const byId = findWindows({ id: Number(params.window_id) }, pool);
@@ -263,31 +200,18 @@ export function resolveWindow(params: any, pool: WindowInfo[] = listWindows()): 
 		);
 	}
 	if (matches.length > 1) {
-		// Prefer an unambiguous on-screen match before giving up: a background
-		// app with six hidden helper windows should not defeat "screenshot Safari".
 		const onScreen = matches.filter((w) => w.onScreen);
 		if (onScreen.length === 1) {
 			return { window: onScreen[0]!, autoPicked: { total: matches.length, query } };
 		}
-		/*
-		 * Only suggest `window_title` when it could actually work. Telling a
-		 * caller to "narrow it with window_title" after it already passed one —
-		 * or when every candidate shares a byte-identical title — is advice that
-		 * cannot succeed, and it invites a retry loop.
-		 */
-		const distinctTitles = new Set(matches.map((w) => w.title)).size;
-		const titleCouldHelp = distinctTitles > 1;
+		// Suggest window_title only when the candidates' titles actually differ.
+		const titleCouldHelp = new Set(matches.map((w) => w.title)).size > 1;
 		const advice = titleCouldHelp
 			? params.window_title
 				? `Refine window_title (the candidates below differ), or pass window_id.`
 				: `Narrow it with window_title, or pass window_id.`
 			: `Every candidate reports the same title, so window_title cannot separate them — ` +
 				`pass window_id.`;
-		/*
-		 * A raw count is misleading under native tabbing: every tab is its own
-		 * window, so two real windows can report sixteen matches. Say how many
-		 * distinct frames there are, so the number matches what the user sees.
-		 */
 		const groups = groupLikelyTabs(matches);
 		const tabNote =
 			groups.length < matches.length
@@ -318,6 +242,8 @@ export function createScreenshotTool(): ToolDefinition {
 			"Targeting, in precedence order: window_id, then app/window_title, then region, otherwise " +
 			"the whole display; a url beats all of them. A failed window match returns the candidate " +
 			"list, so the error tells you what to pass next.\n\n" +
+			"A whole screen or large window is shrunk to fit; to read small text, capture a region " +
+			"around it, which comes back at full resolution.\n\n" +
 			"A url renders the WHOLE page in a headless browser, below the fold included, as ordered " +
 			"readable slices. A page too long for one call is truncated from the top and says so — pass " +
 			"a selector to reach a specific section.\n\n" +
@@ -407,7 +333,7 @@ export function createScreenshotTool(): ToolDefinition {
 			tier: Type.Optional(
 				Type.Union([Type.Literal("standard"), Type.Literal("high")], {
 					description:
-						'Detail level. Defaults to "high", which is never worse than "standard"; pass "standard" only to deliberately get a smaller image.',
+						'Detail level. Defaults to the current model\'s own tier, "high" on Claude 4.7 and later; pass "standard" only to deliberately get a smaller image.',
 				}),
 			),
 		}),
@@ -423,8 +349,7 @@ export function createScreenshotTool(): ToolDefinition {
 			else if (args?.window_title) what = String(args.window_title);
 			else if (args?.region) what = `region ${JSON.stringify(args.region)}`;
 			else if (args?.display !== undefined) what = `display ${args.display}`;
-			// Single-line sink: a newline here is width-0 to every check and still
-			// moves the terminal cursor a row, which smears the whole TUI.
+			// Single-line sink: a newline is width-0 to pi-tui and still moves the cursor.
 			what = what.replace(/[\r\n\t\v\f]+/g, " ").slice(0, 60);
 			text.setText(theme.fg("toolTitle", theme.bold("Screenshot ")) + theme.fg("dim", what));
 			return text;
@@ -434,7 +359,7 @@ export function createScreenshotTool(): ToolDefinition {
 			const Container = getContainer();
 			const container = context?.lastComponent ?? new Container();
 			container.clear();
-			// The image blocks are rendered by pi itself; we show the audit trail.
+			// pi renders the image blocks itself; this shows the text audit trail.
 			const textBlock = [...(result.content ?? [])].reverse().find((c: any) => c.type === "text");
 			const body = textBlock?.text ?? "(no output)";
 			container.addChild(
@@ -446,13 +371,12 @@ export function createScreenshotTool(): ToolDefinition {
 			return container;
 		},
 
-		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const outDir = defaultOutDir();
 			try {
 				fs.mkdirSync(outDir, { recursive: true });
 				pruneOutDir(outDir);
 
-				// --- list mode: no capture at all
 				if (params.list) {
 					const windows = listWindows();
 					const advice = permissionAdvice();
@@ -466,6 +390,11 @@ export function createScreenshotTool(): ToolDefinition {
 						],
 						details: { windows },
 					} as any;
+				}
+
+				const images = planToolImages(ctx, params.tier);
+				if (!images.ok) {
+					return { content: [{ type: "text" as const, text: images.reason }], isError: true } as any;
 				}
 
 				const region = normalizeRegion(params.region);
@@ -485,8 +414,6 @@ export function createScreenshotTool(): ToolDefinition {
 				const notes: string[] = [];
 
 				if (params.url) {
-					// A page is not a screen. Render it rather than photograph it, so
-					// everything below the fold is included.
 					const web = await captureWebPage(rawPath, {
 						url: String(params.url),
 						width: params.viewport_width === undefined ? undefined : Number(params.viewport_width),
@@ -497,14 +424,12 @@ export function createScreenshotTool(): ToolDefinition {
 					captured = `${web.finalUrl}${web.title ? ` — ${web.title}` : ""}`;
 					if (params.selector) captured += ` [${params.selector}]`;
 					if (web.clipped) {
-						// Distinct from the slice cap: this is the browser being unable to
-						// DRAW past its texture limit, not us choosing to return less.
 						notes.push(
 							`CLIPPED BY THE BROWSER: the document is ` +
-								`${web.clipped.documentHeight.toLocaleString()}px tall, but Chromium cannot ` +
-								`render past ${web.clipped.capturedHeight.toLocaleString()}px in one pass — ` +
+								`${web.clipped.documentHeight.toLocaleString("en-US")}px tall, but Chromium cannot ` +
+								`render past ${web.clipped.capturedHeight.toLocaleString("en-US")}px in one pass — ` +
 								`beyond that it returns blank pixels rather than failing. Only the top ` +
-								`${web.clipped.capturedHeight.toLocaleString()}px is real. Use a selector to ` +
+								`${web.clipped.capturedHeight.toLocaleString("en-US")}px is real. Use a selector to ` +
 								`reach a section further down.`,
 						);
 					}
@@ -535,8 +460,7 @@ export function createScreenshotTool(): ToolDefinition {
 					}
 					const bringForward = async () => {
 						await activateApp(window.app);
-						// The window may have moved or resized coming forward, and a
-						// stale record would make any later failure message wrong.
+						// The window may move or resize coming forward.
 						const refreshed = findWindows({ id: window.id });
 						if (refreshed[0]) window = refreshed[0];
 					};
@@ -546,27 +470,12 @@ export function createScreenshotTool(): ToolDefinition {
 					try {
 						await captureWindow(rawPath, window, opts);
 					} catch (err) {
-						/*
-						 * A window on another Space MAY still be capturable — measured 9
-						 * of 10 were — so we cannot pre-emptively activate, and we cannot
-						 * pre-emptively refuse either. The only honest move is to try,
-						 * and on the one failure that does occur, do the thing the error
-						 * message was about to tell the model to do itself. Saves a whole
-						 * round-trip on the single case where it matters.
-						 *
-						 * Only when the caller did NOT already ask for it (no point
-						 * activating twice) and only for an off-screen window (an
-						 * on-screen failure is a different problem — permissions, most
-						 * likely — and stealing focus would not help).
-						 */
-						// undefined means "no opinion" — the only case we may act on.
-						// An explicit true already activated; an explicit false is a
-						// deliberate opt-out; an on-screen failure is a different problem
-						// (permissions, most likely) that stealing focus would not fix.
+						// Most off-Space windows still capture, so activation is a retry,
+						// never a precaution. Only when the caller left `activate` unset
+						// and the window was off screen; an on-screen failure is usually
+						// permissions, which focus would not fix.
 						const mayRetry = params.activate === undefined && !window.onScreen;
 						if (!mayRetry) {
-							// Same dead end, reached without the retry: an explicit
-							// activate:false, or an on-screen window that failed anyway.
 							const sibling = displayedSibling(window, pool);
 							if (!sibling) throw err;
 							throw new CaptureError(
@@ -578,11 +487,6 @@ export function createScreenshotTool(): ToolDefinition {
 							await captureWindow(rawPath, window, opts);
 							autoActivated = true;
 						} catch (retryErr: any) {
-							/*
-							 * Bringing the app forward did not help, which for a tab means
-							 * it never could: the group renders one tab at a time. Point at
-							 * the sibling that IS displayed rather than stopping dead.
-							 */
 							const sibling = displayedSibling(window, pool);
 							if (!sibling) throw retryErr;
 							throw new CaptureError(
@@ -594,15 +498,9 @@ export function createScreenshotTool(): ToolDefinition {
 					if (autoActivated) {
 						captured += " (brought forward — it was on another Space)";
 					}
-					/*
-					 * A region given alongside a window means "inside that window".
-					 *
-					 * Cropping AFTER the capture rather than converting to screen
-					 * coordinates and calling captureRegion is deliberate: screen
-					 * coordinates go stale the instant the window moves, and they cannot
-					 * express the tab-bar offset that CGWindowBounds omits. Cropping the
-					 * window's own pixels is correct by construction.
-					 */
+					// A region with a window is relative to the window. Cropping the
+					// capture stays correct if the window moves, and includes the
+					// native tab bar that CGWindowBounds leaves out.
 					if (region) {
 						const shot = imageSize(rawPath);
 						const scale = Math.max(1, Math.round(shot.width / window.width));
@@ -630,22 +528,8 @@ export function createScreenshotTool(): ToolDefinition {
 							);
 						}
 					}
-					/*
-					 * `CGWindowBounds` and `screencapture -l` do not always agree, and the
-					 * mismatch looks like a bug when it is not. Measured on Ghostty: the
-					 * list reports 1920x1040 at y=40 (the content area) while the capture
-					 * is 1920x1080 from y=0 — the difference is exactly the native tab
-					 * bar, which the bounds exclude and the capture rightly includes.
-					 * Verified by reading the top strip: it is Ghostty's tab bar, not the
-					 * menu bar, so nothing extra was captured and nothing was lost.
-					 *
-					 * Saying so costs one line and stops a reviewer having to re-derive it.
-					 *
-					 * Only when the whole window was captured. After a region crop the
-					 * comparison is meaningless — the image is deliberately smaller — and
-					 * the note would end by claiming the full window was captured, which
-					 * would be flatly untrue.
-					 */
+					// CGWindowBounds excludes a native tab bar that the capture includes;
+					// say so, or the extra height looks like a bug.
 					if (!region) {
 						try {
 							const shot = imageSize(rawPath);
@@ -660,7 +544,7 @@ export function createScreenshotTool(): ToolDefinition {
 								);
 							}
 						} catch {
-							// A size read is a nicety; never fail a good capture over it.
+							// informational only
 						}
 					}
 				} else if (region) {
@@ -690,12 +574,16 @@ export function createScreenshotTool(): ToolDefinition {
 				}
 
 				const fit = fitImageFile(rawPath, {
-					tier: params.tier,
+					tier: images.tier,
+					limits: images.limits,
+					budget: images.budget,
 					outDir,
 					basename: stamp,
 				});
+				recordReturnedImages(ctx, toolCallId, fit.totalBase64, fit.outputs.length);
+				const sessionLine = sessionNote(images.limits, images.usage, fit.totalBase64);
+				if (sessionLine) notes.push(sessionLine);
 
-				// The raw capture is only worth keeping when it IS the output.
 				if (fit.outputs.every((o) => o.path !== rawPath)) {
 					fs.rmSync(rawPath, { force: true });
 				}
@@ -709,8 +597,10 @@ export function createScreenshotTool(): ToolDefinition {
 					details: {
 						header: captured,
 						plan: fit.plan,
+						tier: images.tier,
 						resamples: fit.resamples,
 						totalTokens: fit.totalTokens,
+						totalBase64: fit.totalBase64,
 						source: fit.source,
 						outputs: fit.outputs.map(({ base64: _base64, ...rest }) => rest),
 					},

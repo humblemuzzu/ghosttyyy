@@ -10,16 +10,18 @@ import os from "node:os";
 import path from "node:path";
 import { encode, save, type Image } from "../extensions/tools/lib/image";
 import { fitImageFile } from "../extensions/tools/lib/image-fit";
+import { limitsForModel } from "../extensions/tools/lib/image-budget";
 import {
 	base64Bytes,
 	countImageTokens,
-	MANY_IMAGE_MAX_EDGE,
-	MAX_BASE64_BYTES,
-	MAX_EDGE_ABSOLUTE,
+	MANY_IMAGE_MAX_SIDE,
 	planView,
 	resizedSize,
 	resolveTier,
 } from "../extensions/tools/lib/vision";
+
+const API_MAX_SIDE = 8000;
+const { maxImageBase64 } = limitsForModel();
 
 function noise(w: number, h: number): Image {
 	const rgb = new Uint8Array(w * h * 3);
@@ -45,11 +47,11 @@ for (const name of ["standard", "high"] as const) {
 		const f = resizedSize(w, h, tier);
 		maxEdge = Math.max(maxEdge, f.width, f.height);
 	}
-	flag(maxEdge <= MANY_IMAGE_MAX_EDGE, `${name}: largest edge we can emit`, `${maxEdge}px vs 2000 (>20-image rule)`);
-	flag(maxEdge <= MAX_EDGE_ABSOLUTE, `${name}: vs the absolute 8000px ceiling`, `${maxEdge}px`);
+	flag(maxEdge <= MANY_IMAGE_MAX_SIDE, `${name}: largest edge we can emit`, `${maxEdge}px vs 2000 (>20-image rule)`);
+	flag(maxEdge <= API_MAX_SIDE, `${name}: vs the absolute 8000px ceiling`, `${maxEdge}px`);
 }
 
-console.log("\n=== 2. payload cap, worst-case incompressible content ===");
+console.log("\n=== 2. per-image payload, worst-case incompressible content ===");
 for (const name of ["standard", "high"] as const) {
 	const tier = resolveTier(name);
 	const f = resizedSize(3840, 2160, tier);
@@ -57,13 +59,11 @@ for (const name of ["standard", "high"] as const) {
 	const b64 = base64Bytes(bytes);
 	console.log(
 		`  ....  ${`${name}: raw payload at ${f.width}x${f.height}`.padEnd(46)} ` +
-			`${(b64 / 1e6).toFixed(2)}MB vs 10MB cap${b64 > MAX_BASE64_BYTES.api ? "  (needs the ladder)" : ""}`,
+			`${(b64 / 1e6).toFixed(2)}MB vs pi's 4.5 MiB${b64 > maxImageBase64 ? "  (needs the ladder)" : ""}`,
 	);
 }
 
-// Assumption-free version of the above: actually run the pipeline on the worst
-// case and confirm what comes OUT is under the cap. "the ladder must engage" is
-// a claim; this is a measurement.
+// Measured, not assumed: what the pipeline actually emits for the worst case.
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-failsurf-"));
 for (const name of ["standard", "high"] as const) {
 	const f = resizedSize(3840, 2160, resolveTier(name));
@@ -72,7 +72,7 @@ for (const name of ["standard", "high"] as const) {
 	const fit = fitImageFile(src, { tier: name, outDir: scratch, basename: `out-${name}` });
 	const out = fit.outputs[0]!;
 	flag(
-		base64Bytes(out.bytes) <= MAX_BASE64_BYTES.api,
+		out.base64.length <= maxImageBase64,
 		`${name}: what the pipeline ACTUALLY emits`,
 		`${out.width}x${out.height} ${out.mimeType.split("/")[1]} -> ${(base64Bytes(out.bytes) / 1e6).toFixed(2)}MB`,
 	);

@@ -13,7 +13,10 @@
 import { statSync } from "node:fs";
 import { crop, encode, load, readPngSize } from "../extensions/tools/lib/image";
 import { downscale } from "../extensions/tools/lib/resample";
-import { base64Bytes, MAX_BASE64_BYTES, planView, TIERS } from "../extensions/tools/lib/vision";
+import { limitsForModel } from "../extensions/tools/lib/image-budget";
+import { base64Bytes, planView, TIERS } from "../extensions/tools/lib/vision";
+
+const { maxImageBase64 } = limitsForModel();
 
 const path = process.argv[2];
 if (!path) {
@@ -34,7 +37,7 @@ console.log(`\nsource: ${path}`);
 console.log(`  ${"on disk".padEnd(34)} ${bytes.toLocaleString().padStart(11)} bytes`);
 console.log(
   `  ${"as base64".padEnd(34)} ${base64Bytes(bytes).toLocaleString().padStart(11)} bytes  ` +
-    `(${((base64Bytes(bytes) / MAX_BASE64_BYTES.api) * 100).toFixed(1)}% of API cap)`,
+    `(${((base64Bytes(bytes) / maxImageBase64) * 100).toFixed(1)}% of pi's per-image cap)`,
 );
 
 console.log("\nheader-only size read (the asis fast path):");
@@ -68,7 +71,7 @@ if (plan.kind === "downscale") {
   console.log(
     `  -> ${small.width}x${small.height}, ${out.length.toLocaleString()} bytes, ` +
       `base64 ${base64Bytes(out.length).toLocaleString()} ` +
-      `(${((base64Bytes(out.length) / MAX_BASE64_BYTES.api) * 100).toFixed(1)}% of API cap)`,
+      `(${((base64Bytes(out.length) / maxImageBase64) * 100).toFixed(1)}% of pi's per-image cap)`,
   );
 } else if (plan.kind === "slice") {
   const first = plan.slices[0]!;

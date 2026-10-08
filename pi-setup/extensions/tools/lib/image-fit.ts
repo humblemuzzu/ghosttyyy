@@ -1,64 +1,61 @@
 /**
- * The one place an image is made safe to send to a vision model.
+ * The one place an image is made safe to send to a model: `read` and
+ * `screenshot` both go through `fitImageFile`.
  *
- * Both `read` (any image the model opens) and `screenshot` (any image the model
- * takes) funnel through `fitImageFile`. Nothing else should base64 an image.
- *
- * THE INVARIANT: geometry decisions are made here, in TypeScript, by
- * `planView`. `sips` is used ONLY as a codec — transcoding between formats and
- * encoding JPEG at a given quality. It is never asked to resize anything.
- * `sips -Z <n>` is precisely the bug this module exists to remove: it picks a
- * long edge that ignores the token budget, so the API resamples a second time
- * over text we already resampled once.
+ * Geometry comes from `planView`; `sips` is only a codec (decoding formats
+ * pngjs cannot, encoding JPEG) and never resizes. Every output stays inside
+ * pi's resize profile, so pi's own normalizer passes it through untouched
+ * instead of resampling it a second time.
  */
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { crop, encode, type Image, load, readPngSize } from "./image";
+import { crop, encode, type Image, load, orient, pngSizeFromHeader } from "./image";
+import { type CallBudget, defaultCallBudget, type ImageLimits, limitsForModel } from "./image-budget";
+import { type ImageFormat, orientationOf, readHead, sniffImageFormat } from "./image-format";
 import { downscale } from "./resample";
 import {
 	base64Bytes,
 	countImageTokens,
-	MAX_BASE64_BYTES,
 	planView,
 	resolveTier,
+	type Size,
 	type TierName,
 	type ViewPlan,
 } from "./vision";
 
-export const MIME_BY_EXT: Record<string, string> = {
-	".jpg": "image/jpeg",
-	".jpeg": "image/jpeg",
-	".png": "image/png",
-	".gif": "image/gif",
-	".webp": "image/webp",
-};
-
 /**
- * ClaudeImageResizer's ladder. Dimensions come down before quality does, and
- * quality never goes below 0.75 — heavy JPEG artefacts make small text harder
- * to read than a smaller-but-clean image.
+ * Tried in order until one fits the byte cap. An image too big as PNG is
+ * photographic (UI text compresses well), and JPEG is the codec for photos;
+ * shrinking throws away detail, so it comes last. Never below q80: heavy
+ * compression blurs small text.
  */
-const DIMENSION_STEPS = [1.0, 0.85, 0.72, 0.61, 0.52] as const;
-const JPEG_QUALITY_STEPS = [95, 90, 85, 80, 75] as const;
+const ENCODE_LADDER: ReadonlyArray<{ scale: number; quality?: number }> = [
+	{ scale: 1 },
+	{ scale: 1, quality: 90 },
+	{ scale: 1, quality: 80 },
+	{ scale: 0.85, quality: 80 },
+	{ scale: 0.72, quality: 80 },
+	{ scale: 0.61, quality: 80 },
+	{ scale: 0.52, quality: 80 },
+];
 
-/** Outputs live here so a caller can re-read or reference them by path. */
+const SLICE_JPEG_QUALITY = 90;
+
 export function defaultOutDir(): string {
 	return path.join(os.tmpdir(), "pi-vision");
 }
 
 export interface FitOptions {
 	tier?: TierName;
-	/** Payload ceiling. Defaults to the direct-API limit, not Bedrock's. */
-	maxBase64?: number;
+	limits?: ImageLimits;
+	budget?: CallBudget;
 	outDir?: string;
 	basename?: string;
 	minLongEdge?: number;
 	overlap?: number;
-	/** Hard ceiling on images produced by one call. See MAX_IMAGES_PER_CALL. */
-	maxSlices?: number;
 }
 
 export interface FitOutput {
@@ -68,49 +65,30 @@ export interface FitOutput {
 	bytes: number;
 	tokens: number;
 	mimeType: string;
+	/** JPEG quality; absent for lossless output. */
+	quality?: number;
 	base64: string;
 }
 
 export interface FitResult {
-	source: { path: string; width: number; height: number; bytes: number };
+	source: { path: string; width: number; height: number; bytes: number; format: string };
 	plan: ViewPlan["kind"];
 	outputs: FitOutput[];
 	totalTokens: number;
-	/** How many times WE resampled the pixels. 0 or 1. Never 2. */
+	totalBase64: number;
+	/** How many times the pixels were resampled: 0, 1, or 2 when the byte ladder had to shrink. */
 	resamples: number;
-	/** One line per thing worth telling the caller. */
 	notes: string[];
 	summary: string;
 }
 
-function sips(args: string[]): string {
-	return execFileSync("sips", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-}
-
 /**
- * A file that LOOKS like a valid image to a header read, but cannot be rendered.
- *
- * This is a distinct error type because it is the one failure a caller must NOT
- * recover from by falling back to the original bytes. Anthropic rejects such a
- * payload with `400 Could not process image`, and that 400 fails the whole
- * REQUEST, not just the one tool call — it takes the turn down with it.
- *
- * Both known members of this class slip through for the same structural reason:
- * the `asis` fast path deliberately never decodes (see AGENTS.md — decoding a
- * 4K PNG costs ~118ms and the whole point of `asis` is to ship bytes untouched
- * when they already fit). Anything caught by a DECODE is therefore already
- * safe; only things that survive a header read need an explicit refusal.
+ * An image that must not be sent at all. The API answers these with a 400
+ * that fails the whole request, so callers report it instead of falling back
+ * to the raw bytes.
  */
 export class UnusableImageError extends Error {}
 
-/**
- * An image that parses but describes no pixels — an IHDR of 0x0, or any axis
- * that is zero or negative.
- *
- * Observed live: a script killed mid-run left 65-byte 0x0 PNGs on disk, and
- * reading one killed the session. It is doubly invisible because zero tokens is
- * inside every budget, so it is judged to "fit" perfectly.
- */
 export class DegenerateImageError extends UnusableImageError {
 	constructor(file: string, width: number, height: number) {
 		super(
@@ -122,14 +100,6 @@ export class DegenerateImageError extends UnusableImageError {
 	}
 }
 
-/**
- * An image whose header is intact but whose pixel data was never finished —
- * a capture interrupted mid-write, a partial download, a killed process.
- *
- * The header still reports plausible dimensions, so it passes every geometry
- * check and takes `asis` straight to the API. Measured: the first 100 bytes of
- * a 300x200 PNG report 300x200 and ship as a 100-byte "image".
- */
 export class TruncatedImageError extends UnusableImageError {
 	constructor(file: string, bytes: number) {
 		super(
@@ -142,18 +112,22 @@ export class TruncatedImageError extends UnusableImageError {
 	}
 }
 
-/**
- * Is the file missing its end-of-image marker? Reads the last 12 bytes; never
- * decodes.
- *
- * PNG only, deliberately. Every valid PNG ends with the 12-byte IEND chunk, so
- * this has no false positives — and PNG is what `screencapture`, Chromium and
- * our own encoder all produce, which is every path that can write a partial
- * file. JPEGs arrive from the user's disk already complete, and trailing bytes
- * after a JPEG's EOI marker are common enough in the wild that checking would
- * risk refusing valid images. Refusing something valid would be a worse bug
- * than the one being fixed.
- */
+export class UnreadableImageError extends UnusableImageError {
+	constructor(file: string, head: Buffer) {
+		const start = head.subarray(0, 8).toString("hex");
+		super(
+			`${file} is not an image format this tool can read (its first bytes are ` +
+				`${start || "empty"}). Supported: PNG, JPEG, GIF, WebP, HEIC/HEIF, TIFF, BMP.`,
+		);
+		this.name = "UnreadableImageError";
+	}
+}
+
+function sips(args: string[]): string {
+	return execFileSync("sips", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** PNG only: every valid PNG ends with IEND. JPEGs often carry trailing bytes, so they are not checked. */
 function isTruncatedPng(file: string, bytes: number): boolean {
 	if (bytes < 12) return true;
 	const fd = fs.openSync(file, "r");
@@ -166,8 +140,7 @@ function isTruncatedPng(file: string, bytes: number): boolean {
 	}
 }
 
-/** Dimensions for a format pngjs cannot decode. Subprocess, ~30ms. */
-function sipsSize(file: string): { width: number; height: number } {
+function sipsSize(file: string): Size {
 	const out = sips(["-g", "pixelWidth", "-g", "pixelHeight", file]);
 	const width = Number(/pixelWidth:\s*(\d+)/.exec(out)?.[1]);
 	const height = Number(/pixelHeight:\s*(\d+)/.exec(out)?.[1]);
@@ -177,44 +150,25 @@ function sipsSize(file: string): { width: number; height: number } {
 	return { width, height };
 }
 
-export function imageSize(file: string): { width: number; height: number } {
-	if (path.extname(file).toLowerCase() === ".png") {
-		try {
-			return readPngSize(file);
-		} catch {
-			// A .png that is not a PNG. Fall through to sips rather than fail.
-		}
-	}
+/** Stored pixel size, before any EXIF orientation. */
+export function imageSize(file: string): Size {
+	const head = readHead(file, 32);
+	if (sniffImageFormat(head)?.name === "png") return pngSizeFromHeader(head, file);
 	return sipsSize(file);
 }
 
-/** Transcode to PNG so the in-process pipeline can decode it. Never resizes. */
-function transcodeToPng(file: string, outDir: string): string {
-	const target = path.join(outDir, `transcode-${process.pid}-${Date.now()}.png`);
-	sips(["-s", "format", "png", file, "--out", target]);
-	return target;
+function decode(file: string, format: ImageFormat, outDir: string): Image {
+	if (format.name === "png") return load(file);
+	const scratch = path.join(outDir, `decode-${process.pid}-${Date.now()}.png`);
+	try {
+		sips(["-s", "format", "png", file, "--out", scratch]);
+		return load(scratch);
+	} finally {
+		fs.rmSync(scratch, { force: true });
+	}
 }
 
-function encodeJpeg(img: Image, quality: number, outDir: string, base: string): FitOutput {
-	const pngPath = path.join(outDir, `${base}.tmp.png`);
-	fs.writeFileSync(pngPath, encode(img));
-	const jpgPath = path.join(outDir, `${base}.jpg`);
-	sips(["-s", "format", "jpeg", "-s", "formatOptions", String(quality), pngPath, "--out", jpgPath]);
-	fs.rmSync(pngPath, { force: true });
-	const bytes = fs.statSync(jpgPath).size;
-	return {
-		path: jpgPath,
-		width: img.width,
-		height: img.height,
-		bytes,
-		tokens: countImageTokens(img.width, img.height),
-		mimeType: "image/jpeg",
-		base64: fs.readFileSync(jpgPath).toString("base64"),
-	};
-}
-
-function writePng(img: Image, outDir: string, base: string): FitOutput {
-	const target = path.join(outDir, `${base}.png`);
+function writePng(img: Image, target: string): FitOutput {
 	const bytes = encode(img);
 	fs.writeFileSync(target, bytes);
 	return {
@@ -228,75 +182,133 @@ function writePng(img: Image, outDir: string, base: string): FitOutput {
 	};
 }
 
-/**
- * Bring one already-fitted image under the payload cap.
- *
- * Shrink the geometry first, in lossless PNG, because a smaller clean image
- * reads better than a same-size smeared one. Only when every PNG step is still
- * too big does quality come down, and JPEG stops at 75.
- */
-function applyPayloadLadder(
-	img: Image,
-	outDir: string,
-	base: string,
-	cap: number,
-	notes: string[],
-): FitOutput {
-	let smallest: FitOutput | undefined;
-	for (const step of DIMENSION_STEPS) {
-		const candidate =
-			step === 1
-				? img
-				: downscale(img, {
-						width: Math.max(Math.floor(img.width * step), 1),
-						height: Math.max(Math.floor(img.height * step), 1),
-					});
-		const out = writePng(candidate, outDir, base);
-		smallest = out;
-		if (base64Bytes(out.bytes) <= cap) {
-			if (step !== 1) {
-				notes.push(
-					`payload ladder: PNG at ${Math.round(step * 100)}% of the fitted size ` +
-						`(${out.width}×${out.height}) to stay under the ${(cap / 1e6).toFixed(0)}MB cap`,
-				);
-			}
-			return out;
-		}
+function writeJpeg(img: Image, quality: number, target: string): FitOutput {
+	const scratch = `${target}.tmp.png`;
+	fs.writeFileSync(scratch, encode(img));
+	try {
+		sips(["-s", "format", "jpeg", "-s", "formatOptions", String(quality), scratch, "--out", target]);
+	} finally {
+		fs.rmSync(scratch, { force: true });
 	}
-
-	const floor = downscale(img, {
-		width: Math.max(Math.floor(img.width * DIMENSION_STEPS[DIMENSION_STEPS.length - 1]), 1),
-		height: Math.max(Math.floor(img.height * DIMENSION_STEPS[DIMENSION_STEPS.length - 1]), 1),
-	});
-	for (const quality of JPEG_QUALITY_STEPS) {
-		const out = encodeJpeg(floor, quality, outDir, base);
-		if (base64Bytes(out.bytes) <= cap) {
-			// The dimension loop left its last attempt at `${base}.png`. We are
-			// returning the .jpg, so that PNG is now unreferenced — drop it rather
-			// than wait for the 6-hour prune, which `read` never triggers at all.
-			if (smallest) fs.rmSync(smallest.path, { force: true });
-			notes.push(
-				`payload ladder: lossless PNG could not fit the cap; JPEG q${quality} at ` +
-					`${out.width}×${out.height}`,
-			);
-			return out;
-		}
-	}
-	// Every JPEG step also failed. `smallest` is what we ship, so it must still
-	// exist on disk — deliberately NOT deleted above in this path.
-
-	// Nothing fits. Ship the smallest lossless version rather than mangling the
-	// text further, and say so — a rejected request is more useful than an
-	// unreadable one that silently answers wrong.
-	notes.push(
-		`WARNING: still over the ${(cap / 1e6).toFixed(0)}MB payload cap after the full ladder; ` +
-			`sending the smallest lossless version. The API may reject this.`,
-	);
-	return smallest as FitOutput;
+	const bytes = fs.readFileSync(target);
+	return {
+		path: target,
+		width: img.width,
+		height: img.height,
+		bytes: bytes.length,
+		tokens: countImageTokens(img.width, img.height),
+		mimeType: "image/jpeg",
+		quality,
+		base64: bytes.toString("base64"),
+	};
 }
 
-function ensureDir(dir: string): void {
-	fs.mkdirSync(dir, { recursive: true });
+const mb = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(1);
+
+export function encodingLabel(out: FitOutput): string {
+	return out.mimeType === "image/jpeg" ? `JPEG q${out.quality}` : "PNG";
+}
+
+/** The first ladder step whose base64 fits `cap`; the smallest attempt when none does. */
+function encodeWithin(
+	img: Image,
+	cap: number,
+	stem: string,
+	notes: string[],
+): { out: FitOutput; shrunk: boolean } {
+	let smallest: FitOutput | undefined;
+	let smallestShrunk = false;
+	for (const step of ENCODE_LADDER) {
+		const scaled =
+			step.scale === 1
+				? img
+				: downscale(img, {
+						width: Math.max(Math.floor(img.width * step.scale), 1),
+						height: Math.max(Math.floor(img.height * step.scale), 1),
+					});
+		const scaleTag = step.scale === 1 ? "" : `.${Math.round(step.scale * 100)}pct`;
+		const target = step.quality ? `${stem}${scaleTag}.q${step.quality}.jpg` : `${stem}${scaleTag}.png`;
+		const out = step.quality ? writeJpeg(scaled, step.quality, target) : writePng(scaled, target);
+
+		if (out.base64.length <= cap) {
+			if (smallest && smallest.path !== out.path) fs.rmSync(smallest.path, { force: true });
+			if (step !== ENCODE_LADDER[0]) {
+				notes.push(
+					`over ${mb(cap)} MB as PNG; sent as ${encodingLabel(out)}` +
+						(step.scale === 1 ? " at full size" : ` at ${Math.round(step.scale * 100)}% size`),
+				);
+			}
+			return { out, shrunk: step.scale !== 1 };
+		}
+		if (!smallest || out.base64.length < smallest.base64.length) {
+			if (smallest && smallest.path !== out.path) fs.rmSync(smallest.path, { force: true });
+			smallest = out;
+			smallestShrunk = step.scale !== 1;
+		} else {
+			fs.rmSync(out.path, { force: true });
+		}
+	}
+	notes.push(
+		`WARNING: still over the ${mb(cap)} MB limit after every encoding; sent the ` +
+			`smallest (${encodingLabel(smallest!)}), which pi will re-encode.`,
+	);
+	return { out: smallest!, shrunk: smallestShrunk };
+}
+
+/**
+ * Encode slices, then bring the set under `budget`: the largest PNG slices
+ * become JPEG first, and only then are slices dropped from the bottom.
+ */
+function encodeSlices(
+	crops: Image[],
+	cap: number,
+	budget: number,
+	stem: string,
+	notes: string[],
+): FitOutput[] {
+	const sliceNotes = crops.map((): string[] => []);
+	const outputs = crops.map((c, i) => encodeWithin(c, cap, `${stem}.slice-${i + 1}`, sliceNotes[i]!).out);
+	const total = () => outputs.reduce((n, o) => n + o.base64.length, 0);
+
+	const tried = new Set<number>();
+	const converted = new Set<number>();
+	while (total() > budget) {
+		let largest = -1;
+		outputs.forEach((o, i) => {
+			if (o.mimeType === "image/png" && !tried.has(i) && (largest < 0 || o.base64.length > outputs[largest]!.base64.length)) {
+				largest = i;
+			}
+		});
+		if (largest < 0) break;
+		tried.add(largest);
+		const jpeg = writeJpeg(
+			crops[largest]!,
+			SLICE_JPEG_QUALITY,
+			`${stem}.slice-${largest + 1}.q${SLICE_JPEG_QUALITY}.jpg`,
+		);
+		if (jpeg.base64.length < outputs[largest]!.base64.length) {
+			fs.rmSync(outputs[largest]!.path, { force: true });
+			outputs[largest] = jpeg;
+			converted.add(largest);
+		} else {
+			fs.rmSync(jpeg.path, { force: true });
+		}
+	}
+	while (total() > budget && outputs.length > 1) {
+		fs.rmSync(outputs.pop()!.path, { force: true });
+	}
+
+	const counts = new Map<string, number>();
+	for (const note of sliceNotes.slice(0, outputs.length).flat()) counts.set(note, (counts.get(note) ?? 0) + 1);
+	for (const [note, n] of counts) notes.push(n > 1 ? `${n} slices: ${note}` : note);
+	const kept = [...converted].filter((i) => i < outputs.length).length;
+	if (kept > 0) {
+		notes.push(
+			`${kept} photo-heavy slice${kept === 1 ? "" : "s"} sent as JPEG q${SLICE_JPEG_QUALITY} to fit ` +
+				`this call's ${mb(budget)} MB share of the request-size limit`,
+		);
+	}
+	return outputs;
 }
 
 /** Keep the scratch dir from growing without bound across a long session. */
@@ -313,139 +325,127 @@ export function pruneOutDir(dir: string, maxAgeMs = 6 * 60 * 60 * 1000): void {
 		try {
 			if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { force: true });
 		} catch {
-			// racing another prune, or a file we do not own; skip it
+			// racing another prune, or a file we do not own
 		}
 	}
 }
 
-/**
- * Make `file` safe to hand to a vision model.
- *
- * The `asis` fast path never decodes the image at all: dimensions come from the
- * PNG header, and if they already fit the budget the original bytes are shipped
- * untouched. Re-encoding an image that needs no change is a pure loss.
- */
 export function fitImageFile(file: string, opts: FitOptions = {}): FitResult {
-	const tier = resolveTier(opts.tier);
-	const cap = opts.maxBase64 ?? MAX_BASE64_BYTES.api;
+	const limits = opts.limits ?? limitsForModel();
+	const budget = opts.budget ?? defaultCallBudget(limits);
+	const tier = resolveTier(opts.tier, limits.maxSide);
+	const cap = Math.min(limits.maxImageBase64, budget.bytes);
 	const outDir = opts.outDir ?? defaultOutDir();
-	const base = opts.basename ?? `fit-${Date.now()}-${process.pid}`;
+	const stem = path.join(outDir, opts.basename ?? `fit-${Date.now()}-${process.pid}`);
 	const notes: string[] = [];
-
-	ensureDir(outDir);
+	fs.mkdirSync(outDir, { recursive: true });
 
 	const sourceBytes = fs.statSync(file).size;
-	const size = imageSize(file);
-	// Refuse before planning. `planView` would report `asis` for 0x0 — zero
-	// tokens is inside every budget — and the fast path below then ships the
-	// source bytes untouched, so this is the only point where it can be caught.
-	if (size.width <= 0 || size.height <= 0) {
-		throw new DegenerateImageError(file, size.width, size.height);
-	}
-	// Same class, different cause: an intact header over unfinished pixel data.
-	// Costs one 12-byte read, so it does not compromise `asis` staying decode-free.
-	if ((MIME_BY_EXT[path.extname(file).toLowerCase()] ?? "image/png") === "image/png") {
-		if (isTruncatedPng(file, sourceBytes)) throw new TruncatedImageError(file, sourceBytes);
-	}
-	const plan = planView(size.width, size.height, {
-		tier,
-		minLongEdge: opts.minLongEdge,
-		overlap: opts.overlap,
-		maxSlices: opts.maxSlices,
-	});
-	const ext = path.extname(file).toLowerCase();
-	const sourceMime = MIME_BY_EXT[ext] ?? "image/png";
-	const source = { path: file, width: size.width, height: size.height, bytes: sourceBytes };
+	const head = readHead(file);
+	const format = sniffImageFormat(head);
+	if (!format) throw new UnreadableImageError(file, head);
 
-	// --- fast path: already inside both the geometry budget and the payload cap
-	if (plan.kind === "asis" && base64Bytes(sourceBytes) <= cap) {
+	const stored = format.name === "png" ? pngSizeFromHeader(head, file) : sipsSize(file);
+	// A 0x0 image is "inside" every budget and would ship untouched.
+	if (stored.width <= 0 || stored.height <= 0) {
+		throw new DegenerateImageError(file, stored.width, stored.height);
+	}
+	if (format.name === "png" && isTruncatedPng(file, sourceBytes)) {
+		throw new TruncatedImageError(file, sourceBytes);
+	}
+	const orientation = orientationOf(file, head, format);
+	let size = orientation >= 5 ? { width: stored.height, height: stored.width } : stored;
+
+	const maxSlices = Math.max(1, budget.images);
+	const planFor = (s: Size): ViewPlan =>
+		planView(s.width, s.height, { tier, minLongEdge: opts.minLongEdge, overlap: opts.overlap, maxSlices });
+	let plan = planFor(size);
+	const finish = (outputs: FitOutput[], resamples: number, summary: string): FitResult => ({
+		source: { path: file, ...size, bytes: sourceBytes, format: format.name },
+		plan: plan.kind,
+		outputs,
+		totalTokens: outputs.reduce((n, o) => n + o.tokens, 0),
+		totalBase64: outputs.reduce((n, o) => n + o.base64.length, 0),
+		resamples,
+		notes,
+		summary,
+	});
+
+	if (plan.kind === "asis" && format.apiMime && base64Bytes(sourceBytes) <= cap) {
+		const data = fs.readFileSync(file);
 		const out: FitOutput = {
 			path: file,
-			width: size.width,
-			height: size.height,
+			...size,
 			bytes: sourceBytes,
 			tokens: plan.tokens,
-			mimeType: sourceMime,
-			base64: fs.readFileSync(file).toString("base64"),
+			mimeType: format.apiMime,
+			base64: data.toString("base64"),
 		};
-		return {
-			source,
-			plan: "asis",
-			outputs: [out],
-			totalTokens: plan.tokens,
-			resamples: 0,
-			notes,
-			summary: `${size.width}×${size.height} (${plan.tokens} tokens, already within budget, untouched)`,
-		};
+		return finish([out], 0, `${size.width}×${size.height} (${plan.tokens} tokens, already within budget, untouched)`);
 	}
 
-	// --- everything below needs the pixels
-	let decodePath = file;
-	let scratch: string | undefined;
-	if (ext !== ".png") {
-		scratch = transcodeToPng(file, outDir);
-		decodePath = scratch;
-		notes.push(`transcoded ${ext.slice(1) || "image"} → png for resampling (no resize applied)`);
+	let img = decode(file, format, outDir);
+	// sips decodes the stored pixels without applying EXIF orientation.
+	if (orientation !== 1) {
+		img = orient(img, orientation);
+		notes.push(`rotated upright (EXIF orientation ${orientation})`);
+	}
+	// Some decoders apply a container's own rotation; plan from the real pixels.
+	if (img.width !== size.width || img.height !== size.height) {
+		size = { width: img.width, height: img.height };
+		plan = planFor(size);
 	}
 
-	try {
-		const img = load(decodePath);
-		let outputs: FitOutput[];
-		let resamples = 0;
-		let summary: string;
+	if (plan.kind === "slice") {
+		const crops = plan.slices.map((box) => crop(img, box));
+		const outputs = encodeSlices(crops, cap, budget.bytes, stem, notes);
+		notes.unshift(plan.reason);
 
-		if (plan.kind === "slice") {
-			outputs = plan.slices.map((box, i) =>
-				writePng(crop(img, box), outDir, `${base}.slice-${i + 1}`),
+		const needed = plan.truncated?.neededSlices ?? plan.slices.length;
+		if (outputs.length < needed) {
+			const last = plan.slices[outputs.length - 1]!;
+			const covered = last.y + last.height;
+			const why =
+				outputs.length < plan.slices.length
+					? "the rest would not fit this call's share of the request-size limit"
+					: `one call returns at most ${maxSlices} images`;
+			notes.push(
+				`TRUNCATED: captured the top ${covered.toLocaleString("en-US")}px of a ` +
+					`${size.height.toLocaleString("en-US")}px page (${outputs.length} of ${needed} slices); ` +
+					`${why}. The remaining ${(size.height - covered).toLocaleString("en-US")}px was NOT ` +
+					`captured. To see a specific section, pass a selector, or capture that region directly.`,
 			);
-			notes.push(plan.reason);
-			const sliceTokens = outputs.reduce((n, o) => n + o.tokens, 0);
-			// The only thing worth saying here is what the caller did NOT get.
-			// Anything about token cost belongs to whoever is paying, not to a tool
-			// deciding how much of a page to hand back.
-			if (plan.truncated) {
-				const { coveredHeight, totalHeight, neededSlices } = plan.truncated;
-				notes.push(
-					`TRUNCATED: captured the top ${coveredHeight.toLocaleString()}px of a ` +
-						`${totalHeight.toLocaleString()}px page (${outputs.length} of ${neededSlices} slices). ` +
-						`The remaining ${(totalHeight - coveredHeight).toLocaleString()}px was NOT captured. ` +
-						`To see a specific section, pass a selector, or capture that region directly.`,
-				);
-			}
-			summary =
-				`${size.width}×${size.height} → ${outputs.length} slices of ` +
-				`${outputs[0]!.width}×${outputs[0]!.height} ` +
-				`(${sliceTokens} tokens total, cropped not scaled)`;
-		} else if (plan.kind === "downscale") {
-			const small = downscale(img, plan.to);
-			resamples = 1;
-			outputs = [applyPayloadLadder(small, outDir, base, cap, notes)];
-			summary =
-				`${size.width}×${size.height} → ${outputs[0]!.width}×${outputs[0]!.height} ` +
-				`(${outputs[0]!.tokens} tokens, area-average, 1 pass)`;
-		} else {
-			// asis geometry, but the payload was over the cap (a big lossless image).
-			outputs = [applyPayloadLadder(img, outDir, base, cap, notes)];
-			summary =
-				`${size.width}×${size.height} fits the token budget but not the payload cap; ` +
-				`re-encoded to ${outputs[0]!.width}×${outputs[0]!.height}`;
 		}
-
-		return {
-			source,
-			plan: plan.kind,
+		const tokens = outputs.reduce((n, o) => n + o.tokens, 0);
+		return finish(
 			outputs,
-			totalTokens: outputs.reduce((n, o) => n + o.tokens, 0),
-			resamples,
-			notes,
-			summary,
-		};
-	} finally {
-		if (scratch) fs.rmSync(scratch, { force: true });
+			0,
+			`${size.width}×${size.height} → ${outputs.length} slice${outputs.length === 1 ? "" : "s"} of ` +
+				`${outputs[0]!.width}×${outputs[0]!.height} (${tokens} tokens total, cropped not scaled)`,
+		);
 	}
+
+	if (plan.kind === "downscale") {
+		const { out, shrunk } = encodeWithin(downscale(img, plan.to), cap, stem, notes);
+		return finish(
+			[out],
+			shrunk ? 2 : 1,
+			`${size.width}×${size.height} → ${out.width}×${out.height} ` +
+				`(${out.tokens} tokens, area-average, 1 pass, ${encodingLabel(out)})`,
+		);
+	}
+
+	const { out, shrunk } = encodeWithin(img, cap, stem, notes);
+	const why = format.apiMime ? `over the ${mb(cap)} MB per-image limit` : `the API does not accept ${format.name}`;
+	const geometry = shrunk ? `${size.width}×${size.height} → ${out.width}×${out.height}` : `${size.width}×${size.height}`;
+	return finish(
+		[out],
+		shrunk ? 1 : 0,
+		`${geometry} (${out.tokens} tokens) re-encoded as ${encodingLabel(out)}: ${why}`,
+	);
 }
 
-/** The content blocks to hand back from a tool, images first then the audit line. */
+/** Tool content: the images in reading order, then one text block with the audit trail. */
 export function fitResultBlocks(result: FitResult): Array<Record<string, unknown>> {
 	const blocks: Array<Record<string, unknown>> = result.outputs.map((o) => ({
 		type: "image" as const,

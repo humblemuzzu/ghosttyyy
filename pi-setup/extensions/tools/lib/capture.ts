@@ -1,25 +1,11 @@
 /**
- * macOS screen capture and window discovery.
+ * macOS screen capture and window discovery, via `screencapture` and
+ * `osascript -l JavaScript` only.
  *
- * Everything here shells out to first-party tools — `screencapture` for pixels,
- * `osascript -l JavaScript` for the window list. No compiled helper, no native
- * module, nothing for `install.sh` to build.
- *
- * Verified behaviour on macOS 26 (2× display), 2026-08-05:
- *
- *   - `CGWindowListCopyWindowInfo` IS reachable from JXA, but only through
- *     `ObjC.castRefToObject`. Calling it directly returns something that
- *     `typeof`s as "function" and unwraps to nothing.
- *   - Option 0 (all windows) is required. Option 1 (kCGWindowListOptionOnScreenOnly)
- *     silently omits every window on another Space — this session's own terminal
- *     was missing from that list, which would make "screenshot my editor" fail
- *     for no visible reason.
- *   - `screencapture -l <id>` FAILS for a window on another Space:
- *     "could not create image from window", exit 1. There is no flag for this.
- *     The window has to be brought to the current Space first.
- *   - `kCGWindowName` is only populated when Screen Recording is granted, which
- *     makes it a free permission probe — no need to pay for the authoritative
- *     `CGPreflightScreenCaptureAccess` check unless something actually fails.
+ * `CGWindowListCopyWindowInfo` works from JXA only through
+ * `ObjC.castRefToObject`, and needs option 0: option 1 omits every window on
+ * another Space. `kCGWindowName` is blank without Screen Recording, which makes
+ * it a free permission probe.
  */
 
 import { execFileSync } from "node:child_process";
@@ -38,10 +24,7 @@ export interface WindowInfo {
 	regularApp?: boolean;
 }
 
-/**
- * Option 0 is kCGWindowListOptionAll. Do not "optimise" this to 1 — see the
- * header note. `castRefToObject` is likewise load-bearing.
- */
+/** Option 0 and `castRefToObject` are both load-bearing; see the header. */
 const LIST_WINDOWS_JXA = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
@@ -125,28 +108,13 @@ export function findWindows(query: WindowQuery, pool = listWindows()): WindowInf
 }
 
 /**
- * One window, described well enough to pick it out of a list of near-identical
- * siblings.
- *
- * Position is included because a title alone frequently cannot separate them:
- * apps that show a path in the title left-truncate it themselves (Ghostty
- * renders `…/Documents/Code stuff/stripema`), so several windows arrive with
- * byte-identical titles and the part that differs has already been eaten. When
- * that happens the coordinates are the only thing a human or a model can use to
- * tell which is which — and `window_id` is then the only way to select one.
+ * One window, with its position: apps that left-truncate a path in the title
+ * give several windows byte-identical titles, and the coordinates are then the
+ * only way to tell them apart.
  */
 export function describeWindow(w: WindowInfo): string {
-	/*
-	 * All macOS gives us is `kCGWindowIsOnscreen: false`. That is true for a
-	 * window on another Space, a MINIMISED window, a hidden app, and — by far the
-	 * most common case in practice — an inactive TAB. Under native tabbing every
-	 * tab is its own NSWindow, so a single Ghostty window holding 8 tabs reports
-	 * 8 windows of which 7 are "not on screen".
-	 *
-	 * Saying "[other Space]" names a cause we never checked, and sends people
-	 * hunting a Spaces problem that usually is not there. State the observation,
-	 * not the theory.
-	 */
+	// "not on screen" covers another Space, minimised, hidden, and (most often)
+	// an inactive native tab; macOS does not say which.
 	const where = w.onScreen ? "" : "  [not on screen]";
 	const title = w.title ? `"${w.title}"` : "(untitled)";
 	const geom = `${w.width}×${w.height} @${w.x},${w.y}`;
@@ -154,13 +122,8 @@ export function describeWindow(w: WindowInfo): string {
 }
 
 /**
- * Windows that share an app, a size and a position to the pixel are almost
- * certainly tabs of one window rather than separate windows — native tabbing
- * gives every tab the identical frame.
- *
- * Worth surfacing because "16 windows match" is a useless thing to tell someone
- * with two windows open, and because `window_id` behaves differently for a tab:
- * capturing one grabs the whole tab group it belongs to.
+ * Windows sharing an app and an exact frame: native tabs of one window, each
+ * reported as its own window. Capturing any of them grabs the whole group.
  */
 export function groupLikelyTabs(windows: WindowInfo[]): WindowInfo[][] {
 	const groups = new Map<string, WindowInfo[]>();
@@ -174,10 +137,9 @@ export function groupLikelyTabs(windows: WindowInfo[]): WindowInfo[][] {
 }
 
 /**
- * Authoritative Screen Recording check. Costs ~130ms and needs the Swift
- * toolchain, so it is only called when something has already gone wrong.
- * `CGPreflightScreenCaptureAccess` is declared in CoreGraphics' BridgeSupport
- * with no signature, so JXA cannot reach it — this is the cheapest honest path.
+ * Authoritative Screen Recording check via Swift (~130ms), used only after a
+ * failure. JXA cannot call `CGPreflightScreenCaptureAccess`: its BridgeSupport
+ * entry has no signature.
  */
 export function screenRecordingGranted(): boolean | undefined {
 	try {
@@ -299,11 +261,7 @@ export async function captureWindow(
 	}
 }
 
-/**
- * `screencapture -l` on a window that is not on the current Space fails with a
- * flat "could not create image from window". Translating that into the actual
- * cause is most of this tool's value on a multi-Space machine.
- */
+/** `screencapture -l` reports only "could not create image from window"; name the likely cause. */
 function explainWindowFailure(window: WindowInfo, raw: string): string {
 	if (!window.onScreen) {
 		return (
@@ -324,10 +282,7 @@ function explainWindowFailure(window: WindowInfo, raw: string): string {
  * behind their back.
  */
 export async function activateApp(app: string, settleMs = 600): Promise<void> {
-	// Escape backslashes BEFORE quotes — doing it the other way round would
-	// double-escape the backslashes just inserted. An app name ending in `\`
-	// would otherwise consume the closing delimiter of the AppleScript string
-	// literal and swallow the rest of the statement.
+	// Backslashes before quotes, or the quote escapes get escaped again.
 	const escaped = app.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 	try {
 		execFileSync("osascript", ["-e", `tell application "${escaped}" to activate`], {
