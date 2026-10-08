@@ -37,6 +37,7 @@ export interface AgentEntry {
 	endedAt?: number;
 	messages: Message[];
 	model?: string;
+	thinkingLevel?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	usage?: AgentUsage;

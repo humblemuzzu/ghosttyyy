@@ -1,16 +1,10 @@
 /**
  * piSpawn argv tests — what the child process is ACTUALLY launched with.
  *
- * WHY ARGV AND NOT THE CONSTANTS
- *
- * every interesting failure at this seam is invisible from the tool file. the
- * model a sub-agent runs on is decided here, not in `chad.ts`: piSpawn copies
- * the PARENT's model whenever the parent is not anthropic, so a pin that is
- * merely written down in a const would be silently overridden for exactly the
- * sessions it matters most in. same class of bug as pi 0.84's #7327, which took
- * out every sub-agent while every unit test stayed green — AGENTS.md's update
- * workflow says it outright: grep our own CLI call sites, an import-level audit
- * cannot see a change in the flags we pass.
+ * pi 0.84's #7327 took out every sub-agent while every unit test stayed green,
+ * because nothing looked at the flags we actually pass. AGENTS.md's update
+ * workflow says it outright: an import-level audit cannot see a change in how
+ * pi reads our arguments.
  *
  * so these tests run the real piSpawn against a stub `pi` that records its argv.
  */
@@ -87,70 +81,57 @@ async function launch(config: Record<string, unknown>): Promise<Launch> {
 	};
 }
 
-describe("pinModel: the model survives every parent", () => {
-	const PINNED = "xai/grok-4.6";
-
-	test("anthropic parent — pinned model is used verbatim", async () => {
-		const run = await launch({
-			model: PINNED,
-			pinModel: true,
-			parentModel: "anthropic/claude-opus-5",
-		});
-		expect(run.valueOf("--model")).toBe(PINNED);
-	});
-
-	test("NON-anthropic parent — pinned model still wins (the whole point)", async () => {
-		// without pinModel this is the branch that assigns `resolvedModel =
-		// config.parentModel`, turning a chad launched from a kimi session into
-		// a kimi agent with nothing failing anywhere.
-		for (const parentModel of [
-			"kimi-coding/kimi-for-coding",
-			"llama-local/LFM2.5-2.6B",
-		]) {
-			const run = await launch({ model: PINNED, pinModel: true, parentModel });
-			expect(run.valueOf("--model")).toBe(PINNED);
+describe("--model", () => {
+	test("is passed verbatim, including ids whose model part has a slash", async () => {
+		for (const model of ["xai/grok-4.6", "openrouter/deepseek/deepseek-v4.1-flash"]) {
+			const run = await launch({ model });
+			expect(run.valueOf("--model")).toBe(model);
 		}
 	});
 
-	test("no parent context at all — pinned model is not re-qualified", async () => {
-		// the unpinned no-parent branch prepends `anthropic/` to a bare id; a
-		// pinned id is already provider-qualified and must pass through untouched.
-		const run = await launch({ model: PINNED, pinModel: true });
-		expect(run.valueOf("--model")).toBe(PINNED);
-	});
-});
-
-describe("inheritance is unchanged for everyone else", () => {
-	test("non-anthropic parent still overrides a claude model", async () => {
-		const run = await launch({
-			model: "claude-sonnet-5",
-			parentModel: "kimi-coding/kimi-for-coding",
-		});
-		expect(run.valueOf("--model")).toBe("kimi-coding/kimi-for-coding");
-	});
-
-	test("anthropic parent still provider-qualifies a bare id", async () => {
-		const run = await launch({
-			model: "claude-opus-4-6",
-			parentModel: "anthropic/claude-opus-5",
-		});
-		expect(run.valueOf("--model")).toBe("anthropic/claude-opus-4-6");
+	test("is absent when no model is given, so the child runs on pi's default", async () => {
+		const run = await launch({});
+		expect(run.args).not.toContain("--model");
 	});
 });
 
 describe("thinkingLevel", () => {
 	test("is passed as its own flag", async () => {
-		const run = await launch({
-			model: "xai/grok-4.6",
-			pinModel: true,
-			thinkingLevel: "high",
-		});
+		const run = await launch({ model: "xai/grok-4.6", thinkingLevel: "high" });
 		expect(run.valueOf("--thinking")).toBe("high");
 	});
 
 	test("is absent when not asked for, so the child keeps its own default", async () => {
-		const run = await launch({ model: "xai/grok-4.6", pinModel: true });
+		const run = await launch({ model: "xai/grok-4.6" });
 		expect(run.args).not.toContain("--thinking");
+	});
+});
+
+describe("the result reports what the child actually ran", () => {
+	async function run(lines: string[], config: Record<string, unknown>) {
+		const prev = process.env.PI_BIN;
+		process.env.PI_BIN = writeStub(`reporting-${lines.length}.sh`, lines.map((l) => `echo '${l}'`));
+		try {
+			return await piSpawn({ cwd: dir, task: "noop", ...(config as any) });
+		} finally {
+			process.env.PI_BIN = prev;
+		}
+	}
+
+	test("provider/model and the effective thinking level come from the child's message", async () => {
+		const answered = JSON.stringify({
+			type: "message_end",
+			message: { role: "assistant", content: [], provider: "deepseek", model: "deepseek-flash", thinkingLevel: "max", stopReason: "stop" },
+		});
+		const result = await run([answered], { model: "deepseek/deepseek-flash", thinkingLevel: "xhigh" });
+		expect(result.model).toBe("deepseek/deepseek-flash");
+		expect(result.thinkingLevel).toBe("max");
+	});
+
+	test("before the child answers, the request is what is reported", async () => {
+		const result = await run([], { model: "xai/grok-4.6", thinkingLevel: "high" });
+		expect(result.model).toBe("xai/grok-4.6");
+		expect(result.thinkingLevel).toBe("high");
 	});
 });
 
@@ -158,7 +139,6 @@ describe("readOnlyBash", () => {
 	test("sets the env var the child's bash tool reads", async () => {
 		const run = await launch({
 			model: "xai/grok-4.6",
-			pinModel: true,
 			readOnlyBash: true,
 			builtinTools: ["read", "bash"],
 		});
@@ -166,7 +146,7 @@ describe("readOnlyBash", () => {
 	});
 
 	test("is absent by default — every other sub-agent keeps a normal bash", async () => {
-		const run = await launch({ model: "claude-sonnet-5", builtinTools: ["read", "bash"] });
+		const run = await launch({ model: "xai/grok-4.6", builtinTools: ["read", "bash"] });
 		expect(run.env.PI_BASH_READ_ONLY).toBe("");
 	});
 });
@@ -175,7 +155,6 @@ describe("tool allowlist still reaches the child both ways", () => {
 	test("--tools and PI_SUBAGENT_TOOLS are fed by the same list", async () => {
 		const run = await launch({
 			model: "xai/grok-4.6",
-			pinModel: true,
 			builtinTools: ["read", "grep"],
 			extensionTools: ["read", "web_search", "glob"],
 		});

@@ -1,19 +1,11 @@
 /**
- * chad — a read-only deep research sub-agent, pinned to xai/grok-4.6.
+ * chad — a read-only deep research sub-agent.
  *
  * WHAT IT IS FOR
  *
  * research at swarm scale. five or eight chads go out in one message, each on
  * its own question, and each returns a structured report instead of a pile of
  * file contents. the parent keeps its context for the work.
- *
- * WHY IT IS PINNED (and why that needed a change in pi-spawn)
- *
- * a swarm must run on the same model whatever session spawned it. grok-4.6 is
- * the model this setup runs on, and `pinModel` exists for exactly that:
- * piSpawn otherwise copies the parent's model whenever the parent is not
- * anthropic, which would silently turn a chad launched from a kimi or
- * llama-local session into a kimi or llama-local agent.
  *
  * WHY IT IS READ-ONLY
  *
@@ -31,35 +23,22 @@
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { requireParam, resolveParam } from "./lib/params";
-import { piSpawn, resolveAliases, zeroUsage, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
-import {
-	applySessionMeta,
-	collectSubAgentImages,
-	getFinalOutput,
-	renderAgentTree,
-	subAgentResult,
-	type SingleResult,
-} from "./lib/sub-agent-render";
-
-/**
- * provider-qualified on purpose. `pinModel` passes this through untouched, so a
- * bare id would hit pi 0.84's "ambiguous across providers" error (#7327)
- * instead of quietly resolving somewhere else.
- */
-const MODEL = "xai/grok-4.6";
-const THINKING = "high";
+import { resolveAliases, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
+import { emptyAgentModels, modelParams, resolveRoute, type AgentModels } from "./lib/agent-models";
+import { runSubAgent, toolError } from "./lib/run-sub-agent";
+import { clip, firstLine, renderSubAgentResult } from "./lib/sub-agent-render";
 
 /*
  * NO mutation tool of any kind: no apply_patch, no format_file, no undo_edit.
  * `bash` is present but runs under the read-only policy (readOnlyBash below).
  *
  * `screenshot` is in — grok sees images. `oracle`/`finder`/`librarian` are out
- * because nesting one would run chad's pinned model: a whole extra process for
- * tools chad can call itself. the seven github tools are here directly for the
- * same reason. `chad`/`delegate` are out — a swarm that spawns swarms is a fork bomb.
+ * because nesting one is a whole extra process for tools chad can call itself.
+ * the seven github tools are here directly for the same reason. `chad`/`delegate`
+ * are out — a swarm that spawns swarms is a fork bomb.
  */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
 const EXTENSION_TOOLS = [
@@ -84,39 +63,19 @@ export function chadAllowlist(): string[] {
 const PROMPT_PARAMS = ["prompt", "task", "query", "question", "instructions"] as const;
 const DESCRIPTION_PARAMS = ["description", "title", "summary"] as const;
 
-/** first line of the prompt, as a stand-in when no description was given. */
-function deriveDescription(prompt: string): string {
-	const firstLine = prompt.trim().split("\n")[0]?.trim() ?? "";
-	if (!firstLine) return "research task";
-	return firstLine.length > 60 ? `${firstLine.slice(0, 60)}...` : firstLine;
-}
-
-/**
- * append the handle needed to resume this child.
- *
- * the model only learns a child is resumable if the id is in the text it reads,
- * so this is part of the result rather than details-only metadata.
- */
-function withRoutingMetadata(text: string, result: SingleResult): string {
-	const lines: string[] = [];
-	if (result.continueId) lines.push(`continueId: ${result.continueId}`);
-	if (result.sessionId && result.sessionId !== result.continueId) {
-		lines.push(`sessionId: ${result.sessionId}`);
-	}
-	return lines.length > 0 ? `${text}\n\n---\nrouting:\n${lines.join("\n")}` : text;
-}
-
 export interface ChadConfig {
 	systemPrompt?: string;
+	models?: AgentModels;
 }
 
 export function createChadTool(config: ChadConfig = {}): ToolDefinition {
+	const models = config.models ?? emptyAgentModels();
 	return {
 		name: "chad",
 		label: "Chad",
 		description:
-			"Deep read-only research agent. Runs on xai/grok-4.6 at high thinking, so " +
-			"several can be launched at once for genuinely parallel research.\n\n" +
+			"Deep read-only research agent. Several can be launched at once for genuinely " +
+			"parallel research.\n\n" +
 			"Tools: read, grep, find, ls, bash (read-only), skill, web_search, read_web_page, " +
 			"screenshot, and the seven GitHub tools.\n\n" +
 			"IT CANNOT CHANGE ANYTHING. There is no apply_patch and bash is restricted to " +
@@ -163,123 +122,49 @@ export function createChadTool(config: ChadConfig = {}): ToolDefinition {
 						"Resume a previous chad by the continueId returned in its result. The agent keeps its full conversation history.",
 				}),
 			),
+			...modelParams(models, "chad"),
 		}),
 
 		async execute(_toolCallId, params: any, signal, onUpdate, ctx) {
 			const prompt = requireParam(params, PROMPT_PARAMS, "chad");
 			if ("error" in prompt) return prompt.error as any;
-
-			const description =
-				resolveParam(params, DESCRIPTION_PARAMS) ?? deriveDescription(prompt.value);
 			const continueId = resolveParam(params, ["continueId", "continue_id", "sessionId"]);
+			const route = resolveRoute(models, "chad", params, ctx.modelRegistry, !!continueId);
+			if ("error" in route) return toolError(route.error);
 
-			let sessionId = "";
-			try {
-				sessionId = ctx.sessionManager?.getSessionId?.() ?? "";
-			} catch {
-				/* graceful — provenance only */
-			}
-
-			const singleResult: SingleResult = {
+			return runSubAgent({
 				agent: "chad",
-				task: description,
-				exitCode: -1,
-				messages: [],
-				usage: zeroUsage(),
-			};
-
-			const result = await piSpawn({
-				cwd: ctx.cwd,
-				task: prompt.value,
-				model: MODEL,
-				// pinned: NOT parentModel. see PiSpawnConfig.pinModel — inheriting
-				// here would make a chad launched from kimi or llama-local that model.
-				pinModel: true,
-				thinkingLevel: THINKING,
-				readOnlyBash: true,
-				builtinTools: BUILTIN_TOOLS,
-				extensionTools: EXTENSION_TOOLS,
-				systemPromptBody: config.systemPrompt,
+				label: resolveParam(params, DESCRIPTION_PARAMS) ?? firstLine(prompt.value, "research task"),
+				working: "(researching...)",
+				returnImages: true,
+				ctx,
 				signal,
-				sessionId,
-				// persist so a chad can be pushed further on the same findings, but
-				// in the sub-agent directory so these never clutter /resume.
-				session: { id: continueId, persist: true, dir: SUB_AGENT_SESSION_DIR },
-				onUpdate: (partial) => {
-					singleResult.messages = partial.messages;
-					singleResult.usage = partial.usage;
-					singleResult.model = partial.model;
-					singleResult.stopReason = partial.stopReason;
-					singleResult.errorMessage = partial.errorMessage;
-					applySessionMeta(singleResult, partial.session);
-					if (onUpdate) {
-						onUpdate({
-							content: [
-								{ type: "text", text: getFinalOutput(partial.messages) || "(researching...)" },
-							],
-							details: singleResult,
-						} as any);
-					}
+				onUpdate,
+				spawn: {
+					task: prompt.value,
+					model: route.model,
+					thinkingLevel: route.thinking,
+					readOnlyBash: true,
+					builtinTools: BUILTIN_TOOLS,
+					extensionTools: EXTENSION_TOOLS,
+					systemPromptBody: config.systemPrompt,
+					// sub-agent directory so resumable chads never clutter /resume.
+					session: { id: continueId, persist: true, dir: SUB_AGENT_SESSION_DIR },
 				},
 			});
-
-			singleResult.exitCode = result.exitCode;
-			singleResult.messages = result.messages;
-			singleResult.usage = result.usage;
-			singleResult.model = result.model;
-			singleResult.stopReason = result.stopReason;
-			singleResult.errorMessage = result.errorMessage;
-			applySessionMeta(singleResult, result.session);
-
-			const isError =
-				result.exitCode !== 0 ||
-				result.stopReason === "error" ||
-				result.stopReason === "aborted";
-			const output = getFinalOutput(result.messages) || "(no output)";
-
-			if (isError) {
-				return subAgentResult(
-					withRoutingMetadata(result.errorMessage || result.stderr || output, singleResult),
-					singleResult,
-					true,
-				);
-			}
-
-			return subAgentResult(
-				withRoutingMetadata(output, singleResult),
-				singleResult,
-				false,
-				collectSubAgentImages(result.messages),
-			);
 		},
 
 		renderCall(args: any, theme: any, context: any) {
 			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const raw =
 				args?.description ||
-				(typeof args?.prompt === "string" ? deriveDescription(args.prompt) : "") ||
+				(typeof args?.prompt === "string" ? firstLine(args.prompt, "") : "") ||
 				"...";
-			const preview = raw.length > 80 ? `${raw.slice(0, 80)}...` : raw;
-			// a resumed chad is visually distinct from a fresh one
 			const marker = args?.continueId ? "Chad ↻ " : "Chad ";
-			text.setText(theme.fg("toolTitle", theme.bold(marker)) + theme.fg("dim", preview));
+			text.setText(theme.fg("toolTitle", theme.bold(marker)) + theme.fg("dim", clip(raw, 80)));
 			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const details = result.details as SingleResult | undefined;
-			if (!details) {
-				const text = result.content?.[0];
-				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
-				return container;
-			}
-			renderAgentTree(details, container, expanded, theme, {
-				label: "Chad",
-				header: "statusOnly",
-			});
-			return container;
-		},
+		renderResult: renderSubAgentResult("Chad"),
 	};
 }

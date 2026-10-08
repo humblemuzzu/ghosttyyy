@@ -32,7 +32,7 @@ import {
 	visibleWidth,
 } from "@mariozechner/pi-tui";
 import { normalizeForDisplay } from "../tools/lib/box-format";
-import { formatUsageStats, toolArgSummary } from "../tools/lib/sub-agent-render";
+import { formatUsageStats, modelLabel, toolArgSummary } from "../tools/lib/sub-agent-render";
 import { buildTranscript, type TranscriptNode } from "./transcript";
 import type { AgentEntry } from "./types";
 
@@ -307,7 +307,7 @@ export class SubAgentInspector implements Component, Focusable {
 
 	private detailHeader(entry: AgentEntry, width: number): string {
 		const th = this.theme;
-		const usage = entry.usage ? formatUsageStats(entry.usage, entry.model) : "";
+		const usage = entry.usage ? formatUsageStats(entry.usage, modelLabel(entry)) : "";
 		const head =
 			`${this.statusIcon(entry)} ${th.fg("toolTitle", th.bold(entry.toolName))} ` +
 			th.fg("text", normalizeForDisplay(entry.label));

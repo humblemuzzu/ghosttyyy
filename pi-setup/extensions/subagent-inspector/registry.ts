@@ -64,6 +64,7 @@ interface SubAgentDetails {
 	messages?: unknown;
 	usage?: unknown;
 	model?: unknown;
+	thinkingLevel?: unknown;
 	stopReason?: unknown;
 	errorMessage?: unknown;
 	exitCode?: unknown;
@@ -102,6 +103,7 @@ function applyDetails(entry: AgentEntry, details: SubAgentDetails | undefined): 
 	const usage = asUsage(details.usage);
 	if (usage) entry.usage = usage;
 	entry.model = asString(details.model) ?? entry.model;
+	entry.thinkingLevel = asString(details.thinkingLevel) ?? entry.thinkingLevel;
 	entry.stopReason = asString(details.stopReason) ?? entry.stopReason;
 	entry.errorMessage = asString(details.errorMessage) ?? entry.errorMessage;
 }

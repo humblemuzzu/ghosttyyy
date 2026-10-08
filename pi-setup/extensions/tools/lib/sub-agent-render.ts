@@ -15,7 +15,7 @@ import type { Message } from "@mariozechner/pi-ai";
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Text, TruncatedText } from "@mariozechner/pi-tui";
 import { normalizeForDisplay } from "./box-format";
-import type { SpawnSessionMeta, UsageStats } from "./pi-spawn";
+import type { PiSpawnResult, SpawnSessionMeta, UsageStats } from "./pi-spawn";
 import type { ToolCostDetails } from "./tool-cost";
 
 // --- types ---
@@ -31,6 +31,7 @@ export interface SingleResult {
 	messages: Message[];
 	usage: UsageStats;
 	model?: string;
+	thinkingLevel?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	/*
@@ -49,7 +50,7 @@ export interface SingleResult {
  * streaming updates arrive repeatedly and may not carry session data every
  * time, so this must never overwrite a known id with undefined.
  */
-export function applySessionMeta(
+function applySessionMeta(
 	target: SingleResult,
 	meta: SpawnSessionMeta | undefined,
 ): void {
@@ -57,6 +58,32 @@ export function applySessionMeta(
 	if (meta.continueId) target.continueId = meta.continueId;
 	if (meta.sessionId) target.sessionId = meta.sessionId;
 	if (meta.sessionFile) target.sessionFile = meta.sessionFile;
+}
+
+/** copy a spawn result, partial or final, onto the tool's result. exitCode stays the caller's. */
+export function applySpawnResult(target: SingleResult, spawned: PiSpawnResult): void {
+	target.messages = spawned.messages;
+	target.usage = spawned.usage;
+	target.model = spawned.model;
+	target.thinkingLevel = spawned.thinkingLevel;
+	target.stopReason = spawned.stopReason;
+	target.errorMessage = spawned.errorMessage;
+	applySessionMeta(target, spawned.session);
+}
+
+export function modelLabel(r: { model?: string; thinkingLevel?: string }): string | undefined {
+	if (!r.model) return undefined;
+	return r.thinkingLevel ? `${r.model} · ${r.thinkingLevel}` : r.model;
+}
+
+/** what the parent model needs after the answer: which model ran, and how to resume. */
+function resultFooter(details: SingleResult): string {
+	const lines: string[] = [];
+	const model = modelLabel(details);
+	if (model) lines.push(`model: ${model}`);
+	if (details.continueId) lines.push(`continueId: ${details.continueId}`);
+	if (details.sessionId && details.sessionId !== details.continueId) lines.push(`sessionId: ${details.sessionId}`);
+	return lines.length > 0 ? `\n\n---\n${lines.join("\n")}` : "";
 }
 
 // --- message parsing ---
@@ -159,9 +186,35 @@ export function subAgentResult(
 	return {
 		// Images first, then the text: the model should have seen the picture
 		// before it reads the claim the sub-agent made about it.
-		content: [...images, { type: "text" as const, text }],
+		content: [...images, { type: "text" as const, text: text + resultFooter(details) }],
 		details: { ...details, cost: details.usage.cost },
 		...(isError && { isError: true }),
+	};
+}
+
+export function clip(text: string, max: number): string {
+	return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+/** the first line of a prompt, clipped: the label when the caller gave none. */
+export function firstLine(prompt: string, fallback: string): string {
+	const line = prompt.trim().split("\n")[0]?.trim() ?? "";
+	return line ? clip(line, 60) : fallback;
+}
+
+/** renderResult for a sub-agent tool: the agent tree, or the plain text when there are no details. */
+export function renderSubAgentResult(label: string) {
+	return (result: any, { expanded }: { expanded: boolean }, theme: any, context: any) => {
+		const container = context?.lastComponent ?? new Container();
+		container.clear();
+		const details = result.details as SingleResult | undefined;
+		if (!details) {
+			const text = result.content?.[0];
+			container.addChild(new Text(text?.type === "text" ? normalizeForDisplay(text.text) : "(no output)", 0, 0));
+			return container;
+		}
+		renderAgentTree(details, container, expanded, theme, { label, header: "statusOnly" });
+		return container;
 	};
 }
 
@@ -380,6 +433,6 @@ export function renderAgentTree(
 		container.addChild(new Text(fg("muted", "(Ctrl+O to expand)"), 0, 0));
 	}
 
-	const usageStr = formatUsageStats(r.usage, r.model);
+	const usageStr = formatUsageStats(r.usage, modelLabel(r));
 	if (usageStr) container.addChild(new Text(fg("dim", usageStr), 0, 0));
 }

@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { walkDirSync } from "../fs.js";
 import { createCache, getOrSet } from "./cache.js";
+import { PI_SESSIONS_DIR } from "../pi-spawn";
 
 /**
  * shared session parsing for mentions.
@@ -92,12 +92,7 @@ export interface MentionableSessionQuery {
   limit?: number;
 }
 
-export const DEFAULT_MENTION_SESSIONS_DIR: string = path.join(
-  os.homedir(),
-  ".pi",
-  "agent",
-  "sessions",
-);
+export const DEFAULT_MENTION_SESSIONS_DIR: string = PI_SESSIONS_DIR;
 
 const sessionMentionCache = createCache<string, MentionableSession[]>();
 

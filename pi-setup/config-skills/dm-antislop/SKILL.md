@@ -1,6 +1,6 @@
 ---
 name: dm-antislop
-description: "install the anti-slop Oxlint plugin (dmmulroy) into a local TypeScript/JavaScript repo — 15 opinionated rules rejecting low-evidence patterns: chained type assertions, `unknown` in contracts, `Record<string, unknown>`, runtime `typeof` narrowing, module mocking, undocumented casts. use when asked to add anti-slop lint rules, harden TS types against AI-generated slop, or migrate an existing anti-slop setup. WRITES to the repo (copies files, installs deps, edits lint config), so it needs an agent that can edit — not a read-only researcher."
+description: "install dmmulroy's anti-slop Oxlint plugin into a TypeScript/JavaScript repo — 15 rules rejecting chained type assertions, `unknown` in contracts, `Record<string, unknown>`, runtime `typeof` narrowing, module mocking and undocumented casts. use to add anti-slop lint rules, harden TS types against AI slop, or migrate an existing setup. WRITES to the repo, so it needs an agent that can edit."
 ---
 
 # Install anti-slop

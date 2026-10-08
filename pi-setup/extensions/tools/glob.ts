@@ -15,16 +15,10 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { createInterface } from "node:readline";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
-import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
-import { getText, getContainer } from "./lib/tui";
-
-const COLLAPSED_EXCERPTS: Excerpt[] = [
-	{ focus: "head" as const, context: 3 },
-	{ focus: "tail" as const, context: 5 },
-];
+import { renderBoxedText } from "./lib/box-format";
+import { getText } from "./lib/tui";
 
 const DEFAULT_LIMIT = 500;
 
@@ -72,22 +66,7 @@ export function createGlobTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const globPattern = params.filePattern ?? params.pattern;

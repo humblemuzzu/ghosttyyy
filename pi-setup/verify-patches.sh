@@ -123,18 +123,23 @@ else
          "cp -R pi-setup/extensions/tools ~/.pi/agent/extensions/"
 fi
 
-# ── sub-agents: provider-qualified --model (pi 0.84.0 #7327) ──
-# A bare model id like "claude-opus-4-6" used to resolve to the first catalog
-# entry; since 0.84.0 it HARD ERRORS when several authenticated providers offer
-# the same id ("ambiguous across providers: anthropic/…, opencode/…"). That
-# takes out oracle, finder, code_review, librarian, read_session and
-# read_web_page at once, with an error that reads like an auth problem.
-# qualifyModel() attaches the provider at the single spawn seam.
-if grep -q "qualifyModel" "$PI_AGENT/extensions/tools/lib/pi-spawn.ts" 2>/dev/null; then
-    pass "sub-agents: --model is provider-qualified (pi-spawn qualifyModel)"
+# ── sub-agents: agent-models.json loads cleanly and every model is in pi's catalog ──
+# Parsed by the deployed loader itself, so this cannot drift from what the tools
+# read. A model missing from `pi --list-models` would be refused at call time.
+AM_REPORT=$(cd "$PI_AGENT/extensions/tools" && bun -e '
+const { loadAgentModels } = await import("./lib/agent-models.ts");
+const { execFileSync } = await import("node:child_process");
+const config = loadAgentModels();
+const listed = new Set(execFileSync("pi", ["--list-models"], { encoding: "utf-8" })
+  .split("\n").map((l) => l.trim().split(/\s+/)).filter((c) => c.length > 1).map(([p, m]) => `${p}/${m}`));
+const missing = Object.entries(config.models).filter(([, m]) => !listed.has(m.id)).map(([n, m]) => `${n} → ${m.id} not listed`);
+console.log([...config.problems, ...missing].join("; "));
+' 2>&1)
+if [ -f "$PI_AGENT/agent-models.json" ] && [ -z "$AM_REPORT" ]; then
+    pass "sub-agents: agent-models.json valid, every model listed by pi"
 else
-    fail "sub-agents: pi-spawn.ts has no qualifyModel — every sub-agent will fail with \"ambiguous across providers\"" \
-         "cp pi-setup/extensions/tools/lib/pi-spawn.ts ~/.pi/agent/extensions/tools/lib/pi-spawn.ts"
+    fail "sub-agents: agent-models.json — ${AM_REPORT:-missing}" \
+         "cp pi-setup/agent-models.json $PI_AGENT/agent-models.json  # then fix the named entries"
 fi
 
 # ── pi-sub: grok usage provider (local patch) ──

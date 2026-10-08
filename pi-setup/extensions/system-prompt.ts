@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { readAgentPrompt } from "./tools/lib/pi-spawn";
 import { interpolatePromptVars } from "./tools/lib/interpolate";
+import { describeAgentModels, loadAgentModels } from "./tools/lib/agent-models";
 import {
 	buildSubAgentPrompt,
 	parseToolList,
@@ -63,6 +64,7 @@ export default function (pi: ExtensionAPI) {
 	const harnessDocs = readAgentPrompt(`prompt.harness-docs.${HARNESS}.md`) || "";
 	const rules = readAgentPrompt("rules.amp.md").trim();
 	const piDir = piPackageDir();
+	const agentModels = describeAgentModels(loadAgentModels());
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const options = event.systemPromptOptions;
@@ -90,6 +92,7 @@ export default function (pi: ExtensionAPI) {
 			identity: IDENTITY,
 			harness: HARNESS,
 			harnessDocsSection: harnessDocs,
+			agentModels,
 		});
 		if (rules) options.sections.rules = rules;
 		addShared();

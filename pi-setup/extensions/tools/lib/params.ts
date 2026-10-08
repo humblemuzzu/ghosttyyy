@@ -18,11 +18,7 @@
  * rather than renaming the params (each is semantically meaningful in its own
  * tool), each tool declares its canonical name plus the aliases models actually
  * guess. the canonical name stays first in the schema and is documented as
- * required; `resolveParam` picks the first non-empty value.
- *
- * NOTE: the canonical field must be declared Optional in the TypeBox schema,
- * otherwise pi rejects an aliased call during validation, before execute() runs
- * and has any chance to recover.
+ * required (`Type.String`); `resolveParam` picks the first non-empty value.
  */
 
 /** pick the first non-empty string among `names`, in priority order. */

@@ -60,5 +60,5 @@
     "grok",
     "anthropic"
   ],
-  "defaultProvider": "grok"
+  "defaultProvider": "anthropic"
 }

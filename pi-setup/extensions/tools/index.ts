@@ -36,6 +36,7 @@ import { setupAgentMessage } from "./agent-message";
 import { createSearchSessionsTool } from "./search-sessions";
 import { createReadSessionTool } from "./read-session";
 import { readAgentPrompt } from "./lib/pi-spawn";
+import { AGENT_MODELS_FILE, auditAgentModels, loadAgentModels } from "./lib/agent-models";
 import {
 	createReadGithubTool,
 	createSearchGithubTool,
@@ -47,7 +48,6 @@ import {
 } from "./github";
 import {
 	loadSecrets,
-	scrubOutput,
 	scrubAll,
 	setActiveTags,
 	getActiveTags,
@@ -56,11 +56,10 @@ import {
 } from "./lib/psst";
 import { Vault } from "psst-cli";
 
-export { withFileLock } from "./lib/mutex";
-export { saveChange, loadChanges, revertChange, findLatestChange, simpleDiff } from "./lib/file-tracker";
-
 export default function (pi: ExtensionAPI) {
 	const limits = process.env.PI_READ_COMPACT ? COMPACT_LIMITS : NORMAL_LIMITS;
+	// read once: the schema enums and the resolver must agree for the whole session.
+	const models = loadAgentModels();
 
 	pi.registerTool(createReadTool(limits));
 	pi.registerTool(createLsTool(limits));
@@ -83,28 +82,33 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool(createScreenshotTool());
 	pi.registerTool(createFinderTool({
 		systemPrompt: readAgentPrompt("agent.amp.finder.md"),
+		models,
 	}));
 	pi.registerTool(createOracleTool({
 		systemPrompt: readAgentPrompt("agent.amp.oracle.md"),
+		models,
 	}));
 	// delegate replaced task.ts: same spawn, plus resumable children via
 	// continueId. Task always ran --no-session, so every child was a dead end.
-	pi.registerTool(createDelegateTool());
-	// chad is delegate's read-only counterpart, pinned to xai/grok-4.6 high.
-	// it cannot change anything: no apply_patch, and its bash runs under the
-	// read-only policy in lib/read-only-bash.ts.
+	pi.registerTool(createDelegateTool({ models }));
+	// chad is delegate's read-only counterpart: no apply_patch, and its bash
+	// runs under the read-only policy in lib/read-only-bash.ts.
 	pi.registerTool(createChadTool({
 		systemPrompt: readAgentPrompt("agent.amp.chad.md"),
+		models,
 	}));
 	pi.registerTool(createLibrarianTool({
 		systemPrompt: readAgentPrompt("agent.amp.librarian.md"),
+		models,
 	}));
 	pi.registerTool(createCodeReviewTool({
 		systemPrompt: readAgentPrompt("prompt.amp.code-review-system.md"),
 		reportFormat: readAgentPrompt("prompt.amp.code-review-report.md"),
+		models,
 	}));
 	pi.registerTool(createReadWebPageTool({
 		systemPrompt: readAgentPrompt("prompt.amp.read-web-page.md"),
+		models,
 	}));
 	// web_search resolves its own config and may be disabled there, in which case
 	// we register nothing rather than advertising a tool that cannot run.
@@ -112,7 +116,17 @@ export default function (pi: ExtensionAPI) {
 	if (webSearchTool) pi.registerTool(webSearchTool);
 
 	pi.registerTool(createSearchSessionsTool());
-	pi.registerTool(createReadSessionTool());
+	pi.registerTool(createReadSessionTool({ models }));
+
+	pi.on("session_start", (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		try {
+			const problems = auditAgentModels(models, ctx.modelRegistry);
+			if (problems.length > 0) {
+				ctx.ui.notify(`agent-models (${AGENT_MODELS_FILE}):\n${problems.map((p) => `  • ${p}`).join("\n")}`, "warning");
+			}
+		} catch {}
+	});
 
 	// agent_message owns more than a tool registration: it starts the mailbox
 	// watcher and the session_start / agent_settled / session_shutdown drain

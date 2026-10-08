@@ -17,7 +17,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
-import { formatBoxesWindowed, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
+import { formatBoxesWindowed, osc8Link, COLLAPSED_EXCERPTS, type BoxSection, type BoxLine } from "./lib/box-format";
+import { expandPath, resolveToAbsolute } from "./lib/fs";
 import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { formatHeadTail } from "./lib/output-buffer";
@@ -66,19 +67,7 @@ const IMAGE_MIME: Record<string, string> = {
 	".webp": "image/webp",
 };
 
-// --- path resolution (reimplemented; pi's path-utils aren't re-exported) ---
-
-export function expandPath(filePath: string): string {
-	const stripped = filePath.startsWith("@") ? filePath.slice(1) : filePath;
-	if (stripped === "~") return os.homedir();
-	if (stripped.startsWith("~/")) return os.homedir() + stripped.slice(1);
-	return stripped;
-}
-
-export function resolveToAbsolute(filePath: string, cwd: string): string {
-	const expanded = expandPath(filePath);
-	return path.isAbsolute(expanded) ? expanded : path.resolve(cwd, expanded);
-}
+export { expandPath, resolveToAbsolute };
 
 /**
  * try macOS filesystem variants when file doesn't exist at resolved path.
@@ -410,12 +399,6 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			}
 
 			const notices = notice ? [notice] : undefined;
-
-			/** collapsed: head 3 + tail 5 visual lines */
-			const COLLAPSED_EXCERPTS: Excerpt[] = [
-				{ focus: "head", context: 3 },
-				{ focus: "tail", context: 5 },
-			];
 
 			const section: BoxSection = { blocks: [{ lines: parsed }] };
 

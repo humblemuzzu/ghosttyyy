@@ -9,8 +9,6 @@
  * ported from bdsqqq/dots mentions extension, adapted for flat-file setup.
  */
 
-import * as os from "node:os";
-import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
 	clearCommitIndexCache,
@@ -21,11 +19,11 @@ import {
 	resolveMentions,
 	type ResolvedMention,
 } from "./tools/lib/mentions/index.js";
+import { PI_SESSIONS_DIR } from "./tools/lib/pi-spawn";
 // side-effect import — registers @oracle, @finder, @codereview, @task sources
 import "./tools/lib/mentions/agent-source.js";
 
 const CUSTOM_TYPE = "mentions:resolved";
-const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
 
 export default function mentionsExtension(pi: ExtensionAPI): void {
 	let activeMentionContext = "";
@@ -88,7 +86,7 @@ export default function mentionsExtension(pi: ExtensionAPI): void {
 				new MentionAwareProvider({
 					baseProvider: current,
 					cwd: ctx.cwd,
-					sessionsDir: SESSIONS_DIR,
+					sessionsDir: PI_SESSIONS_DIR,
 				}),
 		);
 	});

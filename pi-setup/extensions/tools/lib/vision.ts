@@ -1,18 +1,7 @@
 /**
  * Image budget maths for Claude's vision pipeline.
- *
- * Ported verbatim (behaviour-identical) from the `caliper` project's
- * src/vision.ts, which is itself a transcription of Anthropic's published
- * vision spec and its reference resize implementation. Section references in
- * the comments point at the paragraph a number came from.
- *
- * The same algorithm is implemented independently in the ClaudeImageResizer
- * macOS app (ImageBudget.swift). The two agree on every test vector, which is
- * the only reason to trust either. If you change a constant here, change it
- * there, and re-run vision.test.ts.
- *
- * Nothing in this file touches the filesystem, the network, or macOS. It is
- * pure arithmetic and is unit-testable under bare `bun test`.
+ * Behaviour-identical to caliper's src/vision.ts and ClaudeImageResizer's
+ * ImageBudget.swift. Change a constant in all three and re-run vision.test.ts.
  */
 
 export interface Size {
@@ -50,12 +39,7 @@ export type TierName = "standard" | "high";
 
 /**
  * §7. These bound the BASE64 payload, not the bytes on disk. Comparing a raw
- * file size against them passes files the API then rejects: a 4.5 MB PNG is a
- * 6 MB payload.
- *
- * Measured on this machine: a 3840×2160 `screencapture` PNG is 6,798,763 bytes
- * on disk and 9,065,020 as base64 — 90.6% of the API cap from a single
- * full-screen grab. This limit is not theoretical.
+ * file size against them passes files the API then rejects.
  */
 export const MAX_BASE64_BYTES = { api: 10_000_000, bedrock: 5_000_000 } as const;
 
@@ -63,46 +47,16 @@ export const MAX_BASE64_BYTES = { api: 10_000_000, bedrock: 5_000_000 } as const
 export const MAX_EDGE_ABSOLUTE = 8000;
 
 /**
- * §7: once a request carries MORE THAN 20 images, the per-image ceiling drops
- * from 8000px to 2000px on each axis.
- *
- * This is a TIME BOMB and it went off in a real session on 2026-08-05. The
- * high-res tier's spec edge is 2576, so a `tier:"high"` capture is legal in a
- * short conversation and illegal in a long one, with nothing about the call
- * changing. Measured in that session: image #3 was 2576×1449 and succeeded;
- * image #20 was 2576×1449 and the whole request died with
- *
- *   400 invalid_request_error — messages.1.content.20.image.source.base64.data:
- *   At least one of the image dimensions exceed max allowed size for
- *   many-image requests: 2000 pixels
- *
- * A tool cannot see how many images are already in the conversation, so it
- * cannot decide per-call whether 2576 is safe. The only correct move is to
- * never emit an image that could be illegal — see `resolveTier`.
+ * §7: more than 20 images in a request drops the per-image ceiling to 2000px.
+ * a tool cannot see how many images are already in the conversation, so
+ * resolveTier never emits an image that could be illegal at that cap.
  */
 export const MANY_IMAGE_MAX_EDGE = 2000;
 
 /**
- * The most images ONE tool call may produce.
- *
- * This is ours, not Anthropic's. Anthropic's hard wall is 100 images per
- * request, and a request is the WHOLE conversation resent each turn — so a
- * single call that emits 52 slices can push a session that was nowhere near the
- * wall straight through it. Measured, at 1440px wide on the high tier:
- *
- *     6,996px page (real docs page)  ->   4 slices
- *    20,000px page                   ->  11 slices
- *   100,000px page                   ->  52 slices   <- kills the request
- *
- * 12 leaves 8x headroom against the 100 wall, and covers a ~23,000px page —
- * about 25 screens. Every real page measured needs far less.
- *
- * The second reason is context, not legality: 12 high-tier slices is roughly
- * 44,000 tokens in a single tool result. 20 would be ~74,000, a third of the
- * window in one call, which forces compaction early and churns the session.
- *
- * Exceeding it TRUNCATES rather than fails. A partial answer plus a blunt
- * statement of what is missing beats a dead turn.
+ * most images one tool call may produce. Anthropic's wall is 100 per request
+ * (the whole conversation). exceeding this truncates from the top rather than
+ * failing the turn.
  */
 export const MAX_IMAGES_PER_CALL = 12;
 
@@ -139,14 +93,9 @@ function fits(width: number, height: number, tier: Tier): boolean {
 }
 
 /**
- * The size Claude resizes an image to before padding — a direct port of the
- * reference implementation in §6. Images already inside both limits come back
- * unchanged.
- *
- * The token limit, not the edge limit, decides the outcome for nearly all
- * screenshots (§4): 1920×1080 lands on 1456×819, not 1568×882. This is why
- * `sips -Z 1568` is wrong — it satisfies the edge limit and blows the token
- * limit, so the API resizes a second time.
+ * size Claude resizes to before padding. the token limit binds first for most
+ * screenshots — `sips -Z 1568` satisfies the edge and blows the token limit,
+ * so the API resamples a second time.
  */
 export function resizedSize(width: number, height: number, tier: Tier = TIERS.standard): Size {
   if (fits(width, height, tier)) return { width, height };
@@ -171,18 +120,6 @@ export function resizedSize(width: number, height: number, tier: Tier = TIERS.st
   }
   return { width: lo, height: heightFor(lo) };
 }
-
-/*
- * REMOVED 2026-08-05: `paddedSize` and `snapToPatch`.
- *
- * Both were ported from caliper and neither had a production caller here.
- * `paddedSize` reported the size Claude pads to, but the padding rule it
- * describes is already inside `fits()`, which is what actually decides.
- * `snapToPatch` traded up to 2.7% of the aspect ratio for ~3% of the token
- * budget, so it was off by default — a switch with nothing wired to it.
- *
- * Both still exist in caliper if a measurement use ever needs them.
- */
 
 /** §7: base64 encodes 3 bytes as 4 characters, so a payload is ~1.37× the file. */
 export function base64Bytes(rawBytes: number): number {
@@ -209,17 +146,7 @@ export type ViewPlan =
 
 export interface ViewOptions {
   tier?: Tier;
-  /**
-   * Legibility floor in pixels, read as: "do not take a full-budget capture
-   * below this width". It is compared against `scale * tier.maxEdge`, so for a
-   * 1568px-wide source it is simply the fitted width; for other sizes it is the
-   * same shrink expressed on a common ruler.
-   *
-   * 900 out of 1568 is ~0.57 scale. Below that, 14px body text lands under 8px
-   * and stops being readable. A floor on scale rather than on absolute pixels
-   * is what separates 1568×7698 (fits at 20% — unusable) from 1080×1920 (fits
-   * at 76% — fine).
-   */
+  /** compared against `scale * tier.maxEdge`; below this, body text stops being readable. */
   minLongEdge?: number;
   /**
    * Vertical overlap between slices. A feature landing exactly on a seam is
@@ -294,17 +221,9 @@ function tile(
 }
 
 /**
- * Decide how to look at an image without being silently degraded.
- *
- * The `slice` branch is the whole point of this module. When fitting an image
- * to the budget would take it below the legibility floor, downscaling produces
- * a picture that looks fine in a viewer and is worthless to read from. Six
- * readable crops beat one 319px-wide smear of a 7698px page.
- *
- * Slicing is only offered when a full-width slice can itself fit the edge
- * limit. A 3840px-wide image cannot be helped by full-width strips, so it is
- * downscaled however badly that reads — which is exactly the full-screen
- * capture case, and why the tool reports the reduction factor to the caller.
+ * when fitting would go below the legibility floor, slice into full-width
+ * crops. slicing is only offered when a full-width slice itself fits the edge
+ * limit.
  */
 export function planView(width: number, height: number, opts: ViewOptions = {}): ViewPlan {
   const tier = opts.tier ?? TIERS.standard;
@@ -357,35 +276,9 @@ export function planView(width: number, height: number, opts: ViewOptions = {}):
 }
 
 /**
- * The tier a tool should actually use, as opposed to the tier the spec
- * describes.
- *
- * HIGH IS THE DEFAULT, and it is not a preference — it is a dominance result.
- * Swept over 851 shapes (`port-harness/tier-dominance.ts`): high produced a
- * larger image than standard 801 times, an identical one 50 times, and a
- * smaller one ZERO times. In 54 of the wins the source already fitted the high
- * tier, so high meant no resampling at all where standard would have shrunk it.
- * There is no trade-off to weigh, so nothing — not the model, not the tool —
- * needs to decide. Asking for `standard` is the only way to get it.
- *
- * It is also the safer choice for the limits that actually break requests. High
- * tier slices are 1988px tall instead of 840, so the same tall page needs less
- * than half the images: a 6,996px page goes from 9 slices to 4, and a 20,000px
- * page from 25 to 11. Image COUNT is what hits Anthropic's >20 and 100-image
- * rules, so the richer tier is the one less likely to trip them.
- *
- * The high-res tier is clamped to `MANY_IMAGE_MAX_EDGE`, costing ~23% of its
- * linear resolution (2576 → 1988 after patch padding) to buy immunity from a
- * failure that takes out the ENTIRE request, not just the image. A 400 loses
- * the whole turn; a slightly smaller screenshot loses almost nothing. 1988 is
- * still 27% more resolution than the standard tier, which is the reason anyone
- * asks for `high` in the first place.
- *
- * There is deliberately no escape hatch back to 2576. An option that works
- * early in a session and fails later is worse than no option.
- *
- * `TIERS` itself keeps the spec values, because the spec is what the test
- * vectors and the ClaudeImageResizer cross-check are written against.
+ * high is the default: never smaller than standard. clamped to
+ * MANY_IMAGE_MAX_EDGE — there is no escape hatch back to 2576 (legal early
+ * in a session, a 400 later). TIERS keeps the spec values for the test vectors.
  */
 export function resolveTier(name?: TierName | string): Tier {
   // Only an explicit "standard" opts down. Anything else — absent, "high", or a

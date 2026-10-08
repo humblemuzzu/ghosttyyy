@@ -45,6 +45,8 @@ export interface InterpolateContext {
 	harness?: string;
 	/** pre-loaded harness docs section. if provided, skips file read. */
 	harnessDocsSection?: string;
+	/** the sub-agent model list from lib/agent-models.ts describeAgentModels(). */
+	agentModels?: string;
 }
 
 let listingRoot: string | undefined;
@@ -91,6 +93,7 @@ export function interpolatePromptVars(prompt: string, cwd: string, extra?: Inter
 		identity: extra?.identity || "Amp",
 		harness: extra?.harness || "pi",
 		harness_docs_section: extra?.harnessDocsSection || "",
+		agent_models: extra?.agentModels || "",
 	};
 
 	const emptyKeys = Object.keys(vars).filter((k) => !vars[k]);

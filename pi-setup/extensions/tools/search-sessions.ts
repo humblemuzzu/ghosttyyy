@@ -1,35 +1,10 @@
 /**
- * search_sessions — find session BRANCHES by keyword, file, or date.
+ * search_sessions — find session branches by keyword, file, or date.
  *
- * PROVENANCE
- * ported from bdsqqq/dots `user/pi/packages/extensions/search-sessions/index.ts`
- * (MIT, commit e04b620), replacing our earlier flat-session implementation.
- * adapted to our layout:
- *   - `@bds_pi/*` -> `./lib/*`, `typebox` -> `@sinclair/typebox`,
- *     `@earendil-works/*` -> `@mariozechner/*`
- *   - his `@session/<id>` mention source and extension wrapper are DROPPED:
- *     our `extensions/mentions.ts` already registers a single autocomplete
- *     provider covering session/commit/handoff plus the agent directives.
- *     porting his too would install a second, competing provider.
- *   - exposes `createSearchSessionsTool()` (config has a default), so the
- *     existing registration in index.ts is unchanged.
- *
- * WHY THE BRANCH MODEL IS BETTER
- * a pi session is a TREE — you fork, resume and retry, so one session file
- * holds several divergent histories. our old version searched each session as
- * one flat blob, so a hit told you "somewhere in this session" and the
- * files/timestamps reported were the union of every branch.
- *
- * here the searchable unit is a BRANCH: one root-to-leaf path, with its own
- * files-touched set, message chain and timestamp range. results point at the
- * branch where something actually happened.
- *
- * pipeline: glob session files -> optional ripgrep keyword pre-filter -> parse
- * JSONL -> enumerate branches -> filter -> sort. the rg pre-filter matters:
- * ~/.pi/agent/sessions is multi-GB, and parsing every file per query would be
- * unusable.
- *
- * READ-ONLY: this tool never writes to or deletes session data.
+ * a pi session is a tree, so the unit is a branch (one root-to-leaf path), not
+ * a whole file. glob → optional ripgrep pre-filter → parse JSONL → enumerate
+ * branches → filter → sort. the rg pre-filter is required: the sessions dir is
+ * too large to parse every file per query. never writes.
  */
 
 import * as fs from "node:fs";
@@ -46,6 +21,7 @@ import {
   type ExtensionConfigSchema,
 } from "./lib/config";
 import { type BoxSection, type Excerpt, boxRendererWindowed } from "./lib/box-format";
+import { PI_SESSIONS_DIR, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
 import { Type } from "@sinclair/typebox";
 import {
   enumerateBranches,
@@ -140,8 +116,8 @@ const CONFIG_DEFAULTS: SearchSessionsExtConfig = {
    * rather than noisy — and it is the only way to find what a sub-agent did.
    */
   sessionsDirs: [
-    path.join(os.homedir(), ".pi", "agent", "sessions"),
-    path.join(os.homedir(), ".pi", "agent", "sessions-sub"),
+    PI_SESSIONS_DIR,
+    SUB_AGENT_SESSION_DIR,
   ],
   rgTimeoutMs: 10000,
 };

@@ -1,30 +1,11 @@
-/**
- * bash tool — replaces pi's built-in with enhanced command execution.
- *
- * differences from pi's built-in:
- * - `cmd` + `cwd` params (model-compatible interface, not pi's `command`)
- * - auto-splits `cd dir && cmd` into cwd + command (fallback for models)
- * - strips trailing `&` (prevents background processes)
- * - git commit trailer injection (session ID)
- * - git lock serialization via withFileLock (prevents concurrent git ops)
- * - SIGTERM → SIGKILL fallback on cancel/timeout (pi goes straight to SIGKILL)
- * - output truncation with head + tail (first/last N lines, not just tail)
- * - constant memory via OutputBuffer (no unbounded string growth)
- * - permission rules from ~/.pi/agent/permissions.json (allow/reject)
- * - streaming render: compact tail preview (5 lines) with elapsed time,
- *   reuses component via context.lastComponent to prevent clearOnShrink thrashing
- * - final render: box format with proper expanded/collapsed via closure capture
- *   (TUI calls render(width), not render(width, expanded))
- *
- * shadows pi's built-in `bash` tool via same-name registration.
- */
+/** bash tool — shadows pi's built-in via same-name registration. */
 
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { formatBoxesWindowed, normalizeForDisplay, type BoxSection, type Excerpt } from "./lib/box-format";
+import { COLLAPSED_EXCERPTS, formatBoxesWindowed, normalizeForDisplay, type BoxSection } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
 import { Type } from "@sinclair/typebox";
 import { withFileLock } from "./lib/mutex";
@@ -33,7 +14,7 @@ import { evaluateReadOnlyCommand, isReadOnlyBash, readOnlyRefusal } from "./lib/
 import { resolveToAbsolute } from "./read";
 import { OutputBuffer } from "./lib/output-buffer";
 import { loadSecrets } from "./lib/psst";
-import { watchdogTickMs, watchdogVerdict } from "./lib/watchdog";
+import { SLEEP_JUMP_MS, watchdogTickMs, watchdogVerdict } from "./lib/watchdog";
 import { sampleGroupCpuSeconds } from "./lib/proc-cpu";
 
 const HEAD_LINES = 50;
@@ -44,102 +25,22 @@ const STREAM_UPDATE_INTERVAL_MS = 150;
 // --- time bounds ---
 
 /*
- * WHY EVERY COMMAND IS BOUNDED, AND WHY SILENCE IS THE TRIGGER
- *
- * measured, 18,681 bash calls across 325 sub-agent sessions: 87.6% finish in
- * under 5s, 0.20% exceed 300s, and 0.064% exceed 600s. one call ran for
- * 8,555 SECONDS -- 2h22m -- inside a delegate that ran unattended overnight.
- *
- * that call was not slow. it was dead. the test suite it ran finished in
- * milliseconds and printed its complete summary; vitest then failed to exit
- * because something held the event loop open (a pg pool, an undici agent, a
- * timer). 100% of the useful output existed at t+3s and the remaining 8,552
- * seconds produced nothing and never would. vitest cannot rescue itself here:
- * its own `teardownTimeout` watchdog is armed inside `ctx.exit()`, which the
- * CLI only reaches after `startVitest()` returns -- and `startVitest()` awaits
- * `close()`, so a hang INSIDE close never arms it. upstream's own answer to
- * this class is "wrap it in an external hard timeout". that is us.
- *
- * so there are two bounds, and they measure different things:
- *
- *   1. `timeout` (REQUIRED, 1..MAX) -- the caller declares a wall-clock budget.
- *      required rather than defaulted because a default is a number nobody can
- *      justify, and because an optional-with-hidden-default field is a
- *      contradiction a model cannot resolve from the spec (see delegate.ts's
- *      `prompt` for the same decision and the same reasoning). required fails
- *      CLOSED: there is no path by which a command runs unbounded.
- *
- *   2. IDLE KILL -- kills only a command that is PROVABLY doing nothing:
- *      no output AND no CPU for N seconds, regardless of the declared budget.
- *      this is the layer that matters, because a model that writes
- *      `timeout: 600` on a corpse has satisfied bound 1 and still hangs for ten
- *      minutes. duration is not the defect; being DEAD is.
- *
- * why two signals, not just output. stdout-silence alone is too blunt: a
- * command can do real work while printing nothing -- a silent compile, an
- * upload, or (the case that actually bites) a producer behind `| tail`, where
- * `tail` buffers everything until the command exits so we see zero bytes for
- * the whole run. measured, ΔCPU over a 4s window:
- *
- *      sleep 30              0.00s   quiet   (idle / hung)
- *      yes >/dev/null        4.03s   WORKING (silent to us)
- *      yes | tail -1000000   4.03s   WORKING (the `| tail` shape)
- *      node print-then-hang  0.00s   quiet   (the vitest bug)
- *
- * so CPU across the process group tells alive-but-quiet from dead. the CPU
- * check can only ever mark a command ALIVE -- it never causes a kill -- so if
- * `ps` is missing or a parse fails (sampleGroupCpuSeconds returns undefined)
- * the guard degrades to stdout-only, i.e. exactly the previous behaviour. it
- * is a Pareto improvement: strictly fewer false kills, no new ones. see
- * lib/proc-cpu.ts.
- *
- * the idle timer runs from t=0 rather than arming after first output. that
- * refinement was designed, then killed by measurement: piping through
- * `grep`/`tail` block-buffers everything until the upstream closes (verified:
- * `(echo A; sleep 4; echo B) | grep .` emits BOTH lines at t+4s, not t+0s).
- *
- * residuals, stated rather than hidden -- both bounded by the declared timeout,
- * and NEITHER made worse than the old stdout-only guard:
- *   - 0-CPU remote work (`ssh host 'long-job'`, work runs remotely, local
- *     process just holds a socket): looks idle locally, indistinguishable from
- *     a hung ssh. killed at the idle window unless it prints.
- *   - a busy-LOOP hang (spinning at 100% CPU forever): reads as alive, so the
- *     wall-clock declared timeout catches it, not the idle kill.
+ * timeout is required (1..MAX) so nothing runs unbounded. idle kill is the
+ * other bound: no output AND no CPU for N seconds, from t=0 — pipes block-buffer,
+ * so arming after first output never fires on the hang it exists for. CPU can
+ * only keep a command alive; sample failure (undefined) degrades to stdout-only.
+ * residuals, both still bounded by timeout: 0-CPU remote work (ssh) looks idle;
+ * a 100% busy-loop hang is caught by the wall clock, not idle.
  */
 const MIN_TIMEOUT_SEC = 1;
 const DEFAULT_MAX_TIMEOUT_SEC = 600;
 const DEFAULT_IDLE_KILL_SEC = 300;
 
-/**
- * a process group counts as ALIVE for a tick if it consumed CPU at more than
- * this fraction of one core since the last sample. scale-invariant on purpose:
- * threshold = elapsed_seconds * this, so it works identically at a 10s
- * production tick and a sub-second test tick. 5% of a core clears real work
- * (compiles, uploads, `yes` all peg or near-peg a core) while ignoring the
- * millisecond-scale CPU a silent poll loop spends between sleeps.
- */
+/** fraction of one core over the sample window; scale-invariant so tests and production agree. */
 const CPU_ALIVE_CORE_FRACTION = 0.05;
 
-/**
- * how often the idle watchdog wakes. coarse on purpose: one interval plus a
- * timestamp comparison, rather than clearTimeout/setTimeout on every output
- * chunk (which would be thousands of timer-heap operations on a chatty
- * command). measured cost of an idle interval at this cadence: 0.001% of one
- * core. the real tick is min(this, idle/3) so a short window is still observed
- * promptly.
- */
+/** coarse tick; real interval is min(this, idle/3) so a short window is still observed. */
 const IDLE_TICK_MS = 10_000;
-
-/**
- * one tick observing this much wall time means the MACHINE SLEPT, not that the
- * command went quiet -- macOS suspends timers with the lid closed, and on wake a
- * single tick would otherwise see hours of "silence" and kill a healthy process
- * at the exact moment the user is watching. absolute rather than a multiple of
- * the tick: no scheduler delay is a minute, and any real suspend is minutes.
- * the failure direction is deliberate -- a spurious reset grants one more idle
- * window, never a wrong kill.
- */
-const SLEEP_JUMP_MS = 60_000;
 
 function envInt(name: string, fallback: number): number {
 	const raw = process.env[name];
@@ -149,30 +50,18 @@ function envInt(name: string, fallback: number): number {
 	return Math.floor(parsed);
 }
 
-/**
- * CPU liveness is on unless explicitly disabled. off falls back to the
- * stdout-only idle guard -- useful for a machine without a usable `ps`, or to
- * isolate behaviour in a test.
- */
+/** off (`PI_BASH_CPU_LIVENESS=0`) falls back to stdout-only idle. */
 function cpuLivenessEnabled(): boolean {
 	return process.env.PI_BASH_CPU_LIVENESS !== "0";
 }
 
-/**
- * ceiling on a declared timeout. read at TOOL CONSTRUCTION because it goes into
- * the schema the model reads, and `piSpawn` sets a child's env before spawn --
- * exactly like `isReadOnlyBash()`.
- */
+/** ceiling, read at construction — it goes into the schema the model sees. */
 export function maxTimeoutSec(): number {
 	const value = envInt("PI_BASH_MAX_TIMEOUT_SEC", DEFAULT_MAX_TIMEOUT_SEC);
 	return Math.max(MIN_TIMEOUT_SEC, value);
 }
 
-/**
- * idle window. read per CALL rather than at construction so a test can vary it
- * without rebuilding the tool, and so `0` (disable) can be toggled by an
- * operator debugging a genuinely long silent command.
- */
+/** idle window, per call so `0` can disable without rebuilding the tool. */
 export function idleKillSec(): number {
 	return envInt("PI_BASH_IDLE_KILL_SEC", DEFAULT_IDLE_KILL_SEC);
 }
@@ -255,35 +144,12 @@ const COLLAPSED_CMD_LINES = 3;
 /** grace past the max declared timeout before an orphaned elapsed-ticker self-clears */
 const TICKER_SLACK_MS = 60_000;
 
-/** per-block excerpts for collapsed display — head 3 + tail 5 = 8 visual lines */
-const COLLAPSED_EXCERPTS: Excerpt[] = [
-	{ focus: "head" as const, context: 3 },
-	{ focus: "tail" as const, context: 5 },
-];
-
 // --- output sanitization ---
 
 /**
- * strip terminal control sequences from tool output for safe TUI rendering.
- *
- * SSH, remote commands, and interactive programs can emit ANSI escape sequences
- * (cursor movement, screen clearing, terminal mode changes) that leak through
- * our rendered output into the TUI's terminal write buffer. these execute as
- * real terminal commands, desynchronizing the TUI's cursor position tracking
- * and causing content to render at wrong positions ("leaking" below the footer).
- *
- * the most destructive are DEC private mode sequences that SSH emits on
- * connection: \x1b[?1049h (alternate screen buffer), \x1b[?25l (hide cursor),
- * \x1b[?2004h (bracketed paste). these contain a '?' prefix that the previous
- * regex [0-9;]* didn't match, so they passed through and executed as real
- * terminal commands. zoom in/out fixed it because SIGWINCH triggers a full
- * TUI redraw.
- *
- * now uses ECMA-48 byte ranges for CSI parameter bytes (0x30-0x3f includes
- * ? > = < : ; digits) so all CSI variants are caught.
- *
- * the built-in BashExecutionComponent (user bash) does this via strip-ansi.
- * we do it inline to avoid the ESM-only strip-ansi dependency.
+ * strip terminal control sequences before they reach the TUI. CSI uses ECMA-48
+ * parameter bytes 0x30-0x3f so DEC private modes (`?1049h`) are caught —
+ * `[0-9;]*` misses the `?` and those execute as real terminal commands.
  */
 function sanitizeForDisplay(text: string): string {
 	return text
@@ -330,37 +196,13 @@ function splitIncompleteEscape(text: string): { display: string; carry: string }
 // --- tool factory ---
 
 export function createBashTool(): ToolDefinition {
-	/*
-	 * a read-only session must SAY so in the description, not only refuse at
-	 * call time. the tool spec is what the model plans against — learning the
-	 * constraint from a rejection costs a turn, and a model that discovers a
-	 * refusal tends to try a second spelling of the same write.
-	 *
-	 * read at construction because piSpawn sets the env var for the whole child
-	 * process; it never changes mid-session.
-	 */
+	/* a read-only session must say so in the description, not only refuse at call time. */
 	const readOnly = isReadOnlyBash();
-	/*
-	 * ceiling is fixed for the life of the tool: it goes into the schema the
-	 * model plans against, so it must not vary between the description it reads
-	 * and the validator that judges the call.
-	 */
+	/* ceiling is fixed for the life of the tool: it goes into the schema. */
 	const maxTimeout = maxTimeoutSec();
-	/*
-	 * captured ONCE, for the same reason as `maxTimeout`: this number appears in
-	 * the description the model reads AND governs the kill, and the two must not
-	 * be able to disagree. it is threaded into `runCommand` rather than re-read
-	 * there, so there is exactly one source for both.
-	 */
+	/* captured once so the description and the kill cannot disagree. */
 	const idleSec = idleKillSec();
-	/*
-	 * the escape hatch for legitimately-silent work. teaches the agent, UP FRONT,
-	 * that a quiet command can be stopped and how to opt out -- so it does not
-	 * have to learn this from a kill. the remote-deploy case is named explicitly
-	 * because that is the one the CPU signal cannot cover: the work (and the CPU)
-	 * is on the server, so a local `ssh`/`push` that hides its output looks
-	 * exactly like a hang.
-	 */
+	/* named in the description so the agent does not have to learn the idle kill from a kill. */
 	const idleNote = idleSec > 0
 		? `\n- A command that produces NO output AND uses NO CPU for ${idleSec}s is stopped — ` +
 			"a hung process looks exactly like this. Real work is either printing or burning CPU, " +
@@ -409,14 +251,7 @@ export function createBashTool(): ToolDefinition {
 						"Working directory for the command (absolute path). Defaults to workspace root.",
 				}),
 			),
-			/*
-			 * the per-command way to say "I expect this to be quiet, be patient".
-			 * disables the idle kill for this command so ONLY the wall-clock timeout
-			 * bounds it -- the honest signal for legitimately-silent work (a remote
-			 * deploy, a quiet build) that the CPU liveness check cannot see because
-			 * the work is on another machine. optional, so it never affects the
-			 * "timeout is the only required property" contract.
-			 */
+			/* optional; never required, so it cannot break the timeout-required contract. */
 			may_run_silent: Type.Optional(
 				Type.Boolean({
 					description:
@@ -428,18 +263,9 @@ export function createBashTool(): ToolDefinition {
 				}),
 			),
 			/*
-			 * REQUIRED, and bounded by the schema rather than clamped at runtime.
-			 *
-			 * pi validates arguments before execute() (agent-loop.js prepareToolCall
-			 * -> validateToolArguments), and a failure comes back as an ordinary
-			 * isError tool result that the loop carries on from -- so a missing or
-			 * out-of-range timeout costs one turn and self-corrects, it does not
-			 * abort anything. bounds live here so `timeout: 0` and `timeout: 99999`
-			 * become messages the model can learn from instead of silent clamps.
-			 *
-			 * TypeBox `default` is deliberately NOT used: pi fills no defaults
-			 * (Value.Convert coerces types only), so a default here would be
-			 * decorative and the field would still arrive undefined.
+			 * required, schema-bounded. TypeBox `default` is unused: pi fills no
+			 * defaults (Value.Convert coerces types only), so a default here would
+			 * be decorative.
 			 */
 			timeout: Type.Number({
 				minimum: MIN_TIMEOUT_SEC,
@@ -608,16 +434,7 @@ export function createBashTool(): ToolDefinition {
 		},
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			/*
-			 * well-formedness before semantics: a call missing its budget is not a
-			 * command yet, so it is rejected before the permission engine, the
-			 * secret vault, or anything that costs work.
-			 *
-			 * the schema already enforces this for every provider that honours it
-			 * (validation runs before execute()); this is the net for the ones that
-			 * do not. `Value.Convert` coerces a numeric string, so a model sending
-			 * "120" has already become 120 by the time we look.
-			 */
+			/* schema already enforces this; this is the net for providers that skip it. */
 			const timeoutSec = params.timeout;
 			if (
 				typeof timeoutSec !== "number" ||
@@ -760,20 +577,9 @@ async function runCommand(
 		}
 
 		/*
-		 * IDLE WATCHDOG -- kills a command that has stopped producing output,
-		 * whatever wall-clock budget was declared. see the rationale block at the
-		 * top of this file: this is the layer that bounds a corpse whose caller
-		 * asked for ten minutes of patience.
-		 *
-		 * `lastOutputAt` is stamped on RAW chunk arrival (see handleData), not on
-		 * displayable text, so a command emitting only control sequences -- a
-		 * progress bar redrawing one line -- counts as alive and is bounded by the
-		 * wall clock instead. false-positive direction, on purpose.
-		 *
-		 * `lastOutputAt` is ALSO bumped when the process group's CPU advances (see
-		 * the CPU block below), so a command doing real work while printing nothing
-		 * -- a silent compile, or a producer behind `| tail` -- counts as alive
-		 * too. output and CPU are OR'd; the kill fires only when BOTH are quiet.
+		 * lastOutputAt is stamped on RAW chunk arrival, not displayable text, so a
+		 * progress bar of only control sequences still counts as alive. CPU OR
+		 * output keep it alive; the kill fires only when both are quiet.
 		 */
 		const idleMs = idleSec * 1000;
 		let lastOutputAt = Date.now();
@@ -794,13 +600,7 @@ async function runCommand(
 				// against a process that is already on its way out.
 				if (idledOut) return;
 				const now = Date.now();
-				/*
-				 * CPU liveness, first: a command burning CPU is alive even if it has
-				 * printed nothing. this can only ever bump `lastOutputAt` (keep the
-				 * command running); it never kills. a sample of `undefined` (ps
-				 * failed, or the group is gone) is treated as no signal -- the guard
-				 * falls back to output-only, exactly the old behaviour.
-				 */
+				/* CPU can only bump lastOutputAt; undefined (ps failed) is no signal. */
 				if (cpuOn && child.pid) {
 					const cpuNow = sampleGroupCpuSeconds(child.pid);
 					// only advance the sample state on a REAL reading: a failed `ps`
@@ -920,13 +720,7 @@ async function runCommand(
 				return;
 			}
 
-			/*
-			 * before the wall-clock branch: the two are mutually exclusive in
-			 * practice (idle fires only after `idleSec` of silence, the wall clock
-			 * only at the declared budget), but if a kill raced them the idle
-			 * diagnosis is the more useful one -- it tells the caller the output
-			 * above is complete, which "timed out" does not.
-			 */
+			/* idle first: if both fire, "doing nothing" is the more useful diagnosis. */
 			if (idledOut) {
 				const text =
 					`${outputText || "(no output)"}\n\n` +

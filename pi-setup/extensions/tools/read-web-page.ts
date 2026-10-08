@@ -4,7 +4,7 @@
  * cheerio strips chrome (nav, footer, scripts), finds main content area,
  * converts to clean markdown. ~95% size reduction on typical pages.
  *
- * `prompt` spawns an xai/grok-4.6 high sub-agent that receives page content
+ * `prompt` spawns a sub-agent that receives page content
  * and returns AI-generated prose (36/1202 calls use this pattern).
  * `start_index`/`max_length` provide character-level pagination (~16 calls).
  * `raw` skips conversion entirely (1 call).
@@ -12,12 +12,12 @@
 
 import { spawn } from "node:child_process";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { htmlToMarkdown } from "./lib/html-to-md";
-import { piSpawn, zeroUsage } from "./lib/pi-spawn";
-import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
-import { normalizeForDisplay } from "./lib/box-format";
+import { emptyAgentModels, modelParams, resolveRoute, type AgentModels, type ModelRoute } from "./lib/agent-models";
+import { runSubAgent, toolError } from "./lib/run-sub-agent";
+import { clip, renderSubAgentResult } from "./lib/sub-agent-render";
 import { OutputBuffer, headTailChars } from "./lib/output-buffer";
 import { osc8Link } from "./lib/box-format";
 
@@ -26,11 +26,6 @@ const TAIL_LINES = 500;
 const MAX_CHARS = 64_000;
 const CURL_TIMEOUT_SECS = 30;
 const MAX_REDIRECTS = 5;
-// matches the sub-agent tier (see AGENTS.md "Sub-agent Models"). only used for
-// the optional `prompt` path, where the question is answered against fetched
-// page content; the plain fetch path spawns no model at all.
-const PROMPT_MODEL = "xai/grok-4.6";
-const PROMPT_THINKING = "high";
 
 const DEFAULT_PROMPT_SYSTEM = `Analyze web page content and answer questions. Be concise, answer from provided content only. No filler.`;
 
@@ -90,9 +85,11 @@ function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; er
 
 export interface ReadWebPageConfig {
 	systemPrompt?: string;
+	models?: AgentModels;
 }
 
 export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefinition {
+	const models = config.models ?? emptyAgentModels();
 	return {
 		name: "read_web_page",
 		label: "Read Web Page",
@@ -140,26 +137,25 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 					description: "Force a live fetch (no caching). Currently always fetches live.",
 				}),
 			),
+			...modelParams(models, "read_web_page"),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const url = params.url;
 
 			if (!url.startsWith("http://") && !url.startsWith("https://")) {
-				return {
-					content: [{ type: "text" as const, text: `invalid URL: "${url}" — must start with http:// or https://` }],
-					isError: true,
-				} as any;
+				return toolError(`invalid URL: "${url}" — must start with http:// or https://`);
+			}
+
+			let route: ModelRoute = {};
+			if (params.prompt) {
+				const resolved = resolveRoute(models, "read_web_page", params, ctx.modelRegistry);
+				if ("error" in resolved) return toolError(resolved.error);
+				route = resolved;
 			}
 
 			const { html, error } = await fetchUrl(url, signal);
-
-			if (error) {
-				return {
-					content: [{ type: "text" as const, text: error }],
-					isError: true,
-				} as any;
-			}
+			if (error) return toolError(error);
 
 			if (!html.trim()) {
 				return {
@@ -191,64 +187,23 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 				content = `Objective: ${params.objective}\n\n---\n\n${content}`;
 			}
 
-			// prompt mode: spawn sub-agent to answer a question about the page
 			if (params.prompt) {
-				let sessionId = "";
-				try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch {}
-
-				const task = `Here is the content of ${url}:\n\n${content}\n\n---\n\nAnswer this question: ${params.prompt}`;
-
-				const singleResult: SingleResult = {
+				return runSubAgent({
 					agent: "read_web_page",
-					task: params.prompt,
-					exitCode: -1,
-					messages: [],
-					usage: zeroUsage(),
-				};
-
-				const promptSystem = config.systemPrompt || DEFAULT_PROMPT_SYSTEM;
-
-				const result = await piSpawn({
-					cwd: ctx.cwd,
-					task,
-					model: PROMPT_MODEL,
-					pinModel: true,
-					thinkingLevel: PROMPT_THINKING,
-					builtinTools: ["read"],
-					extensionTools: [],
-					systemPromptBody: promptSystem,
+					label: params.prompt,
+					working: "(analyzing...)",
+					ctx,
 					signal,
-					sessionId,
-					onUpdate: (partial) => {
-						singleResult.messages = partial.messages;
-						singleResult.usage = partial.usage;
-						singleResult.model = partial.model;
-						singleResult.stopReason = partial.stopReason;
-						singleResult.errorMessage = partial.errorMessage;
-						if (onUpdate) {
-							onUpdate({
-								content: [{ type: "text", text: getFinalOutput(partial.messages) || "(analyzing...)" }],
-								details: singleResult,
-							} as any);
-						}
+					onUpdate,
+					spawn: {
+						task: `Here is the content of ${url}:\n\n${content}\n\n---\n\nAnswer this question: ${params.prompt}`,
+						model: route.model,
+						thinkingLevel: route.thinking,
+						builtinTools: ["read"],
+						extensionTools: [],
+						systemPromptBody: config.systemPrompt || DEFAULT_PROMPT_SYSTEM,
 					},
 				});
-
-				singleResult.exitCode = result.exitCode;
-				singleResult.messages = result.messages;
-				singleResult.usage = result.usage;
-				singleResult.model = result.model;
-				singleResult.stopReason = result.stopReason;
-				singleResult.errorMessage = result.errorMessage;
-
-				const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-				const output = getFinalOutput(result.messages) || "(no output)";
-
-				if (isError) {
-					return subAgentResult(result.errorMessage || result.stderr || output, singleResult, true);
-				}
-
-				return subAgentResult(output, singleResult);
 			}
 
 			return { content: [{ type: "text" as const, text: content }] } as any;
@@ -257,29 +212,15 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 		renderCall(args: any, theme: any, context: any) {
 			const text = context?.lastComponent ?? new Text("", 0, 0);
 			const url = args.url || "...";
-			const displayUrl = url.length > 60 ? `${url.slice(0, 60)}...` : url;
+			const displayUrl = clip(url, 60);
 			const linkedUrl = url.startsWith("http") ? osc8Link(url, displayUrl) : displayUrl;
 			let label = theme.fg("toolTitle", theme.bold("read_web_page ")) + theme.fg("dim", linkedUrl);
 			const promptLabel = args.prompt || args.objective;
-			if (promptLabel) {
-				const short = promptLabel.length > 40 ? `${promptLabel.slice(0, 40)}...` : promptLabel;
-				label += theme.fg("muted", ` — ${short}`);
-			}
+			if (promptLabel) label += theme.fg("muted", ` — ${clip(promptLabel, 40)}`);
 			text.setText(label);
 			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const details = result.details as SingleResult | undefined;
-			if (!details) {
-				const text = result.content[0];
-				container.addChild(new Text(text?.type === "text" ? normalizeForDisplay(text.text) : "(no output)", 0, 0));
-				return container;
-			}
-			renderAgentTree(details, container, expanded, theme, { label: "read_web_page", header: "statusOnly" });
-			return container;
-		},
+		renderResult: renderSubAgentResult("read_web_page"),
 	};
 }

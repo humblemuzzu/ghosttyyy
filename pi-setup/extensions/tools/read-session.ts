@@ -2,7 +2,7 @@
  * read_session tool — extract relevant context from a pi session via sub-agent.
  *
  * loads a full session tree (all branches), renders it as structured markdown,
- * then spawns an xai/grok-4.6 high sub-agent to extract only the information
+ * then spawns a sub-agent to extract only the information
  * relevant to the stated goal. the agent sees the complete tree — including
  * abandoned branches — so it can understand decision points and context.
  *
@@ -11,37 +11,25 @@
  */
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, zeroUsage } from "./lib/pi-spawn";
-import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
-import { normalizeForDisplay } from "./lib/box-format";
+import { PI_SESSIONS_DIR, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
+import { emptyAgentModels, modelParams, resolveRoute, type AgentModels } from "./lib/agent-models";
+import { runSubAgent, toolError } from "./lib/run-sub-agent";
+import { clip, renderSubAgentResult } from "./lib/sub-agent-render";
 import { headTailChars } from "./lib/output-buffer";
 
-// matches the sub-agent tier (see AGENTS.md "Sub-agent Models"). extracting the
-// relevant thread out of a long, branching session is a comprehension job, not a
-// summarisation one — the cheap tier tended to return the wrong branch.
-const MODEL = "xai/grok-4.6";
-const THINKING = "high";
-const SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions");
-/**
- * sub-agent (delegate) conversations live outside pi's session directory so
- * they stay out of `/resume`. read_session still has to reach them, otherwise
- * a continueId from a delegate result would be unreadable.
- */
-const SUB_SESSIONS_DIR = path.join(os.homedir(), ".pi", "agent", "sessions-sub");
-
-/** every root read_session searches, in priority order. */
-const ALL_SESSION_DIRS = [SESSIONS_DIR, SUB_SESSIONS_DIR];
+/** sub-agent sessions are included so a continueId from a delegate result is readable. */
+const ALL_SESSION_DIRS = [PI_SESSIONS_DIR, SUB_AGENT_SESSION_DIR];
 const MAX_CHARS = 120_000;
 
 const DEFAULT_SYSTEM_PROMPT = `You are analyzing a pi coding agent session transcript. Extract information relevant to the user's goal. Be specific — cite file paths, decisions made, code patterns discussed. If a specific branch is marked as the target, focus on that branch but use other branches for context about what was tried and abandoned.`;
 
 export interface ReadSessionConfig {
 	systemPrompt?: string;
+	models?: AgentModels;
 }
 
 // --- session parsing (shared types with search-sessions) ---
@@ -290,6 +278,7 @@ function renderSessionTree(
 // --- tool ---
 
 export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefinition {
+	const models = config.models ?? emptyAgentModels();
 	return {
 		name: "read_session",
 		label: "Read Session",
@@ -321,92 +310,42 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 						"but prioritize the target branch.",
 				}),
 			),
+			...modelParams(models, "read_session"),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			// find the session file
+			const route = resolveRoute(models, "read_session", params, ctx.modelRegistry);
+			if ("error" in route) return toolError(route.error);
+
 			const sessionFile = findSessionFile(params.session_id);
-			if (!sessionFile) {
-				return {
-					content: [{ type: "text" as const, text: `session not found: ${params.session_id}` }],
-					isError: true,
-				} as any;
-			}
+			if (!sessionFile) return toolError(`session not found: ${params.session_id}`);
 
-			// render session tree
-			const { markdown, sessionName } = renderSessionTree(sessionFile, params.leaf_id);
-
+			const { markdown } = renderSessionTree(sessionFile, params.leaf_id);
 			if (!markdown.trim()) {
-				return {
-					content: [{ type: "text" as const, text: "(session is empty)" }],
-				} as any;
+				return { content: [{ type: "text" as const, text: "(session is empty)" }] } as any;
 			}
 
-			// spawn sub-agent to extract relevant content
-			let sessionId = "";
-			try { sessionId = (ctx as any).sessionManager?.getSessionId?.() ?? ""; } catch {}
-
-			const task = `Here is a pi coding agent session transcript:\n\n${markdown}\n\n---\n\nExtract the information relevant to this goal: ${params.goal}`;
-
-			const singleResult: SingleResult = {
+			return runSubAgent({
 				agent: "read_session",
-				task: params.goal,
-				exitCode: -1,
-				messages: [],
-				usage: zeroUsage(),
-			};
-
-			const systemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-
-			const result = await piSpawn({
-				cwd: ctx.cwd,
-				task,
-				model: MODEL,
-				pinModel: true,
-				thinkingLevel: THINKING,
-				builtinTools: ["read"],
-				extensionTools: [],
-				systemPromptBody: systemPrompt,
+				label: params.goal,
+				working: "(reading session...)",
+				ctx,
 				signal,
-				sessionId,
-				onUpdate: (partial) => {
-					singleResult.messages = partial.messages;
-					singleResult.usage = partial.usage;
-					singleResult.model = partial.model;
-					singleResult.stopReason = partial.stopReason;
-					singleResult.errorMessage = partial.errorMessage;
-					if (onUpdate) {
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(partial.messages) || "(reading session...)" }],
-							details: singleResult,
-						} as any);
-					}
+				onUpdate,
+				spawn: {
+					task: `Here is a pi coding agent session transcript:\n\n${markdown}\n\n---\n\nExtract the information relevant to this goal: ${params.goal}`,
+					model: route.model,
+					thinkingLevel: route.thinking,
+					builtinTools: ["read"],
+					extensionTools: [],
+					systemPromptBody: config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
 				},
 			});
-
-			singleResult.exitCode = result.exitCode;
-			singleResult.messages = result.messages;
-			singleResult.usage = result.usage;
-			singleResult.model = result.model;
-			singleResult.stopReason = result.stopReason;
-			singleResult.errorMessage = result.errorMessage;
-
-			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-			const output = getFinalOutput(result.messages) || "(no output)";
-
-			if (isError) {
-				return subAgentResult(result.errorMessage || result.stderr || output, singleResult, true);
-			}
-
-			return subAgentResult(output, singleResult);
 		},
 
 		renderCall(args: any, theme: any, context: any) {
 			const text = context?.lastComponent ?? new Text("", 0, 0);
-			const goal = args.goal
-				? (args.goal.length > 60 ? `${args.goal.slice(0, 60)}...` : args.goal)
-				: "...";
-			let label = theme.fg("toolTitle", theme.bold("read_session ")) + theme.fg("dim", goal);
+			let label = theme.fg("toolTitle", theme.bold("read_session ")) + theme.fg("dim", args.goal ? clip(args.goal, 60) : "...");
 			if (args.session_id) {
 				const shortId = args.session_id.length > 8 ? args.session_id.slice(0, 8) : args.session_id;
 				label += theme.fg("muted", ` (${shortId}...)`);
@@ -415,17 +354,6 @@ export function createReadSessionTool(config: ReadSessionConfig = {}): ToolDefin
 			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const details = result.details as SingleResult | undefined;
-			if (!details) {
-				const text = result.content[0];
-				container.addChild(new Text(text?.type === "text" ? normalizeForDisplay(text.text) : "(no output)", 0, 0));
-				return container;
-			}
-			renderAgentTree(details, container, expanded, theme, { label: "read_session", header: "statusOnly" });
-			return container;
-		},
+		renderResult: renderSubAgentResult("read_session"),
 	};
 }

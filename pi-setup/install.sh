@@ -16,6 +16,7 @@
 #   ~/.pi/agent/settings.json   — settings (anthropic default, gruvbox theme, compaction on, etc.)
 #   ~/.pi/agent/keybindings.json
 #   ~/.pi/agent/models.json     — custom providers (llama-local, crof)
+#   ~/.pi/agent/agent-models.json — sub-agent model list + per-agent default model/thinking
 #   ~/.pi/agent/permissions.json
 #   ~/.config/mcp/mcp.json      — pi-mcp-adapter global MCP servers (astro, paper)
 #   ~/.pi/agent/pi-sub-bar-settings.json  — seed only; never overwrites a live TUI theme
@@ -162,6 +163,12 @@ if [ -f "$SCRIPT_DIR/models.json" ]; then
     ok "Custom providers installed (llama-local, crof)"
 fi
 
+# ── Sub-agent models ──
+info "Installing sub-agent models..."
+backup_if_exists "$PI_AGENT/agent-models.json"
+cp "$SCRIPT_DIR/agent-models.json" "$PI_AGENT/agent-models.json"
+ok "Sub-agent models installed (agent-models.json)"
+
 # ── Keybindings ──
 info "Installing keybindings..."
 backup_if_exists "$PI_AGENT/keybindings.json"
@@ -212,7 +219,7 @@ packages=(
     "npm:@marckrenn/pi-sub-bar"
     "npm:pi-tool-display"
     "npm:pi-codex-goal@0.6.0"
-    "npm:pi-mcp-adapter@5.0.0"
+    "npm:pi-mcp-adapter@5.1.0"
 )
 # NOTE: pi-context, todos.ts, pi-web-access, pi-tasks and
 # @tomooshi/condensed-milk-pi were removed deliberately — do NOT re-add them

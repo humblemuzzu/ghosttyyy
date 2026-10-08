@@ -25,18 +25,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { saveChange, simpleDiff } from "./lib/file-tracker";
 import { withFileLock } from "./lib/mutex";
 import { resolveWithVariants } from "./read";
-import { boxRendererWindowed, textSection, osc8Link, type Excerpt } from "./lib/box-format";
-import { getText, getContainer } from "./lib/tui";
-
-const COLLAPSED_EXCERPTS: Excerpt[] = [
-	{ focus: "head" as const, context: 3 },
-	{ focus: "tail" as const, context: 5 },
-];
+import { osc8Link, renderBoxedText } from "./lib/box-format";
+import { getText } from "./lib/tui";
 
 type Formatter = { name: string; args: (file: string) => string[] };
 
@@ -138,22 +132,7 @@ export function createFormatFileTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 
 		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
 			const resolved = resolveWithVariants(params.path, ctx.cwd);

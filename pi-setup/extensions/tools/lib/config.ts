@@ -150,15 +150,6 @@ export function getExtensionConfig<T extends Record<string, unknown>>(
 	return merged;
 }
 
-export function getExtensionConfigWithSchema<T extends Record<string, unknown>>(
-	namespace: string,
-	defaults: T,
-	opts?: GetExtensionConfigWithSchemaOpts<T>,
-): T {
-	const merged = getExtensionConfig(namespace, defaults, opts);
-	return applyExtensionSchema(namespace, merged, defaults, opts?.schema);
-}
-
 export function getEnabledExtensionConfig<T extends Record<string, unknown>>(
 	namespace: string,
 	defaults: T,

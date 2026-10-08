@@ -1,48 +1,7 @@
 /**
- * apply_patch — apply a Codex-format patch envelope as one validated batch.
- *
- * PROVENANCE
- * ported from bdsqqq/dots `user/pi/packages/extensions/apply-patch/index.ts`
- * (MIT, commit e04b620). the mutation logic is his and is kept faithfully —
- * it is careful code and the edge cases it handles are real. adapted to our
- * layout and conventions:
- *   - `@bds_pi/*` -> `./lib/*`, `typebox` -> `@sinclair/typebox`,
- *     `@earendil-works/*` -> `@mariozechner/*`, 2-space -> tabs
- *   - his `toolPolicy.evaluateToolPolicy/loadToolPolicy` -> our
- *     `evaluatePermission/loadPermissions` (same call shape, our names)
- *   - his `fileTracker.saveChanges` -> ours (added in this phase; our storage
- *     layout already supported several changes per tool call)
- *   - his `withFileLocks` -> ours (added in this phase, sorted acquisition)
- *   - his pi-core `renderDiff` result rendering is REPLACED by our
- *     Shiki-highlighted renderer (see RENDERING below)
- *
- * WHY THIS REPLACES edit + write
- * one envelope can add, update, delete and move any number of files, and the
- * whole batch either lands or does not. `edit` mutates one file per call with
- * no cross-file atomicity, so a 3-file refactor could fail halfway and leave
- * the tree inconsistent. here every target is snapshotted first, all hunks are
- * matched against in-memory content, and nothing is written until every
- * operation has succeeded.
- *
- * SAFETY PROPERTIES (all inherited from his implementation)
- *   - context must match exactly, so a stale or hallucinated hunk fails loudly
- *     instead of corrupting the file
- *   - symlinks and hard-linked files are refused (they alias other paths)
- *   - paths that resolve to the same file, or contain one another, are refused
- *     (case-insensitive filesystems are detected, which matters on this mac)
- *   - a write or tracking failure rolls every file back to its snapshot
- *   - added content containing placeholders like "// ... rest unchanged" is
- *     rejected, which is the main way a model silently deletes code
- *
- * NOT crash-safe: killing the process mid-commit can leave a partial batch.
- *
- * RENDERING
- * his version renders with pi core's plain `renderDiff`. ours keeps the
- * Shiki-highlighted, side-by-side diff we already use for `edit`. because
- * `createShikiDiffComponent` detects language from a single file path and
- * renders `parsePatchFiles(...)[0]`, a multi-file patch gets ONE component
- * PER FILE rather than one for the batch — otherwise only the first file
- * would be highlighted and the rest would silently vanish from the view.
+ * apply_patch — one validated all-or-nothing batch. every lane goes through
+ * the same permission → mutex → lock → snapshot → apply → commit-or-rollback
+ * path. not crash-safe: killing mid-commit can leave a partial batch.
  */
 
 import * as fs from "node:fs";
@@ -66,11 +25,7 @@ import { formatBoxesWindowed, osc8Link, type BoxBlock, type BoxLine, type BoxSec
 import { computeDiffStats, formatStats, sumStats } from "./lib/diff-stats";
 import { getContainer, getText } from "./lib/tui";
 
-/**
- * the envelope format, repeated in every format error. models do not reliably
- * infer it from prose — measured: haiku burned 15 consecutive failed calls
- * against a description with no example.
- */
+/** models do not reliably infer the envelope from prose; this is in every format error. */
 const ENVELOPE_EXAMPLE = `*** Begin Patch
 *** Update File: src/app.ts
 @@
@@ -80,38 +35,10 @@ const ENVELOPE_EXAMPLE = `*** Begin Patch
 *** End Patch`;
 
 /*
- * FOUR WAYS TO SAY THE SAME THING — and why the schema looks like this.
- *
- * This tool used to take exactly one required string: the V4A envelope. That
- * is OpenAI's format, which their models were trained on and no other model
- * was, so every non-OpenAI model paid a translation tax on every edit and the
- * weak ones simply failed (see 2026-07-30-bdsqqq-port.md §3.6/§3.9).
- *
- * So the wire is now loose and the disk stays brutal. Four lanes, all landing
- * in the same engine — same permission check, same locks, same snapshot,
- * same all-or-nothing commit, same undo records:
- *
- *   write     { path, content }
- *   edit      { path, old_string, new_string }
- *   batch     { ops: [ ... ] }
- *   envelope  { input: "*** Begin Patch ..." }
- *
- * EVERY FIELD IS OPTIONAL, and that is forced, not sloppy: the lanes are
- * mutually exclusive, so no single field can be required without blocking the
- * other three. pi validates arguments against this schema BEFORE execute()
- * runs (pi-ai `validateToolArguments`), so a required field is a hard wall,
- * not a hint. The cost is that a malformed call is caught one layer later, in
- * `normalizeCall`, which is why its errors are written to be actionable.
- *
- * WHY `constrainedSampling` IS GONE (deliberate, do not re-add without reading
- * this). Grammar sampling forces OpenAI models to emit a syntactically valid
- * envelope at the token level, and it is genuinely good — but pi-ai's
- * `inferGrammarInputProperty` requires the schema to have EXACTLY ONE required
- * string property. That is mutually exclusive with the four lanes above. It
- * only ever applied to OpenAI-family providers (`resolveGrammarConstrainedSampling`
- * returns early elsewhere), i.e. to the one family that emits this format
- * correctly unaided. Declaring it with a schema it cannot satisfy does not
- * degrade — it THROWS and kills the whole turn — so it is removed, not left in.
+ * Four lanes (write / edit / batch / envelope), all optional fields: pi
+ * validates arguments before execute(), so a required field walls off the
+ * other lanes. Do not restore constrainedSampling — pi-ai throws unless the
+ * schema has exactly one required string property.
  */
 const OpParameters = Type.Object({
 	op: Type.Optional(
@@ -177,12 +104,8 @@ const ApplyPatchParameters = Type.Object({
 });
 
 /*
- * Key spellings models actually reach for. Canonical first.
- *
- * This is the `lib/params.ts` idea widened: the point is never to guess what
- * an argument MEANS, only to accept what it is CALLED. A key that changes the
- * operation (content vs old_string) is never inferred across lanes — a call
- * that names two lanes is rejected, not reconciled.
+ * accept what a key is CALLED, never guess what it MEANS. a call that names
+ * two lanes is rejected, not reconciled.
  */
 const INPUT_KEYS = ["input", "patch", "envelope", "diff", "patch_text", "patchText"] as const;
 /*
@@ -245,15 +168,8 @@ export interface ApplyPatchDetails {
 export type Lane = "write" | "edit" | "delete" | "move" | "batch" | "envelope";
 
 /**
- * the single internal vocabulary. every lane is translated into this before
- * anything touches disk, so there is exactly ONE apply loop, ONE rollback path
- * and ONE set of safety guards — adding a lane can never add a way to bypass
- * them.
- *
- * `add` and `write` are deliberately different operations, not a flag: `add`
- * refuses to overwrite (it is the envelope's create-a-new-file op, and a model
- * that thinks a file is new must not destroy it), while `write` means replace
- * and says so in its name.
+ * every lane translates into this before disk, so adding a lane cannot bypass
+ * guards. `add` refuses to overwrite; `write` means replace.
  */
 type Intent =
 	| { type: "add"; path: string; content: string }
@@ -290,13 +206,9 @@ const OP_SYNONYMS: Record<string, FieldOpKind> = {
 };
 
 /**
- * read a string field under any of its spellings.
- *
- * `""` counts as PRESENT — this is the whole reason `lib/params.ts`'s
- * `resolveParam` cannot be reused here. Emptiness is meaningful in both lanes
- * that carry text: `new_string: ""` deletes the matched text, and
- * `content: ""` truncates a file. Treating empty as absent would silently turn
- * both into "you forgot an argument".
+ * `""` counts as PRESENT. emptiness is meaningful: `new_string: ""` deletes,
+ * `content: ""` truncates. treating empty as absent would turn both into
+ * "you forgot an argument".
  */
 function pickString(
 	params: Record<string, unknown>,
@@ -320,14 +232,7 @@ function pickBoolean(params: Record<string, unknown>, keys: readonly string[]): 
 	return false;
 }
 
-/**
- * read the ops array, tolerating the two shapes providers mangle it into.
- *
- * A JSON-STRINGIFIED ARRAY IS NOT HYPOTHETICAL: `pi-tasks` was removed from
- * this setup (2026-07-30) precisely because array parameters arrived as
- * strings and every call it gated failed. Accepting that here costs four
- * lines; refusing it costs the model a turn it cannot debug.
- */
+/** tolerate a JSON-stringified array — some providers emit ops that way. */
 function pickOps(params: Record<string, unknown>): unknown[] | undefined {
 	for (const key of OPS_KEYS) {
 		const value = params[key];
@@ -526,16 +431,7 @@ function normalizeCall(params: Record<string, unknown>): { intents: Intent[]; la
 
 	if (ops) {
 		if (ops.length === 0) throw shapeError("ops is empty — nothing to do.", params);
-		/*
-		 * A TOP-LEVEL PATH IS INHERITED BY ENTRIES THAT LACK ONE.
-		 *
-		 * this is not a nicety — it is the exact shape of pi's OWN native edit
-		 * tool (`{ path, edits: [{ oldText, newText }] }`) and of Claude Code's
-		 * MultiEdit (`{ file_path, edits: [{ old_string, new_string }] }`).
-		 * `edits` is one of the OPS_KEYS, so without this the single most
-		 * likely thing a Claude-family model emits lands as
-		 * "ops[0]: no file path".
-		 */
+		/* a top-level path is inherited — pi's native edit and Claude MultiEdit. */
 		const intents = ops.map((entry, index) => {
 			if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
 				throw shapeError(
@@ -550,16 +446,8 @@ function normalizeCall(params: Record<string, unknown>): { intents: Intent[]; la
 
 	if (input) {
 		/*
-		 * a path next to a plain blob under the GENERIC key `input` is a write
-		 * whose author reached for the wrong key name, and rescuing it is free.
-		 *
-		 * two gates, and both are load-bearing:
-		 *   - the key must be `input`. `patch`, `diff`, `envelope` and
-		 *     `patch_text` all say "this is a patch" in the name, so a malformed
-		 *     one is an error — never file content. without this,
-		 *     `{ path, diff: "-old\n+new" }` writes the DIFF into the file.
-		 *   - it must not look like a patch attempt either way, which catches
-		 *     the same mistake made under the generic key.
+		 * only `input` (not `diff`/`patch`) may be rescued as content, and only
+		 * when it does not look like a patch — else `{ path, diff: "..." }` writes the DIFF.
 		 */
 		if (filePath && input.key === "input" && !looksLikePatchAttempt(input.value)) {
 			return { intents: [{ type: "write", path: filePath, content: input.value }], lane: "write" };
@@ -600,16 +488,9 @@ const REDACTION_PATTERNS = [
 ];
 
 /**
- * reject a patch whose ADDED lines introduce a placeholder.
- *
- * counts before vs after rather than matching outright: a file may legitimately
- * already contain such a line (this very file does), and only a NEW one — i.e.
- * the model substituting a placeholder for real content — is an error.
- *
- * `before` is the file's current text, which is why this runs inside the apply
- * loop rather than up front: a whole-file `write` has no old/new lines of its
- * own, so without the real file to compare against, every rewrite of a file
- * that legitimately contains such a phrase would be refused.
+ * reject ADDED placeholders. counts before vs after: a file may already
+ * contain such a line. runs inside the apply loop so a whole-file write has
+ * the real file to compare against.
  */
 function assertNoRedaction(intent: Intent, before: string | undefined): void {
 	const beforeLines =
@@ -643,22 +524,8 @@ const BEGIN_MARKER = "*** Begin Patch";
 const END_MARKER = "*** End Patch";
 
 /**
- * clean up the envelope before parsing, and fail with a message that TEACHES
- * the format rather than just naming the first broken line.
- *
- * two things models actually do, both measured here:
- *   - wrap the envelope in a ``` fence (it looks like a code block to them)
- *   - send a plain unified diff (---/+++/@@ -1,4 +1,4 @@), which is the far
- *     more common diff format in training data
- *
- * fences are stripped silently. a unified diff is NOT auto-converted: its
- * hunk headers may be invented, and quietly reinterpreting a patch is exactly
- * the kind of "helpful" behaviour that corrupts files. it is rejected with an
- * explicit explanation of the difference instead.
- *
- * fences and heredocs are stripped silently, and the marker match itself is
- * tolerant (see codex-patch's TOLERANCE note) — so everything this function
- * still rejects is a genuine format mismatch rather than punctuation.
+ * fences and heredocs are stripped silently. a unified diff is NOT
+ * auto-converted — quietly reinterpreting a patch corrupts files.
  */
 function normalizeEnvelope(raw: string): string {
 	let text = raw.trim();
@@ -768,14 +635,7 @@ function lineNumberAt(text: string, index: number): number {
 	return line;
 }
 
-/**
- * cheap 0..1 likeness, used only to point at the line the caller probably meant.
- *
- * shared prefix + shared suffix over the longer length. deliberately NOT edit
- * distance: this runs over every line of a file on a path that has already
- * failed, and a quadratic algorithm there would turn a helpful message into a
- * hang on a large file. it is exact where it matters (near-identical lines).
- */
+/** shared prefix + suffix over the longer length. not edit distance — this runs over every line of a failed file. */
 function similarity(a: string, b: string): number {
 	if (a === b) return 1;
 	const longest = Math.max(a.length, b.length);
@@ -835,19 +695,8 @@ function nearestLinesHint(content: string, needle: string): string {
 }
 
 /**
- * replace an exact span, with the same refusals the envelope lane has.
- *
- * three tiers, in order:
- *   1. exact substring — one hit replaces, several refuse (unless replace_all)
- *   2. whole-line fallback through `applyPatchChunks`, which brings the tested
- *      unicode/whitespace fuzz and the re-indent-to-the-file rule with it. this
- *      is what rescues a hunk copied out of a grep result with the wrong
- *      indentation.
- *   3. a message that shows the file
- *
- * an ambiguity refusal from tier 2 is re-thrown rather than swallowed: "this
- * matches three places" must never degrade into "not found", which would send
- * the caller looking for the wrong problem.
+ * exact substring, then applyPatchChunks for indent/whitespace fuzz.
+ * an ambiguity refusal from the fallback must not degrade into "not found".
  */
 function applyEdit(content: string, intent: Extract<Intent, { type: "edit" }>): string {
 	const { total, positions } = countOccurrences(content, intent.old);
@@ -890,14 +739,7 @@ function applyEdit(content: string, intent: Extract<Intent, { type: "edit" }>): 
 			intent.path,
 		);
 	} catch (error) {
-		/*
-		 * swallow ONLY "I could not locate this text", because the message
-		 * built below says that better. everything else the applier raises is a
-		 * DIFFERENT diagnosis — an ambiguous hunk, an indentation mismatch —
-		 * and degrading it into "not found" sends the caller hunting for the
-		 * wrong problem. an allow-list of what to swallow, not of what to
-		 * re-throw, so a newly added diagnosis surfaces by default.
-		 */
+		/* swallow only "failed to find"; any other diagnosis must surface. */
 		if (!/^failed to find/i.test((error as Error).message)) throw error;
 	}
 
@@ -907,22 +749,9 @@ function applyEdit(content: string, intent: Extract<Intent, { type: "edit" }>): 
 }
 
 /**
- * resolve the deepest existing ancestor with realpath, then re-append the
- * not-yet-existing tail. plain realpath would throw for a file being created.
- *
- * MUST use `realpathSync.native`, not `realpathSync` — they disagree on macOS.
- *
- * node's JS `realpathSync` resolves symlinks but preserves the case you asked
- * with, so `realpathSync("dup.txt")` returns `dup.txt` even when the file on
- * disk is `Dup.txt`. `realpathSync.native` calls the OS and returns the true
- * on-disk casing, which is exactly what pi core's file-mutation queue does
- * (it keys by the ASYNC `fs/promises.realpath`, which is also native-backed).
- *
- * with the JS variant, two case-variant paths stayed distinct here, slipped
- * past the alias check below, and then collapsed to ONE key inside pi's queue
- * — so we nested an acquisition of a key we already held and the tool hung
- * forever. verified empirically on this machine; a case-sensitive filesystem
- * never shows it, which is why it is not a bug upstream.
+ * resolve the deepest existing ancestor, then re-append the missing tail.
+ * MUST use `realpathSync.native`: JS realpathSync preserves requested casing
+ * on macOS, so case-variant paths slip the alias check and deadlock pi's queue.
  */
 function canonicalMutationPath(file: string): string {
 	const suffix: string[] = [];
@@ -1095,16 +924,7 @@ function commitChanges(
 const ENVELOPE_HEADER_RE =
 	/^\*{2,}\s*(?:Add|Create|New|Delete|Remove|Update|Edit|Modify|Change|Patch|Write|Replace|Overwrite)\s+File\s*:\s*(.+)$/i;
 
-/**
- * the collapsed call line: which files this call touches.
- *
- * shows basenames, and elides past the third — a 25-file batch rendered as 25
- * absolute paths wraps over several lines and pushes everything else off
- * screen. the full list is always in the result below it.
- *
- * reads the same alias tables `normalizeCall` does, so the header cannot drift
- * out of step with the lane that actually ran.
- */
+/** collapsed call line: basenames, elide past the third. */
 function describeCall(args: Record<string, unknown> | undefined): string {
 	if (!args) return "...";
 	const names: string[] = [];
@@ -1253,17 +1073,9 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 			"Never replace real code with a placeholder such as \"… rest unchanged\".",
 		].join("\n"),
 		promptSnippet: "Create, edit, delete or move files as one atomic batch",
-		/*
-		 * these reach EVERY model, and since `constrainedSampling` was removed
-		 * they are now the ONLY thing shaping call syntax — there is no longer a
-		 * token-level backstop on any provider. Lead with the two simple lanes:
-		 * an earlier version led with the envelope and trained the hard path.
-		 */
 		promptGuidelines: [
 			"Use apply_patch for every file creation, change, delete and move. Never modify a file with bash (no `sed -i`, no `>`/`>>` redirection, no `tee`, no heredoc) — that bypasses undo tracking, permission rules and secret scrubbing.",
-			"apply_patch takes whichever shape fits: `{ path, content }` writes a whole file, `{ path, old_string, new_string }` changes part of one, `{ ops: [...] }` changes several files in one atomic batch, and `{ input }` takes a Codex `*** Begin Patch` envelope for multi-hunk edits.",
-			"For an apply_patch edit, `old_string` must match the file exactly and appear exactly once — copy it from a fresh read rather than from memory, and use `replace_all` only when you really mean every occurrence.",
-			"Prefer `{ path, content }` over delete-then-add when replacing a whole file, and put unrelated changes in separate calls.",
+			"Copy an apply_patch `old_string` from a fresh read, not from memory. Prefer `{ path, content }` over delete-then-add for a whole file, and keep unrelated changes in separate calls.",
 		],
 		parameters: ApplyPatchParameters,
 		executionMode: "sequential",
@@ -1346,14 +1158,7 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 					const finalModes = new Map<string, number | undefined>(
 						snapshots.map((item) => [item.path, item.mode]),
 					);
-					/*
-					 * which paths are the two halves of one move.
-					 *
-					 * recorded HERE, where it is known for certain, so `undo_edit`
-					 * never has to infer it from matching bytes — an inference that
-					 * is unanswerable when a batch moves one file and deletes
-					 * another holding identical content.
-					 */
+					/* recorded here so undo_edit never infers a move from matching bytes. */
 					const movePartners = new Map<string, string>();
 
 					// apply every operation IN MEMORY first — nothing touches disk
@@ -1363,17 +1168,7 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 						const current = finalContents.get(source);
 						assertNoRedaction(operation, current);
 						if (operation.type === "add") {
-							// UPSTREAM BUG FIX (bdsqqq's version omits this guard).
-							//
-							// without it, `*** Add File:` on a path that already exists
-							// replaces the whole file with the patch body — silently, and
-							// with no context matching to catch it. a model that thinks a
-							// file is new destroys it. verified: a 4-line file became one
-							// line, reported only as "M path".
-							//
-							// `delete` and `update` below both guard on `current`; `add` was
-							// the only asymmetric branch. wholesale replacement is still
-							// possible, but must be spelled Delete File + Add File.
+							// add refuses to overwrite; a model that thinks a file is new must not destroy it.
 							if (current !== undefined) {
 								throw new Error(
 									`file already exists: ${source}; use '*** Update File:' to modify it, or '*** Delete File:' first to replace it wholesale`,
@@ -1403,14 +1198,7 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 									? current
 									: applyPatchChunks(current, operation.chunks, source);
 							if (destination) {
-								// A MOVE MUST NOT CLOBBER.
-								//
-								// `add` refuses to overwrite; the move branch did not, so a
-								// rename onto an occupied path replaced that file's real
-								// content and reported success. harmless-looking in the
-								// envelope, where a move costs a whole `*** Move to:` line,
-								// but `{ path, to }` now makes it two fields — so the guard
-								// has to exist. `git mv` refuses this too.
+								// a move must not clobber an existing destination.
 								if (finalContents.get(destination) !== undefined) {
 									throw new Error(
 										`move destination already exists: ${destination}; delete it first, or send { path, content } if you meant to overwrite it`,
@@ -1528,19 +1316,7 @@ export function createApplyPatchTool(): ToolDefinition<typeof ApplyPatchParamete
 
 			const cwd: string = context?.cwd ?? process.cwd();
 
-			/*
-			 * HEADER: match `edit` exactly for the common single-file case.
-			 *
-			 * `edit` prints one stats line (`~1`) and lets the box header carry the
-			 * filename. the first version of this renderer printed BOTH a
-			 * "1 file changed" line AND a "modified <abs path>" line above a box
-			 * whose header repeated the same path — three lines of chrome and the
-			 * path twice, per file. over a run of small patches that is a wall of
-			 * noise, and it looked nothing like the rest of our tools.
-			 *
-			 * so: file count only when it adds information (>1 file), and always
-			 * the same `+n ~n -n` summary `edit` shows.
-			 */
+			/* file count only when >1 file; same `+n ~n -n` summary `edit` shows. */
 			const perFile = changes.map((change) => ({
 				change,
 				display: displayName(change.path, cwd),

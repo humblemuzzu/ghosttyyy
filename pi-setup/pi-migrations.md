@@ -12,6 +12,26 @@ file would have silently reverted an upstream feature or fix.
 
 ---
 
+## Packages (2026-10-08) — pi-mcp-adapter 5.0.0 → 5.1.0, tools deps
+
+pi core 1.1.0 was already latest; every other loaded pi package was current.
+
+- **pi-mcp-adapter 5.0.0 → 5.1.0.** Additive (Pi 1.0 compat, opt-in Tavily
+  setup, `openUi: false`, `pi -p` hang fix). Pin bumped in live + repo
+  `settings.json` and `install.sh`, object form kept. `pi update
+  npm:pi-mcp-adapter@5.1.0` printed "Updated" and installed nothing;
+  `pi install npm:pi-mcp-adapter@5.1.0` did it. The mcpScript gate is now
+  opt-in (`scriptMode === true`). Headless boot: `mcp` yes, `mcpScript` no,
+  `mcp-scripting` no. No new pi-tui copy on disk.
+- **tools extension deps:** `@heyhuynhgiabuu/pi-diff` 0.7.6 → 0.9.2 (pi-tui now
+  a peer, resolves to the patched host copy; `__testing` API unchanged),
+  `diff` 8 → 9 (`createPatch` unchanged for our call), `psst-cli` 0.6.6 → 0.7.1.
+  **psst 0.7 made `Vault.listSecrets` async**; without the `await` in
+  `lib/psst.ts` the iteration threw inside a try/catch and every vault secret
+  silently stopped loading. Verified `SSH_KEY` loads after the change.
+
+---
+
 ## Jev out of `web_search`, in as the `jev` skill (2026-10-08)
 
 `lib/jev-judge.ts` (added 10-02, ported from GaganSD/pi-extensions) is gone;

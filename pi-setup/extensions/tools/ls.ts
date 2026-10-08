@@ -11,16 +11,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { resolveWithVariants, listDirectory, type ReadLimits } from "./read";
-import { boxRendererWindowed, textSection, osc8Link, type Excerpt } from "./lib/box-format";
-import { getText, getContainer } from "./lib/tui";
-
-const COLLAPSED_EXCERPTS: Excerpt[] = [
-	{ focus: "head" as const, context: 3 },
-	{ focus: "tail" as const, context: 5 },
-];
+import { osc8Link, renderBoxedText } from "./lib/box-format";
+import { getText } from "./lib/tui";
 
 export function createLsTool(limits: ReadLimits): ToolDefinition {
 	return {
@@ -48,22 +42,7 @@ export function createLsTool(limits: ReadLimits): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const resolved = resolveWithVariants(params.path ?? ctx.cwd, ctx.cwd);

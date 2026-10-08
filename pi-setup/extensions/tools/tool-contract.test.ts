@@ -23,12 +23,20 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createLibrarianTool, librarianAllowlist, normalizeRepositories } from "./librarian";
 import { createOracleTool, oracleAllowlist } from "./oracle";
 import { createDelegateTool, delegateAllowlist } from "./delegate";
 import { createChadTool, chadAllowlist } from "./chad";
 import { createFinderTool, finderAllowlist } from "./finder";
 import { createCodeReviewTool, codeReviewAllowlist } from "./code-review";
+import { createReadSessionTool } from "./read-session";
+import { createReadWebPageTool } from "./read-web-page";
+import { parseAgentModels, SUB_AGENTS } from "./lib/agent-models";
+import { subAgentResult } from "./lib/sub-agent-render";
+import { zeroUsage } from "./lib/pi-spawn";
 
 type AnyTool = {
 	name: string;
@@ -250,5 +258,66 @@ describe("tool contract: grammar sampling stays opt-in", () => {
 		for (const [name, tool] of SUB_AGENT_TOOLS) {
 			expect((tool as any).constrainedSampling, `${name} must not opt in`).toBeUndefined();
 		}
+	});
+});
+
+describe("tool contract: every sub-agent takes a model and a thinking level", () => {
+	const models = parseAgentModels({
+		models: { grok: { id: "xai/grok-4.6" }, "deepseek-flash": { id: "deepseek/deepseek-flash" } },
+		agents: { chad: { model: "grok", thinking: "high" } },
+	});
+	const tools: Array<[string, any]> = [
+		["chad", createChadTool({ models })],
+		["delegate", createDelegateTool({ models })],
+		["oracle", createOracleTool({ models })],
+		["finder", createFinderTool({ models })],
+		["librarian", createLibrarianTool({ models })],
+		["code_review", createCodeReviewTool({ models })],
+		["read_session", createReadSessionTool({ models })],
+		["read_web_page", createReadWebPageTool({ models })],
+	];
+
+	test("the list here is every agent the model config knows", () => {
+		expect(tools.map(([name]) => name).sort()).toEqual([...SUB_AGENTS].sort());
+	});
+
+	for (const [name, tool] of tools) {
+		test(`${name}: model and thinking are optional enums`, () => {
+			const { properties, required = [] } = tool.parameters;
+			expect(properties.model.enum).toEqual(["grok", "deepseek-flash"]);
+			expect(properties.thinking.enum).toContain("xhigh");
+			expect(required).not.toContain("model");
+			expect(required).not.toContain("thinking");
+		});
+	}
+
+	test("an unknown model is refused before any process starts", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "route-refusal-"));
+		const marker = join(dir, "spawned");
+		const stub = join(dir, "pi.sh");
+		writeFileSync(stub, `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+		const prev = process.env.PI_BIN;
+		process.env.PI_BIN = stub;
+		try {
+			const ctx = { cwd: dir, modelRegistry: { find: () => ({}), hasConfiguredAuth: () => true } };
+			const result = await createChadTool({ models }).execute!("t1", { prompt: "x", model: "gpt-9" } as any, undefined, undefined, ctx as any);
+			expect((result as any).isError).toBe(true);
+			expect((result as any).content[0].text).toContain("Use one of: grok, deepseek-flash");
+			expect(existsSync(marker)).toBe(false);
+		} finally {
+			if (prev === undefined) delete process.env.PI_BIN;
+			else process.env.PI_BIN = prev;
+		}
+	});
+
+	test("every result names the model that ran, so the parent can tell the user", () => {
+		const result = subAgentResult(
+			"answer",
+			{ agent: "chad", task: "t", exitCode: 0, messages: [], usage: zeroUsage(), model: "deepseek/deepseek-flash", thinkingLevel: "max", continueId: "c1" },
+		);
+		expect(result.content.at(-1)).toEqual({
+			type: "text",
+			text: "answer\n\n---\nmodel: deepseek/deepseek-flash · max\ncontinueId: c1",
+		});
 	});
 });

@@ -1,15 +1,10 @@
 /**
- * chad tool tests — pin the read-only surface and the model policy.
+ * chad tool tests — pin the read-only surface.
  *
- * two properties matter more than the rest and are asserted from several
- * directions, because both fail SILENTLY:
- *
- *   1. no mutation tool reaches the child. `chad` is read-only by construction,
- *      not by prompt, and a tool quietly added to the allowlist would give it
- *      back the ability to write with nothing failing.
- *   2. the model is pinned. piSpawn copies the parent's model whenever the
- *      parent is not anthropic, so a chad launched from a kimi session would
- *      become kimi — same output shape, wrong agent, no error anywhere.
+ * no mutation tool may reach the child. `chad` is read-only by construction,
+ * not by prompt, and a tool quietly added to the allowlist would give it back
+ * the ability to write with nothing failing — so it is asserted from several
+ * directions.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -42,8 +37,8 @@ describe("chad allowlist: read-only by construction", () => {
 	});
 
 	test("has the seven github tools directly, rather than nesting a librarian", () => {
-		// a nested librarian would run chad's pinned model anyway — a whole
-		// extra process to reach tools chad can call itself.
+		// a nested librarian is a whole extra process to reach tools chad can
+		// call itself.
 		for (const tool of [
 			"read_github", "search_github", "list_directory_github",
 			"list_repositories", "glob_github", "commit_search", "diff",

@@ -297,29 +297,23 @@ export function createScreenshotTool(): ToolDefinition {
 		label: "Screenshot",
 		description:
 			"Capture the screen, a specific window, or a rectangular region on macOS, and return it " +
-			"as an image already fitted to the vision model's limits — resampled exactly once, at the " +
-			"size the API would have picked anyway.\n\n" +
-			"Use it to verify UI you just built or changed, to read something on screen, or to see " +
-			"what an app is currently showing.\n\n" +
-			"Do NOT shell out to `screencapture` or `sips -Z` — `sips -Z` ignores the visual-token " +
-			"budget, so the API resamples the image a second time and small text stops being readable.\n\n" +
+			"as an image already fitted to the vision model's limits. Use it to verify UI you built, " +
+			"read something on screen, or see what an app is showing.\n\n" +
+			"Do NOT shell out to `screencapture` or `sips -Z`: the API would resample a second time " +
+			"and small text stops being readable.\n\n" +
 			"Targeting, in precedence order: window_id, then app/window_title, then region, otherwise " +
-			"the whole display. With list:true it returns the open windows instead of an image. " +
-			"Ambiguous or missing window matches come back with the candidate list, so a failed call " +
-			"tells you exactly what to pass next.\n\n" +
-			"Pass a url to render a page in a headless browser instead of photographing the screen. " +
-			"That captures the WHOLE page including everything below the fold, which no screen capture " +
-			"can do, and a very tall page is returned as ordered readable slices rather than one " +
-			"illegible strip. Use it for web UI you are building. A page too long to return in one " +
-			"call is truncated from the top and says so — pass a selector to reach a specific " +
-			"section instead.\n\n" +
+			"the whole display; a url beats all of them. A failed window match returns the candidate " +
+			"list, so the error tells you what to pass next.\n\n" +
+			"A url renders the WHOLE page in a headless browser, below the fold included, as ordered " +
+			"readable slices. A page too long for one call is truncated from the top and says so — pass " +
+			"a selector to reach a specific section.\n\n" +
 			'Example: screenshot({ app: "Safari" })',
 
 		parameters: Type.Object({
 			url: Type.Optional(
 				Type.String({
 					description:
-						"Render this URL in a headless browser and capture it, instead of capturing the screen. Beats every other targeting option. Animations are frozen first so repeat runs agree.",
+						"Render this URL in a headless browser instead of capturing the screen. Animations are frozen so repeat runs agree.",
 				}),
 			),
 			selector: Type.Optional(
@@ -361,7 +355,7 @@ export function createScreenshotTool(): ToolDefinition {
 			region: Type.Optional(
 				Type.Array(Type.Number(), {
 					description:
-						"Rectangle as [x, y, width, height], origin top-left, in points. Alone it means SCREEN coordinates. Combined with window_id/app it means coordinates INSIDE that window, so [0,0,600,200] is the window's top-left corner regardless of where the window sits — and it keeps working after the window moves. On a 2x display the captured image is twice these numbers in pixels, which is handled for you.",
+						"[x, y, width, height] in points, origin top-left. Alone: SCREEN coordinates. With window_id/app: coordinates INSIDE that window, so [0,0,600,200] is its top-left corner wherever it sits.",
 				}),
 			),
 			display: Type.Optional(
@@ -378,7 +372,7 @@ export function createScreenshotTool(): ToolDefinition {
 			activate: Type.Optional(
 				Type.Boolean({
 					description:
-						"Bring the target app to the front before capturing, which also switches Space. Steals focus, so it is not done up front. Leave unset and a window that fails to capture because it is on another Space is retried this way automatically; set false to forbid that.",
+						"Bring the app to the front (and its Space) before capturing; steals focus. Unset: done automatically only when a window on another Space fails to capture. false forbids it.",
 				}),
 			),
 			delay_ms: Type.Optional(
@@ -399,7 +393,7 @@ export function createScreenshotTool(): ToolDefinition {
 			tier: Type.Optional(
 				Type.Union([Type.Literal("standard"), Type.Literal("high")], {
 					description:
-						'Detail level. Defaults to "high", which is never worse than "standard" and often needs no resampling at all. Pass "standard" only to deliberately request a smaller image; there is no reason to reach for it otherwise.',
+						'Detail level. Defaults to "high", which is never worse than "standard"; pass "standard" only to deliberately get a smaller image.',
 				}),
 			),
 		}),

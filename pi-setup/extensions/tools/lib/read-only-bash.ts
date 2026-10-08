@@ -1,52 +1,9 @@
 /**
- * read-only bash policy — the command guard a research sub-agent runs under.
- *
- * WHY THIS EXISTS
- *
- * `chad` is a research agent with no file-mutation tool. that is only half a
- * constraint: bash can write. removing apply_patch while leaving bash open
- * means the agent can still `sed -i`, `rm`, redirect into a file, or drive a
- * language interpreter — and it will, because a model that wants to change
- * something reaches for whatever is left.
- *
- * ALLOWLIST, NOT DENYLIST. a denylist on a shell is unwinnable: `python3 -c`,
- * `perl -pi`, `ed`, `dd`, `tee`, `find -exec`, heredocs, and every binary
- * nobody thought of. an allowlist fails closed — an unrecognised command is
- * refused and named, so the gap shows up as a refusal rather than as a write.
- * the same lesson is already recorded in permissions.json, where a naive `rm *`
- * glob was bypassed five different ways before the rule became a regex.
- *
- * WHAT THIS IS NOT
- *
- * not a security boundary. `lib/permissions.ts` says the same thing about its
- * rules and it is just as true here: this runs inside our own bash tool, in the
- * child process, and anything that does not go through that tool is unaffected.
- * it stops an agent from writing by accident or by shortcut. it would not stop
- * an adversary, and it is not trying to. a real boundary would be OS-level
- * (`sandbox-exec` with `deny file-write*`), which is a different change with
- * different risks.
- *
- * FOUND BY ATTACKING IT (2026-08-13, before shipping)
- *
- * the first version of this file allowlisted commands by NAME and stopped
- * there. eight commands on that list write files or execute other commands
- * through their own flags — verified by running each one:
- *   sort -o FILE · base64 -o FILE · tree -o FILE · yq -i · uniq IN OUT ·
- *   xxd IN OUT · rg --pre CMD · fd -x CMD
- * plus `sed`'s `w FILE` script command, `awk`'s `system()`, and `<(...)`
- * process substitution, which the scanner walked straight past.
- *
- * the lesson is the reason for WRITE_FLAGS and POSITIONAL_OUTPUT below: a
- * command name is not a capability. anything added to the allowlist must be
- * checked for an output flag, an exec flag, and a positional output operand.
- *
- * KNOWN, ACCEPTED HOLES
- *   - an allowed binary talked into writing by a flag form not listed here.
- *     that is the same class as the eight above, so the list is a living one.
- *   - `curl -K` is refused, but a config file it might read cannot be written
- *     from inside this session anyway.
- * reachable only on purpose, not by a model taking the lazy path — which is
- * the failure this guard exists to stop.
+ * read-only bash policy for research sub-agents.
+ * allowlist that fails closed — an unrecognised command is refused and named.
+ * a command name is not a capability: flags can write (WRITE_FLAGS /
+ * POSITIONAL_OUTPUT). accepted hole: an allowed binary talked into writing
+ * by a flag form not listed here.
  */
 
 /** env var that turns the policy on. set by piSpawn for read-only sub-agents. */
@@ -65,22 +22,8 @@ export function isReadOnlyBash(env: NodeJS.ProcessEnv = process.env): boolean {
 // --- the allowlist ---
 
 /**
- * commands a research agent needs and that cannot write on their own.
- *
- * deliberately excluded, though they would be convenient: package managers
- * (`npm`/`bun`/`pip` all have an install and a run subcommand, so they need
- * git-style subcommand gating — add it when a real task needs it), every
- * language interpreter (`node -e`, `python3 -c` are write vectors with no read
- * value here), `xargs` (an execution vector whose payload this scanner cannot
- * see), `tee`/`dd`/`truncate` (write by definition), and every pager/editor
- * (interactive, and pi has no tty for them).
- *
- * `awk` is excluded for the same reason as `perl` and `python3`, and it took a
- * revision to admit it: it is a full language with `system()` and pipe-to-
- * command, so `awk 'BEGIN{system("rm f")}'` runs rm — verified. guarding its
- * redirects while leaving `system()` open was a guard that only looked like
- * one. `cut`, `sort`, `jq` and `sed` (gated) cover the column work it was on
- * the list for.
+ * commands that cannot write on their own. awk/perl/python3/node are out
+ * (`system()`, `-c`/`-e`). anything added must be checked for output/exec flags.
  */
 const ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
 	// read + list
@@ -231,13 +174,7 @@ interface Scan {
 const SEPARATORS = new Set([";", "\n", "|", "&"]);
 
 /**
- * walk the command once, quote-aware, collecting command positions and
- * file-writing redirections.
- *
- * quote tracking is what makes this usable: `grep "a > b" f` must not read as a
- * redirect. the inverse also holds and is deliberate — an UNQUOTED `rg x->y` is
- * parsed by bash itself as a redirect into `y`, so refusing it is correct
- * rather than a false positive.
+ * quote-aware walk. `grep "a > b" f` is not a redirect; unquoted `rg x->y` is.
  */
 export function scanCommand(cmd: string): Scan {
 	const segments: string[] = [];
@@ -261,18 +198,8 @@ export function scanCommand(cmd: string): Scan {
 				continue;
 			}
 			/*
-			 * DOUBLE quotes do not suppress command substitution. bash runs the
-			 * inner command in `echo "$(touch f)"` and in `echo "`touch f`"` —
-			 * verified both, and verified that SINGLE quotes really are inert, so
-			 * this must apply to `"` only.
-			 *
-			 * this was the worst hole in the first version and the least visible:
-			 * it needed no special flag, so EVERY allowlisted command that takes a
-			 * quoted argument was a way through. found in review, not by me.
-			 *
-			 * dropping quote state rather than stacking it is deliberate: after the
-			 * substitution the scanner treats the tail as unquoted, which splits
-			 * more eagerly and can only refuse more, never less.
+			 * DOUBLE quotes do not suppress command substitution; SINGLE quotes do.
+			 * dropping quote state after `$(` / `` ` `` fails closed.
 			 */
 			if (quote === '"' && ((ch === "$" && cmd[i + 1] === "(") || ch === "`")) {
 				push();

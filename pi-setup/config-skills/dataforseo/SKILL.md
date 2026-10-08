@@ -1,6 +1,6 @@
 ---
 name: dataforseo
-description: "DataForSEO API v3 — keyword research, competitor/domain analysis, rank tracking, backlinks, technical SEO, AI search visibility (AEO/GEO), brand monitoring, trends. Use when a task needs real SEO data: search volume, keyword difficulty, SERP positions, backlink profiles, competitor keywords, site audits, or whether a brand appears in AI answers. PAID API on a prepaid balance — ALWAYS estimate the cost and get the user's explicit confirmation before any run over ~$1, any loop/pagination, any OnPage crawl, or any llm_responses call; see section 0. Contains verified per-endpoint pricing, batch limits, the filter DSL, and the DB-vs-live cost rules. Triggers on: seo data, keyword research, search volume, keyword difficulty, serp, rank tracking, backlinks, competitor keywords, site audit, ai overview, aeo, geo, brand mentions, dataforseo."
+description: "DataForSEO API v3 for real SEO data: keyword research, search volume, keyword difficulty, SERP positions, rank tracking, backlinks, competitor/domain analysis, site audits, trends, brand mentions, and AI-answer visibility (AI overview, AEO/GEO). PAID prepaid API — ALWAYS estimate the cost and get the user's explicit confirmation before any run over ~$1, any loop/pagination, any OnPage crawl, or any llm_responses call (section 0). Has verified per-endpoint pricing, batch limits, the filter DSL and the DB-vs-live cost rules."
 ---
 
 # DataForSEO API v3

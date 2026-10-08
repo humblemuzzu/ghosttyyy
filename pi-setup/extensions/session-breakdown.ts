@@ -26,11 +26,11 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
-import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { createReadStream, type Dirent } from "node:fs";
 import readline from "node:readline";
+import { PI_SESSIONS_DIR } from "./tools/lib/pi-spawn";
 
 type ModelKey = string; // `${provider}/${model}`
 
@@ -89,7 +89,6 @@ interface BreakdownData {
 	};
 }
 
-const SESSION_ROOT = path.join(os.homedir(), ".pi", "agent", "sessions");
 const RANGE_DAYS = [7, 30, 90] as const;
 
 type MeasurementMode = "sessions" | "messages" | "tokens";
@@ -853,7 +852,7 @@ async function computeBreakdown(
 
 	onProgress?.({ phase: "scan", foundFiles: 0, parsedFiles: 0, totalFiles: 0, currentFile: undefined });
 
-	const candidates = await walkSessionFiles(SESSION_ROOT, start90, signal, (found) => {
+	const candidates = await walkSessionFiles(PI_SESSIONS_DIR, start90, signal, (found) => {
 		onProgress?.({ phase: "scan", foundFiles: found });
 	});
 

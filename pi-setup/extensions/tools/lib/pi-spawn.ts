@@ -1,13 +1,4 @@
-/**
- * shared pi process spawning for dedicated sub-agent tools.
- *
- * extracts the spawn-parse-collect loop from the generic subagent
- * extension into a reusable function. each dedicated tool (finder,
- * oracle, code_review, delegate, chad, librarian) calls piSpawn() with its own config.
- *
- * uses shared interpolation from ./interpolate for template variables
- * ({cwd}, {roots}, {date}, etc.) in system prompts.
- */
+/** shared spawn-parse-collect loop for dedicated sub-agent tools. */
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -18,82 +9,21 @@ import type { Message } from "@mariozechner/pi-ai";
 import { interpolatePromptVars, type InterpolateContext } from "./interpolate";
 import { SUB_AGENT_TOOLS_ENV } from "./sub-agent-prompt";
 import { READ_ONLY_BASH_ENV } from "./read-only-bash";
-import { watchdogTickMs, watchdogVerdict } from "./watchdog";
+import { SLEEP_JUMP_MS, watchdogTickMs, watchdogVerdict } from "./watchdog";
 
 // --- stall watchdog ---
 
 /*
- * WHY A SUB-AGENT NEEDS A WATCHDOG AND AN INTERACTIVE SESSION DOES NOT
- *
- * pi has no deadline on a tool call or an agent turn anywhere (verified: zero
- * setTimeout in agent-loop.js). that is defensible for the TUI, where the HUMAN
- * is the watchdog and Esc always works. a spawned child is headless: there is no
- * Esc, and a frozen one is indistinguishable from a busy one until someone walks
- * back to the laptop. measured consequence: a delegate sat wedged for 2h22m
- * overnight and the parent waited on `proc` the entire time.
- *
- * the signal this uses costs nothing because it already exists. pi's print mode
- * writes EVERY session event to stdout (print-mode.js: `session.subscribe(e =>
- * writeRawStdout(JSON.stringify(toJsonEvent(e))))`), and a tool's `onUpdate`
- * becomes a `tool_execution_update` event -- so a child running a command that
- * prints emits parent-side traffic at that command's own cadence. measured
- * end-to-end against a real child ticking every 5s: max gap between stdout
- * events 5.1s. a child frozen inside a hung command emits nothing at all.
- *
- * so this watches RAW BYTES on stdout/stderr rather than parsed events -- most
- * of the traffic (`tool_execution_update`, `message_update`) is deliberately
- * ignored by `processLine` below, and counting only the events we parse would
- * blind the watchdog to exactly the streaming that proves liveness.
- *
- * it is a BACKSTOP, not the primary guard. bash bounds its own commands (a
- * declared timeout, ceiling 600s, plus an idle kill at 300s), so this window
- * sits well above any legal command and can never race one. when it fires it
- * means the child froze somewhere that is not bash: a model API call, a fetch
- * with no timeout, a deadlock.
- *
- * WHY 900s AND NOT LESS -- the longest stretch a HEALTHY child can legitimately
- * stay silent, measured against pi 0.84.1's own defaults:
- *
- *   pi's HTTP idle timeout        300s   http-dispatcher.js DEFAULT_HTTP_IDLE_TIMEOUT_MS
- *   provider retry delay (cap)     60s   settings-manager getProviderRetrySettings
- *   agent-turn retry backoff        8s   maxRetries 3 x baseDelayMs 2000, and it
- *                                        emits `auto_retry_start` BEFORE sleeping,
- *                                        so the parent sees traffic either way
- *   our own bash idle kill        300s   bash.ts, bounds any silent command first
- *
- * worst realistic case is a stream idling to pi's own 300s limit and then
- * backing off: ~360s. 900s is 2.5x that. shrink this only after re-checking
- * those four numbers -- an over-eager window kills working children, which is a
- * worse failure than the one it prevents.
+ * backstop on a headless child: watches RAW stdout/stderr bytes (parsed events
+ * ignore the streaming that proves liveness). 900s sits above pi's HTTP idle
+ * 300s + retry, so it cannot race a legal bash command. the child is not spawned
+ * detached — Ctrl+C must reach it. kill != released: a grandchild can hold
+ * stdout open after SIGKILL, so FORCE_RELEASE_MS returns anyway.
  */
 const DEFAULT_STALL_SEC = 900;
 const STALL_TICK_MS = 30_000;
 
-/**
- * how long after a kill we still wait for `proc.on("close")` before returning
- * anyway.
- *
- * killing is not the same as being released. `close` fires when the child exits
- * AND its stdio pipes close, and a grandchild that inherited stdout holds those
- * pipes open after the child itself is gone -- so SIGKILL can succeed while the
- * parent goes on waiting forever, which is precisely the failure this watchdog
- * exists to end. found by the stall test: the watchdog fired correctly at 1s and
- * `piSpawn` still returned at 60s.
- *
- * the child is NOT spawned `detached`, deliberately: a detached child sits in
- * its own process group and would no longer receive the terminal's SIGINT, so
- * Ctrl+C would leave orphaned sub-agents burning tokens. keeping it in our group
- * and force-releasing here is the safer half of that trade.
- */
 const FORCE_RELEASE_MS = 10_000;
-
-/**
- * one tick observing this much wall time means the machine slept, not that the
- * child died. same guard, same reasoning, as bash.ts's idle watchdog: a
- * spurious reset grants one more window, a missing guard kills a healthy child
- * the moment the lid opens.
- */
-const SLEEP_JUMP_MS = 60_000;
 
 function stallSec(): number {
 	const raw = process.env.PI_SPAWN_STALL_SEC;
@@ -106,25 +36,12 @@ function stallSec(): number {
 // --- tool name aliases ---
 
 /**
- * alias map: requested name -> actually-registered name.
- *
- * pi has no `glob` tool (the built-in is `find`), and our edit/create tools
- * register as `edit`/`write`. callers that ask for the old/other names would
- * otherwise be silently dropped from the --tools allowlist, leaving sub-agents
- * without those capabilities.
- *
- * ported from bdsqqq's tool-harness TOOL_ALIASES, retargeted to our registered
- * names. every mutation name now resolves to apply_patch: edit-file.ts and
- * create-file.ts are gone, and pi's natives are hidden at session_start (see
- * index.ts), so a config still asking for "edit"/"write" would otherwise
- * silently grant the sub-agent NO way to change a file.
+ * requested name -> registered name. unknown names are dropped silently by pi;
+ * mutation aliases all resolve to apply_patch so a config asking for edit/write
+ * still has a way to change a file.
  */
 const TOOL_ALIASES: Record<string, string> = {
 	glob: "find",
-	// every mutation name now resolves to apply_patch: edit-file.ts and
-	// create-file.ts are gone, and pi's natives are hidden at session_start
-	// (see index.ts), so a config still asking for "edit"/"write" would
-	// otherwise silently grant the sub-agent NO way to change a file.
 	edit_file: "apply_patch",
 	create_file: "apply_patch",
 	edit: "apply_patch",
@@ -137,28 +54,11 @@ export function resolveAliases(names: string[]): string[] {
 
 // --- types ---
 
-/**
- * where persisted SUB-AGENT conversations live.
- *
- * deliberately NOT pi's own `sessions/` directory. pi's `/resume` picker lists
- * everything it finds there, so persisting delegate children alongside your
- * real sessions buries them: ~7 delegate calls in one test run produced 7
- * entries that pushed actual work off the first screen.
- *
- * keeping them in a sibling directory means:
- *   - `/resume` shows only YOUR sessions, in every scope (folder AND all)
- *   - children stay fully resumable, because `--session-dir` is passed on
- *     resume as well as creation
- *   - they remain browsable on demand:
- *       pi --session-dir ~/.pi/agent/sessions-sub --resume
- *   - `search_sessions` can still index them (see its sessionsDirs default)
- */
-export const SUB_AGENT_SESSION_DIR: string = path.join(
-	os.homedir(),
-	".pi",
-	"agent",
-	"sessions-sub",
-);
+/** sub-agent conversations. not pi's sessions/ — /resume lists everything there. */
+export const SUB_AGENT_SESSION_DIR: string = path.join(os.homedir(), ".pi", "agent", "sessions-sub");
+
+/** pi's own session directory, the one `/resume` lists. */
+export const PI_SESSIONS_DIR: string = path.join(os.homedir(), ".pi", "agent", "sessions");
 
 export interface UsageStats {
 	input: number;
@@ -219,7 +119,10 @@ export interface PiSpawnResult {
 	messages: Message[];
 	stderr: string;
 	usage: UsageStats;
+	/** "provider/model" the child actually answered with, once it has answered. */
 	model?: string;
+	/** effective thinking level, after pi adjusted it to the model. */
+	thinkingLevel?: string;
 	stopReason?: string;
 	errorMessage?: string;
 	session?: SpawnSessionMeta;
@@ -228,35 +131,18 @@ export interface PiSpawnResult {
 export interface PiSpawnConfig {
 	cwd: string;
 	task: string;
+	/**
+	 * "provider/model", passed to `--model` verbatim; omitted means pi's own
+	 * default. a bare id is ambiguous across providers since pi 0.84 (#7327),
+	 * which is why lib/agent-models.ts only ever hands this a qualified id.
+	 */
 	model?: string;
-	/**
-	 * the parent session's full model string (e.g. "anthropic/claude-opus-5").
-	 * when set, takes priority over `model` so child processes use the same
-	 * provider+auth route as the parent session.
-	 */
-	parentModel?: string;
-	/**
-	 * never inherit the parent's model — `model` is used verbatim.
-	 *
-	 * the inheritance rule below exists for ONE reason: finder/oracle/librarian
-	 * name claude models, and a non-anthropic parent has no route to serve them,
-	 * so copying the parent is the only thing that can work. that reasoning does
-	 * not apply to a sub-agent pinned to a model its own provider serves
-	 * regardless of the parent — sub-agents here run xai/grok-4.6, not
-	 * whatever the parent happens to be on.
-	 *
-	 * a pinned model must already be provider-qualified ("xai/grok-4.6").
-	 * it is passed through untouched, so a bare id would hit pi 0.84's ambiguity
-	 * error (#7327) rather than resolving to the wrong provider silently.
-	 */
-	pinModel?: boolean;
 	/**
 	 * thinking level for the child (`--thinking`). one of pi's levels: off,
 	 * minimal, low, medium, high, xhigh, max.
 	 *
-	 * passed as its own flag rather than as a `model:high` suffix so the pin does
-	 * not live inside a string, and so an explicit level always beats whatever
-	 * the child would inherit from settings.
+	 * passed as its own flag rather than as a `model:high` suffix, so an explicit
+	 * level always beats whatever the child would inherit from settings.
 	 */
 	thinkingLevel?: string;
 	/**
@@ -267,15 +153,7 @@ export interface PiSpawnConfig {
 	 * asking the prompt nicely.
 	 */
 	readOnlyBash?: boolean;
-	/**
-	 * tools the sub-agent may use. `builtinTools` and `extensionTools` are
-	 * MERGED into a single native `--tools` allowlist (pi 0.82+ gates built-in,
-	 * extension and custom tools with the same flag), then de-duplicated and
-	 * alias-resolved. the split is kept only so call sites stay readable.
-	 *
-	 * names must match REGISTERED tool names, or go through TOOL_ALIASES.
-	 * unknown names are dropped silently by pi.
-	 */
+	/** merged into one native --tools allowlist. unknown names are dropped silently by pi. */
 	builtinTools?: string[];
 	extensionTools?: string[];
 	systemPromptBody?: string;
@@ -285,17 +163,7 @@ export interface PiSpawnConfig {
 	repo?: string;
 	/** conversation persistence / continuation. see SpawnSessionConfig. */
 	session?: SpawnSessionConfig;
-	/**
-	 * inject a follow-up user message after the agent's first turn.
-	 *
-	 * uses pi's RPC mode instead of print mode. the follow-up is queued
-	 * eagerly at startup (not delivered until idle), so the agent loop's
-	 * getFollowUpMessages() finds it after exploration completes. the
-	 * process is killed after the second end_turn.
-	 *
-	 * primary use case: code_review — agent explores the diff first,
-	 * then receives the report format instructions.
-	 */
+	/** queued at startup, delivered when idle; process is killed after the second end_turn. */
 	followUp?: string;
 }
 
@@ -378,27 +246,6 @@ export function readAgentPrompt(filename: string): string {
 
 // --- spawn ---
 
-/**
- * Attach a provider prefix to a bare model id so `--model` can never be
- * ambiguous.
- *
- * pi 0.84.0 (#7327) stopped resolving a bare id to "the first catalog entry"
- * and now errors when more than one AUTHENTICATED provider offers that id.
- * With anthropic + cloudflare-ai-gateway + opencode + github-copilot all
- * authenticated here, `claude-sonnet-5` matches four providers and every
- * sub-agent spawn fails before it starts.
- *
- * Already-qualified ids ("anthropic/claude-opus-4-6") are returned untouched,
- * so a caller that knows better always wins.
- */
-function qualifyModel(modelId: string, preferredProvider: string): string {
-	if (modelId.includes("/")) return modelId;
-	const provider = preferredProvider.trim();
-	// an empty or nonsense prefix would produce "/model", which resolves to
-	// nothing — anthropic is the only provider our designated models live on.
-	return `${provider.length > 0 ? provider : "anthropic"}/${modelId}`;
-}
-
 export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 	const useRpc = !!config.followUp;
 	const routing = resolveSessionArgs(config.session);
@@ -406,74 +253,15 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		? ["--mode", "rpc", ...routing.args]
 		: ["--mode", "json", "-p", ...routing.args];
 
-	// resolve model: use the tool's designated model when the parent provider
-	// is Anthropic (can serve Claude models directly). when the parent is on a
-	// non-Anthropic provider (kimi-coding, llama-local, etc), inherit the
-	// parent model since Claude subagent models would require separate API access.
-	if (config.model) {
-		let resolvedModel = config.model;
-
-		if (config.pinModel) {
-			// used verbatim. see PiSpawnConfig.pinModel for why inheritance is wrong
-			// for this class of sub-agent rather than merely unnecessary.
-		} else if (config.parentModel) {
-			const parentProvider = config.parentModel.split("/")[0]?.toLowerCase() ?? "";
-			const anthropicProviders = ["anthropic"];
-			// no provider prefix means the default provider is being used —
-			// check if that's anthropic by looking at the model name
-			const isClaudeModel = (id: string) =>
-				id.includes("claude") || id.startsWith("opus") || id.startsWith("sonnet") || id.startsWith("haiku");
-			const parentModelId = config.parentModel.split("/").slice(1).join("/") || config.parentModel;
-
-			const isAnthropicParent = anthropicProviders.includes(parentProvider)
-				|| (!parentProvider.includes("/") && isClaudeModel(parentModelId))
-				|| (parentProvider === "" && isClaudeModel(parentModelId));
-
-			// when parent is non-Anthropic (kimi-coding, llama-local, etc),
-			// inherit parent model so subagents don't need separate Claude API access
-			if (!isAnthropicParent) {
-				resolvedModel = config.parentModel;
-			} else {
-				// PROVIDER-QUALIFY the designated model. pi 0.84.0 (#7327) turned a
-				// bare model id shared by several AUTHENTICATED providers into a hard
-				// error instead of silently taking the first catalog entry — so
-				// `--model claude-opus-4-6` now dies with "ambiguous across providers:
-				// anthropic/…, cloudflare-ai-gateway/…, opencode/…" and every
-				// sub-agent fails to launch. The tool constants stay bare model names;
-				// the provider is attached here, at the single seam they all pass
-				// through. Prefer the parent's own provider (it is the one proven to
-				// serve Claude in this session); fall back to plain anthropic when the
-				// parent carries no usable prefix.
-				resolvedModel = qualifyModel(resolvedModel, parentProvider);
-			}
-		} else {
-			// no parent context at all — still must not emit a bare, ambiguous id
-			resolvedModel = qualifyModel(resolvedModel, "");
-		}
-
-		args.push("--model", resolvedModel);
-	}
+	if (config.model) args.push("--model", config.model);
 
 	// explicit level beats the child's inherited default (pi applies --thinking
 	// after every other source; see main.js buildSessionOptions).
 	if (config.thinkingLevel) {
 		args.push("--thinking", config.thinkingLevel);
 	}
-	// merge builtin + extension tool lists into ONE native --tools allowlist.
-	//
-	// pi 0.82+ applies --tools to built-in, extension AND custom tools, and it
-	// filters the tool REGISTRY itself (agent-session.ts _refreshToolRegistry),
-	// so tools that register later cannot leak in. this replaces the previous
-	// PI_INCLUDE_TOOLS + tool-harness mechanism, which left the registry
-	// unfiltered and let late-registering package tools (notably `mcp`)
-	// auto-activate inside sub-agents — that stray `mcp` tool is what made the
-	// librarian sub-agent emit fabricated <use_mcp> markup.
-	//
-	// never emit --no-tools: it empties the registry, so nothing can be
-	// re-activated afterwards (verified: yields zero tools).
-	//
-	// when neither list is provided the child stays unrestricted, which matches
-	// the previous behaviour. no caller requests an explicitly empty tool set.
+	// merge into one native --tools allowlist. never emit --no-tools: it
+	// empties the registry so nothing can be re-activated afterwards.
 	const requestedTools = resolveAliases([
 		...(config.builtinTools ?? []),
 		...(config.extensionTools ?? []),
@@ -499,6 +287,8 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 		messages: [],
 		stderr: "",
 		usage: zeroUsage(),
+		model: config.model,
+		thinkingLevel: config.thinkingLevel,
 		// present only when the child was persisted; callers use
 		// session.continueId to resume this exact child later.
 		...(routing.meta ? { session: routing.meta } : {}),
@@ -576,13 +366,8 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			let killedAt: number | undefined;
 			let released = false;
 			/*
-			 * arm the release backstop. its own timer rather than a phase of the
-			 * watchdog interval: the interval's period scales with the stall window
-			 * (30s at the 15m default), so folding the grace into it made the actual
-			 * release land anywhere between 10s and 40s after the kill. a dedicated
-			 * timer means FORCE_RELEASE_MS means what it says.
-			 *
-			 * idempotent — several kill paths can fire for one child.
+			 * dedicated timer, not a phase of the watchdog interval — that period
+			 * scales with the stall window, so FORCE_RELEASE_MS would not mean what it says.
 			 */
 			const scheduleRelease = () => {
 				if (releaseTimer !== undefined) return;
@@ -655,7 +440,9 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 							result.usage.cost += usage.cost?.total || 0;
 							result.usage.contextTokens = usage.totalTokens || 0;
 						}
-						if (!result.model && (msg as any).model) result.model = (msg as any).model;
+						const { provider, model, thinkingLevel } = msg as any;
+						if (model) result.model = provider ? `${provider}/${model}` : model;
+						if (thinkingLevel) result.thinkingLevel = thinkingLevel;
 						if ((msg as any).stopReason) result.stopReason = (msg as any).stopReason;
 						if ((msg as any).errorMessage) result.errorMessage = (msg as any).errorMessage;
 
@@ -748,15 +535,9 @@ export async function piSpawn(config: PiSpawnConfig): Promise<PiSpawnResult> {
 			result.stopReason = "aborted";
 		}
 		/*
-		 * after `wasAborted`, so a user's Esc is never relabelled as a stall.
-		 *
-		 * the message says RELAUNCH, never resume, and that is not hedging: pi
-		 * restores a session verbatim (sdk.js) and its only trailing-assistant trim
-		 * is gated on stopReason "error"/"length", NOT "toolUse" (agent-session.js).
-		 * a child killed mid-tool-call therefore leaves a `tool_use` block with no
-		 * matching `tool_result`, and replaying that history is a 400 from the
-		 * provider. there is no repair logic anywhere in pi. telling the model to
-		 * resume would be telling it to do something that cannot work.
+		 * after `wasAborted`, so Esc is never relabelled as a stall. relaunch,
+		 * never resume: a child killed mid-tool-call leaves a tool_use without
+		 * tool_result, so resuming is a provider 400.
 		 */
 		if (stalled) {
 			result.exitCode = 1;

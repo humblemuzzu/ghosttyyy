@@ -46,6 +46,7 @@ import {
   resolveMentionableSession,
   type MentionableSession,
 } from "./lib/mentions";
+import { PI_SESSIONS_DIR } from "./lib/pi-spawn";
 
 const MESSAGE_VERSION = 1;
 const MESSAGE_FILE = /^([0-9T:.Z_-]+)_([0-9a-f-]{36})\.json$/u;
@@ -88,7 +89,7 @@ type AgentMessageExtensionDeps = {
 
 const CONFIG_DEFAULTS: AgentMessageConfig = {
   queueDir: path.join(os.homedir(), ".pi", "agent", "agent-messages"),
-  sessionsDirs: [path.join(os.homedir(), ".pi", "agent", "sessions")],
+  sessionsDirs: [PI_SESSIONS_DIR],
 };
 
 const DEFAULT_DEPS: AgentMessageExtensionDeps = {

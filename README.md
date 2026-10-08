@@ -420,18 +420,21 @@ Backs up existing config, deploys everything to `~/.pi/agent/` and `~/.config/ag
 
 ### Sub-agents
 
-| Tool | Model | Purpose |
-|------|-------|---------|
-| **finder** | `xai/grok-4.6` **pinned** · high | Concept-based parallel code search (8+ searches/turn, read-only) |
-| **oracle** | `xai/grok-4.6` **pinned** · high | Architecture review, complex planning (read + bash + web + screenshot) |
-| **code_review** | `xai/grok-4.6` **pinned** · high | Structured 2-phase diff review with XML output |
-| **delegate** | `xai/grok-4.6` **pinned** · high | Full resumable sub-agent for parallel independent work |
-| **chad** | `xai/grok-4.6` **pinned** · high | Read-only deep research, built to swarm — 5–8 at once, one question each |
-| **librarian** | `xai/grok-4.6` **pinned** · high | Cross-repo GitHub exploration (7 GitHub tools) |
+| Tool | Purpose |
+|------|---------|
+| **finder** | Concept-based parallel code search (8+ searches/turn, read-only) |
+| **oracle** | Architecture review, complex planning (read + bash + web + screenshot) |
+| **code_review** | Structured 2-phase diff review with XML output |
+| **delegate** | Full resumable sub-agent for parallel independent work |
+| **chad** | Read-only deep research, built to swarm — 5–8 at once, one question each |
+| **librarian** | Cross-repo GitHub exploration (7 GitHub tools) |
 
-Sub-agents are **pinned** to Grok, deliberately — they do not inherit the parent.
+**Models are set in `pi-setup/agent-models.json`**: a short list of named models
+and a default model + thinking level per agent. In any session, say *"run a chad on deepseek flash at med thinking"* and
+the parent passes `model: "deepseek-flash", thinking: "medium"` straight from
+that list — no lookup. Every result ends with the model and level that actually
+ran. A model not in the list is refused, never swapped for a nearby one.
 
-**All research/work sub-agents run `xai/grok-4.6`.** All use high thinking.
 chad cannot change anything — no `apply_patch`, and its bash runs under an
 allowlist that refuses writes, redirection, `sed -i`, interpreters and every git
 subcommand that mutates. Reach for `chad` to find out, `delegate` to do.
@@ -479,8 +482,8 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 | Provider | Models | Purpose |
 |----------|--------|---------|
-| `xai` | grok-4.6 (default · high), grok-4.5 | **Primary** — Grok OAuth |
-| `anthropic` | claude-opus-5, claude-opus-4-6/4-7/4-8 (1M context) | Claude Max via pi-claude-code-use |
+| `anthropic` | claude-opus-5-5 (default · high), claude-sonnet-5-5, claude-haiku-5-5, claude-opus-5, claude-opus-4-6/4-7/4-8 (1M context) | **Primary** — Claude Max via pi-claude-code-use |
+| `xai` | grok-4.6, grok-4.5 | Grok OAuth |
 | `deepseek` | deepseek-flash (V4.1 Flash) | 1M context, vision, thinking mode |
 | `kimi-coding` | k3 (1M), k3-256k, kimi-for-coding (K2.7) | Kimi Code OAuth (native) |
 | `llama-local` | LFM2.5-2.6B | Local llama.cpp router, managed via `/local` |
@@ -498,8 +501,8 @@ Autocomplete shows all agents when you type `@`. Agent mentions complete with a 
 
 ```json
 {
-  "defaultProvider": "xai",
-  "defaultModel": "grok-4.6",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-5-5",
   "defaultThinkingLevel": "high",
   "theme": "gruvbox",
   "compaction": { "enabled": true }

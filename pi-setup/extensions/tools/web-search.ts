@@ -1,35 +1,4 @@
-/**
- * web_search — web search via the Parallel AI Search API.
- *
- * PROVENANCE
- * ported from bdsqqq/dots `user/pi/packages/extensions/web-search/index.ts`
- * (MIT, commit e04b620). the implementation is his; adapted to our layout:
- *   - `@bds_pi/*` imports  -> our `./lib/*`
- *   - `typebox`            -> `@sinclair/typebox`
- *   - `@earendil-works/*`  -> `@mariozechner/*` (our alias convention)
- *   - his standalone-extension wrapper + default export dropped; we expose
- *     `createWebSearchTool()` and register it centrally in `index.ts`, matching
- *     how every other tool here is wired.
- *
- * WHY PARALLEL AI
- * this replaces the `pi-web-access` package removed 2026-07-30, whose
- * `web_search` was dead on all three providers at once (OpenAI rejected the
- * model for ChatGPT-account Codex auth, Exa hit its free rate limit, the
- * Perplexity key was invalid). Parallel is a single dedicated search API:
- * one key, one endpoint, no LLM-provider coupling.
- *
- * TRANSPORT
- * requests go out via `curl` rather than fetch/an SDK. that is deliberate
- * upstream (his extensions run in a nix build where adding an npm dep needs a
- * rebuild) and harmless here, so it is kept rather than rewritten.
- *
- * AUTH
- * `PARALLEL_API_KEY` from the environment (set in ~/.zshrc, never committed).
- * without it the tool returns a clear setup error instead of failing silently.
- *
- * COST
- * derived from the API response's own `usage` array, not hardcoded guesses.
- */
+/** web_search — Parallel AI Search API via curl. Needs PARALLEL_API_KEY. */
 
 import { spawn } from "node:child_process";
 import type { ExtensionAPI, ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -46,32 +15,9 @@ import { withPromptPatch } from "./lib/prompt-patch";
 import type { ToolCostDetails } from "./lib/tool-cost";
 
 /*
- * SEARCH MODES — and why these names differ from Parallel's published docs.
- *
- * parallel.ai's pricing page and the "Search Turbo" blog document
- * `turbo` / `basic` / `advanced`, which belong to the **v1** endpoint. we call
- * **v1beta**, which accepts an older set of names and rejects the new ones:
- *
- *   Invalid search mode: 'turbo'. Please use one of: 'agentic', 'fast', 'one-shot'
- *
- * we stay on v1beta deliberately: **v1 forbids `max_results` and `excerpts`**
- * (verified — it answers `extra_forbidden` for both), so it always returns 10
- * results with uncapped excerpts. measured on one query, v1 payloads ran
- * 9k-33k characters against ~4k for v1beta. for an agent paying context for
- * every character, losing excerpt control is a worse deal than any price
- * difference — especially as the free tier (5,000 requests/month) already
- * covers our usage at any mode.
- *
- * measured, same query and excerpt caps:
- *
- *   ours (v1beta)        v1 analogue    latency    excerpt chars
- *   fast                 turbo            979ms      940
- *   one-shot (default)   basic           1553ms     3001
- *   agentic              advanced        2251ms     2895
- *
- * `one-shot` is the default because it reproduces what this tool already did
- * when no mode was sent — the choice becomes deliberate without silently
- * changing behaviour, and we stop inheriting server-side default changes.
+ * v1beta names: fast / one-shot / agentic. v1's turbo/basic/advanced are
+ * rejected here, and v1 forbids max_results and excerpts. one-shot is the
+ * default (what the tool did when no mode was sent).
  */
 const SEARCH_MODES = ["fast", "one-shot", "agentic"] as const;
 type SearchMode = (typeof SEARCH_MODES)[number];

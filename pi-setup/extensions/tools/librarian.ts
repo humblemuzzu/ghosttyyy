@@ -1,5 +1,5 @@
 /**
- * librarian tool — cross-repo codebase understanding via a sonnet sub-agent.
+ * librarian tool — cross-repo codebase understanding via a sub-agent.
  *
  * replaces the generic subagent pattern with a dedicated tool. the model
  * calls librarian(query: "...", repository?: [...], context?: "...") directly.
@@ -12,7 +12,7 @@
  * spec, so it read this file to find the argument shape. see the tool-contract
  * invariants in tool-contract.test.ts, which now fail if that regresses.
  *
- * spawns `pi --mode json` with claude sonnet, constrained to the 7
+ * spawns `pi --mode json` constrained to the 7
  * github tools (read_github, search_github, list_directory_github,
  * list_repositories, glob_github, commit_search, diff). the librarian
  * explores repos thoroughly before providing comprehensive answers.
@@ -21,10 +21,12 @@
  */
 
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { Container, Text } from "@mariozechner/pi-tui";
+import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, resolveAliases, zeroUsage } from "./lib/pi-spawn";
-import { getFinalOutput, renderAgentTree, subAgentResult, type SingleResult } from "./lib/sub-agent-render";
+import { resolveAliases } from "./lib/pi-spawn";
+import { emptyAgentModels, modelParams, resolveRoute, type AgentModels } from "./lib/agent-models";
+import { runSubAgent, toolError } from "./lib/run-sub-agent";
+import { clip, renderSubAgentResult } from "./lib/sub-agent-render";
 import { requireParam } from "./lib/params";
 
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
@@ -61,11 +63,9 @@ export function normalizeRepositories(input: unknown): string[] {
 		.filter((r) => r.length > 0);
 }
 
-const MODEL = "xai/grok-4.6";
-const THINKING = "high";
-
 export interface LibrarianConfig {
 	systemPrompt?: string;
+	models?: AgentModels;
 }
 
 /** github tools are extension tools, not builtins. */
@@ -91,6 +91,7 @@ export function librarianAllowlist(): string[] {
 }
 
 export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinition {
+	const models = config.models ?? emptyAgentModels();
 	return {
 		name: "librarian",
 		label: "Librarian",
@@ -118,9 +119,6 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 			'Example: librarian({ repository: ["xai-org/grok-build"], query: "how are sub-agent results rendered in the TUI?" })',
 
 		parameters: Type.Object({
-			// required in the schema, which is what models actually trust.
-			// requireParam() below stays as a safety net for providers that do not
-			// enforce the schema and for models that guess an alias name.
 			query: Type.String({
 				description:
 					"Your question about the codebase. Be specific about what you want to understand. " +
@@ -138,17 +136,16 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 					description: "Optional context about what you're trying to achieve or background information.",
 				}),
 			),
+			...modelParams(models, "librarian"),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const resolved = requireParam(params as Record<string, unknown>, LIBRARIAN_PARAM_NAMES, "librarian");
 			if ("error" in resolved) return resolved.error;
-			const queryText = resolved.value;
+			const route = resolveRoute(models, "librarian", params, ctx.modelRegistry);
+			if ("error" in route) return toolError(route.error);
 
-			let sessionId = "";
-			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch { /* graceful */ }
-
-			const parts: string[] = [queryText];
+			const parts: string[] = [resolved.value];
 			// repository is structured input; the sub-agent only reads prose, so
 			// surface it explicitly rather than hoping the query mentions it.
 			const repos = normalizeRepositories(params.repository);
@@ -156,79 +153,31 @@ export function createLibrarianTool(config: LibrarianConfig = {}): ToolDefinitio
 				parts.push(`\nRepositories to explore:\n${repos.map((r) => `- ${r}`).join("\n")}`);
 			}
 			if (params.context) parts.push(`\nContext: ${params.context}`);
-			const fullTask = parts.join("\n");
 
-			const singleResult: SingleResult = {
+			return runSubAgent({
 				agent: "librarian",
-				task: queryText,
-				exitCode: -1,
-				messages: [],
-				usage: zeroUsage(),
-			};
-
-			const result = await piSpawn({
-				cwd: ctx.cwd,
-				task: fullTask,
-				model: MODEL,
-				pinModel: true,
-				thinkingLevel: THINKING,
-				builtinTools: BUILTIN_TOOLS,
-				extensionTools: EXTENSION_TOOLS,
-				systemPromptBody: config.systemPrompt,
+				label: resolved.value,
+				working: "(exploring...)",
+				ctx,
 				signal,
-				sessionId,
-				onUpdate: (partial) => {
-					singleResult.messages = partial.messages;
-					singleResult.usage = partial.usage;
-					singleResult.model = partial.model;
-					singleResult.stopReason = partial.stopReason;
-					singleResult.errorMessage = partial.errorMessage;
-					if (onUpdate) {
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(partial.messages) || "(exploring...)" }],
-							details: singleResult,
-						} as any);
-					}
+				onUpdate,
+				spawn: {
+					task: parts.join("\n"),
+					model: route.model,
+					thinkingLevel: route.thinking,
+					builtinTools: BUILTIN_TOOLS,
+					extensionTools: EXTENSION_TOOLS,
+					systemPromptBody: config.systemPrompt,
 				},
 			});
-
-			singleResult.exitCode = result.exitCode;
-			singleResult.messages = result.messages;
-			singleResult.usage = result.usage;
-			singleResult.model = result.model;
-			singleResult.stopReason = result.stopReason;
-			singleResult.errorMessage = result.errorMessage;
-
-			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-			const output = getFinalOutput(result.messages) || "(no output)";
-
-			if (isError) {
-				return subAgentResult(result.errorMessage || result.stderr || output, singleResult, true);
-			}
-
-			return subAgentResult(output, singleResult);
 		},
 
 		renderCall(args: any, theme: any, context: any) {
 			const text = context?.lastComponent ?? new Text("", 0, 0);
-			const preview = args.query
-				? (args.query.length > 80 ? `${args.query.slice(0, 80)}...` : args.query)
-				: "...";
-			text.setText(theme.fg("toolTitle", theme.bold("librarian ")) + theme.fg("dim", preview));
+			text.setText(theme.fg("toolTitle", theme.bold("librarian ")) + theme.fg("dim", args.query ? clip(args.query, 80) : "..."));
 			return text;
 		},
 
-		renderResult(result: any, { expanded }: { expanded: boolean }, theme: any, context: any) {
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const details = result.details as SingleResult | undefined;
-			if (!details) {
-				const text = result.content[0];
-				container.addChild(new Text(text?.type === "text" ? text.text : "(no output)", 0, 0));
-				return container;
-			}
-			renderAgentTree(details, container, expanded, theme, { label: "librarian", header: "statusOnly" });
-			return container;
-		},
+		renderResult: renderSubAgentResult("librarian"),
 	};
 }

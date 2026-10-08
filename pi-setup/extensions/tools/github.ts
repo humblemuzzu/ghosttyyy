@@ -24,7 +24,7 @@ import {
 	addLineNumbers,
 	truncate,
 } from "./lib/github";
-import { boxRendererWindowed, textSection, osc8Link, type BoxSection, type BoxLine, type Excerpt } from "./lib/box-format";
+import { boxRendererWindowed, osc8Link, COLLAPSED_EXCERPTS, renderBoxedText, type BoxSection, type BoxLine } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
 import { resolveParam } from "./lib/params";
 
@@ -81,12 +81,6 @@ function requireRepository(
 		},
 	};
 }
-
-/** collapsed: head 3 + tail 5 = 8 visual lines */
-const COLLAPSED_EXCERPTS: Excerpt[] = [
-	{ focus: "head" as const, context: 3 },
-	{ focus: "tail" as const, context: 5 },
-];
 
 // --- read_github ---
 
@@ -268,22 +262,7 @@ export function createSearchGithubTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 	};
 }
 
@@ -346,22 +325,7 @@ export function createListDirectoryGithubTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 	};
 }
 
@@ -438,22 +402,7 @@ export function createListRepositoriesTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 	};
 }
 
@@ -544,22 +493,7 @@ export function createGlobGithubTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 	};
 }
 
@@ -646,22 +580,7 @@ export function createCommitSearchTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 	};
 }
 
@@ -735,42 +654,13 @@ export function createDiffTool(): ToolDefinition {
 			return text;
 		},
 
-		renderResult(result: any, _opts: { expanded: boolean }, _theme: any, context: any) {
-			const Container = getContainer();
-			const container = context?.lastComponent ?? new Container();
-			container.clear();
-			const content = result.content?.[0];
-			if (!content || content.type !== "text") {
-				container.addChild(new Text("(no output)", 0, 0));
-				return container;
-			}
-			const renderer = boxRendererWindowed(
-				() => [textSection(undefined, content.text)],
-				{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
-			);
-			container.addChild(renderer);
-			return container;
-		},
+		renderResult: renderBoxedText,
 	};
 }
 
 // --- glob matching (simple, no external deps) ---
 
-/**
- * translate a glob pattern to a regex, in ONE pass.
- *
- * the previous implementation chained .replace() calls, which corrupted its own
- * output: "**\/" was rewritten to "(.+/)?", and the later `?` -> "[^/]" rule then
- * mangled that quantifier into "(.+/)[^/]". the effect was that "**\/*.nix"
- * required at least one directory PLUS one extra character, so root-level files
- * (flake.nix, zmx.nix) never matched — 93 of 95 files were returned.
- *
- * semantics match minimatch/bash globstar:
- *   "**\/"  -> zero or more leading path segments
- *   "**"    -> anything, including "/"
- *   "*"     -> anything except "/"
- *   "?"     -> a single character except "/"
- */
+/** must stay one-pass: chained replace() rewrites globstar to a `?` quantifier that the later `?` rule then mangles. */
 export function matchGlob(path: string, pattern: string): boolean {
 	let regexStr = "";
 	for (let i = 0; i < pattern.length; i++) {

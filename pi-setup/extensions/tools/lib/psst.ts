@@ -94,7 +94,7 @@ export async function loadSecrets(): Promise<SecretEntry[]> {
 		}
 
 		const filterTags = activeTags.length > 0 ? activeTags : undefined;
-		const list = vault.listSecrets(filterTags);
+		const list = await vault.listSecrets(filterTags);
 		const secrets: SecretEntry[] = [];
 
 		for (const entry of list) {

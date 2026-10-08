@@ -1,28 +1,11 @@
 /**
  * the system prompt a SUB-AGENT gets, and the env var that carries its tool list.
  *
- * WHY THIS EXISTS
- *
- * a sub-agent is a fresh `pi` process that loads the SAME extensions as the
- * parent, so `system-prompt.ts` runs inside it too. until this module existed
- * that hook appended the parent's full tool prompt — 11,705 bytes describing
- * ~40 tools, measured — to a child whose registry had been filtered by
- * `--tools` down to between 1 and 12 tools.
- *
- * the child then read instructions that were false for it: "apply_patch —
- * every file modification", "your dedicated sub-agents are exactly six
- * tools". measured consequence: a code_review child spent two calls probing
- * `search_sessions` and `skill` before concluding they were absent.
- *
- * the fix is to hand the child the one thing neither pi's base prompt nor its
- * own agent prompt can know: which tools THIS child was actually given.
- * `piSpawn` already computes that list to build `--tools`, so the prompt and
- * the registry are fed by the same array and cannot disagree.
- *
- * this lives in lib/ rather than inline in system-prompt.ts for two reasons:
- * the writer (pi-spawn) and the reader (system-prompt) share ONE env-var name
- * instead of two string literals that can drift, and the prompt builder stays
- * a pure function the test suite can pin.
+ * a sub-agent is a fresh `pi` that loads the same extensions as the parent, so
+ * this prompt names exactly the tools that child's `--tools` allowlist contains.
+ * `piSpawn` feeds both from the same array. lives in lib/ so the writer
+ * (pi-spawn) and the reader (system-prompt) share one env-var name, and so the
+ * builder stays a pure function tests can pin.
  */
 
 /**

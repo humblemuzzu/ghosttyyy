@@ -23,13 +23,8 @@ import * as path from "node:path";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { Text } from "@mariozechner/pi-tui";
-import { boxRendererWindowed, textSection, type Excerpt } from "./lib/box-format";
+import { boxRendererWindowed, textSection, COLLAPSED_EXCERPTS } from "./lib/box-format";
 import { getText, getContainer } from "./lib/tui";
-
-const COLLAPSED_EXCERPTS: Excerpt[] = [
-	{ focus: "head" as const, context: 3 },
-	{ focus: "tail" as const, context: 5 },
-];
 
 // --- frontmatter parsing (reimplemented; pi's isn't re-exported) ---
 

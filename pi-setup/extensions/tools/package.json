@@ -1,11 +1,11 @@
 {
   "dependencies": {
-    "@heyhuynhgiabuu/pi-diff": "~0.7.6",
+    "@heyhuynhgiabuu/pi-diff": "~0.9.2",
     "cheerio": "^1.0.0",
-    "diff": "^8.0.0",
+    "diff": "^9.0.0",
     "playwright-core": "^1.62.0",
     "pngjs": "^7.0.0",
-    "psst-cli": "^0.6.6"
+    "psst-cli": "^0.7.1"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "file:/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent",

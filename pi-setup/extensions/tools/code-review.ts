@@ -1,7 +1,7 @@
 /**
- * code_review tool — structured diff review via an xai/grok-4.6 sub-agent.
+ * code_review tool — structured diff review via a sub-agent.
  *
- * spawns an xai/grok-4.6 high sub-agent that:
+ * spawns a sub-agent that:
  * 1. runs git diff (or other bash command) based on diff_description
  * 2. reads changed files for context
  * 3. produces XML <codeReview> report with per-comment severity/type
@@ -16,22 +16,15 @@
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Container, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { piSpawn, resolveAliases, zeroUsage } from "./lib/pi-spawn";
-import {
-	collectSubAgentImages,
-	getFinalOutput,
-	renderAgentTree,
-	subAgentResult,
-	type SingleResult,
-} from "./lib/sub-agent-render";
+import { resolveAliases } from "./lib/pi-spawn";
+import { emptyAgentModels, modelParams, resolveRoute, type AgentModels } from "./lib/agent-models";
+import { runSubAgent, toolError } from "./lib/run-sub-agent";
+import { clip, getFinalOutput, renderAgentTree, type SingleResult } from "./lib/sub-agent-render";
 import { normalizeForDisplay } from "./lib/box-format";
 import { requireParam } from "./lib/params";
 
 /** canonical name first; the rest are what models actually guess (see lib/params.ts). */
 const CODE_REVIEW_PARAM_NAMES = ["diff_description", "task", "query", "prompt", "description"] as const;
-
-const MODEL = "xai/grok-4.6";
-const THINKING = "high";
 
 /** sub-agent needs bash (git diff), read/grep/find (context), web tools (docs lookup) */
 const BUILTIN_TOOLS = ["read", "grep", "find", "ls", "bash"];
@@ -59,6 +52,7 @@ const DEFAULT_REPORT_FORMAT = `Emit findings as XML: <codeReview><comment> eleme
 export interface CodeReviewConfig {
 	systemPrompt?: string;
 	reportFormat?: string;
+	models?: AgentModels;
 }
 
 // --- XML parsing ---
@@ -118,6 +112,7 @@ function formatReviewSummary(comments: ReviewComment[]): string {
 // --- tool ---
 
 export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinition {
+	const models = config.models ?? emptyAgentModels();
 	return {
 		name: "code_review",
 		label: "Code Review",
@@ -132,9 +127,6 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 			'Example: code_review({ diff_description: "uncommitted changes on the current branch vs HEAD" })',
 
 		parameters: Type.Object({
-			// required in the schema, which is what models actually trust.
-			// requireParam() below stays as a safety net for providers that do not
-			// enforce the schema and for models that guess an alias name.
 			diff_description: Type.String({
 				description:
 					"A description of the diff or code change that can be used to generate the full diff. " +
@@ -154,6 +146,7 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 					description: "Additional instructions to guide the review agent.",
 				}),
 			),
+			...modelParams(models, "code_review"),
 		}),
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
@@ -163,15 +156,10 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 				"code_review",
 			);
 			if ("error" in resolved) return resolved.error;
-			const diffDescription = resolved.value;
+			const route = resolveRoute(models, "code_review", params, ctx.modelRegistry);
+			if ("error" in route) return toolError(route.error);
 
-			let sessionId = "";
-			try { sessionId = ctx.sessionManager?.getSessionId?.() ?? ""; } catch {}
-
-			// compose task prompt
-			const parts: string[] = [];
-			parts.push(`Review the following diff:\n${diffDescription}`);
-
+			const parts: string[] = [`Review the following diff:\n${resolved.value}`];
 			if (params.files && params.files.length > 0) {
 				parts.push(`\nFocus the review on these files:\n${params.files.join("\n")}`);
 			}
@@ -179,68 +167,29 @@ export function createCodeReviewTool(config: CodeReviewConfig = {}): ToolDefinit
 				parts.push(`\nAdditional review instructions:\n${params.instructions}`);
 			}
 
-			const fullTask = parts.join("\n");
-
-			const singleResult: SingleResult = {
+			return runSubAgent({
 				agent: "code_review",
-				task: diffDescription,
-				exitCode: -1,
-				messages: [],
-				usage: zeroUsage(),
-			};
-
-			const systemPrompt = config.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-			const reportFormat = config.reportFormat || DEFAULT_REPORT_FORMAT;
-
-			const result = await piSpawn({
-				cwd: ctx.cwd,
-				task: fullTask,
-				model: MODEL,
-				pinModel: true,
-				thinkingLevel: THINKING,
-				builtinTools: BUILTIN_TOOLS,
-				extensionTools: EXTENSION_TOOLS,
-				systemPromptBody: systemPrompt,
-				followUp: reportFormat,
+				label: resolved.value,
+				working: "(reviewing...)",
+				returnImages: true,
+				ctx,
 				signal,
-				sessionId,
-				onUpdate: (partial) => {
-					singleResult.messages = partial.messages;
-					singleResult.usage = partial.usage;
-					singleResult.model = partial.model;
-					singleResult.stopReason = partial.stopReason;
-					singleResult.errorMessage = partial.errorMessage;
-					if (onUpdate) {
-						onUpdate({
-							content: [{ type: "text", text: getFinalOutput(partial.messages) || "(reviewing...)" }],
-							details: singleResult,
-						} as any);
-					}
+				onUpdate,
+				spawn: {
+					task: parts.join("\n"),
+					model: route.model,
+					thinkingLevel: route.thinking,
+					builtinTools: BUILTIN_TOOLS,
+					extensionTools: EXTENSION_TOOLS,
+					systemPromptBody: config.systemPrompt || DEFAULT_SYSTEM_PROMPT,
+					followUp: config.reportFormat || DEFAULT_REPORT_FORMAT,
 				},
 			});
-
-			singleResult.exitCode = result.exitCode;
-			singleResult.messages = result.messages;
-			singleResult.usage = result.usage;
-			singleResult.model = result.model;
-			singleResult.stopReason = result.stopReason;
-			singleResult.errorMessage = result.errorMessage;
-
-			const isError = result.exitCode !== 0 || result.stopReason === "error" || result.stopReason === "aborted";
-			const output = getFinalOutput(result.messages) || "(no output)";
-
-			if (isError) {
-				return subAgentResult(result.errorMessage || result.stderr || output, singleResult, true);
-			}
-
-			return subAgentResult(output, singleResult, false, collectSubAgentImages(result.messages));
 		},
 
 		renderCall(args: any, theme: any, context: any) {
 			const text = context?.lastComponent ?? new Text("", 0, 0);
-			const desc = args.diff_description || "...";
-			const preview = desc.length > 70 ? `${desc.slice(0, 70)}...` : desc;
-			let label = theme.fg("toolTitle", theme.bold("code_review ")) + theme.fg("dim", preview);
+			let label = theme.fg("toolTitle", theme.bold("code_review ")) + theme.fg("dim", clip(args.diff_description || "...", 70));
 			if (args.files?.length) {
 				label += theme.fg("muted", ` (${args.files.length} file${args.files.length > 1 ? "s" : ""})`);
 			}

@@ -100,8 +100,8 @@ custom bridge/provider needed.
 
 | Provider | Access |
 |---|---|
-| `xai` (default, `grok-4.6`) | Grok OAuth (`/login xai`); `grok-4.5` also in favorites |
-| `anthropic` (`claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context natively) |
+| `xai` (`grok-4.6`, `grok-4.5`) | Grok OAuth (`/login xai`) |
+| `anthropic` (default `claude-opus-5-5`; `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5-1`, `claude-opus-5`) | Claude Max OAuth via pi-claude-code-use (`claude-fable-5-1` ships in pi 0.85.0's catalog; `claude-opus-4-6/4-7/4-8` have 1M context natively) |
 | `deepseek` (`deepseek-flash` = V4.1 Flash) | `$DEEPSEEK_API_KEY`, 1M context, vision |
 | `openai-codex`, `kimi-coding` | pi built-in providers |
 | `llama-local` (`LFM2.5-2.6B`) | local llama.cpp router, managed via `/local` |
@@ -119,7 +119,7 @@ Mnemonic: `c-` cursor, `mat-` matt, `dm-` dmmulroy.
 3 `autoresearch-*` load only while pi-autoresearch is enabled.)
 
 ### Settings
-- Default provider/model: `xai` / `grok-4.6` (thinking high)
+- Default provider/model: `anthropic` / `claude-opus-5-5` (thinking high)
 - Theme: gruvbox · Thinking: high · Compaction: **enabled** (pi's native LLM compaction)
 - Steering/follow-up: all · Quiet startup
 
@@ -140,7 +140,7 @@ See `AGENTS.md` → "Packages (npm)" for versions, purposes, and which are patch
 ```
 pi-setup/
 ├── install.sh                  # One-command installer (deploys + re-applies patches)
-├── settings.json               # Pi settings (provider: xai, model: grok-4.6)
+├── settings.json               # Pi settings (provider: anthropic, model: claude-opus-5-5)
 ├── keybindings.json            # Custom keybindings
 ├── models.json                 # Custom providers + context-window overrides
 ├── permissions.json            # Tool permission rules

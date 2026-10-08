@@ -23,7 +23,7 @@
  * rendered line exceeds terminal width.
  */
 
-import { Text, truncateToWidth, visibleWidth as tuiVisibleWidth } from "@mariozechner/pi-tui";
+import { Container, Text, truncateToWidth, visibleWidth as tuiVisibleWidth } from "@mariozechner/pi-tui";
 import { windowItems, type Excerpt } from "./show";
 
 const DIM = "\x1b[2m";
@@ -238,6 +238,11 @@ export interface BoxSection {
 
 /** re-export Excerpt so consumers import from box-format only */
 export type { Excerpt };
+
+export const COLLAPSED_EXCERPTS: Excerpt[] = [
+	{ focus: "head", context: 3 },
+	{ focus: "tail", context: 5 },
+];
 
 /** intermediate visual line produced by expanding BoxLine text */
 interface VisualBoxLine {
@@ -473,6 +478,22 @@ export function boxRendererWindowed(
 			cachedWidth = undefined;
 		},
 	};
+}
+
+export function renderBoxedText(result: any, _opts: unknown, _theme: unknown, context: any) {
+	const container = context?.lastComponent ?? new Container();
+	container.clear();
+	const content = result.content?.[0];
+	if (!content || content.type !== "text") {
+		container.addChild(new Text("(no output)", 0, 0));
+		return container;
+	}
+	const renderer = boxRendererWindowed(
+		() => [textSection(undefined, content.text)],
+		{ collapsed: { excerpts: COLLAPSED_EXCERPTS }, expanded: {} },
+	);
+	container.addChild(renderer);
+	return container;
 }
 
 /**
