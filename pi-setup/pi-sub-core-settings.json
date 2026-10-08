@@ -22,7 +22,7 @@
       "fetchStatus": true
     },
     "codex": {
-      "enabled": true,
+      "enabled": false,
       "fetchStatus": true
     },
     "kiro": {
@@ -30,7 +30,7 @@
       "fetchStatus": false
     },
     "grok": {
-      "enabled": true,
+      "enabled": false,
       "fetchStatus": false
     },
     "zai": {
