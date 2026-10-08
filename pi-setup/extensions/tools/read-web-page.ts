@@ -38,10 +38,24 @@ export function staticFetchNote(html: string): string {
 		: "[static fetch: the page has no <script> tags, so this is its full content]";
 }
 
-function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; capped?: boolean; error?: string }> {
+const STATUS_MARK = "__pi_http_status__";
+
+/** splits curl's stderr into its error text and the final response's HTTP status (0 when none arrived). */
+export function parseCurlStderr(stderr: string): { message: string; status: number } {
+	const at = stderr.lastIndexOf(STATUS_MARK);
+	if (at === -1) return { message: stderr.trim(), status: 0 };
+	const status = Number.parseInt(stderr.slice(at + STATUS_MARK.length), 10);
+	return { message: stderr.slice(0, at).trim(), status: Number.isFinite(status) ? status : 0 };
+}
+
+function fetchUrl(
+	url: string,
+	signal?: AbortSignal,
+): Promise<{ html: string; status?: number; capped?: boolean; error?: string }> {
 	return new Promise((resolve) => {
 		const args = [
-			"-sL",
+			"-sSL",
+			"-w", `%{stderr}${STATUS_MARK}%{http_code}`,
 			"-H", "Accept: text/markdown, text/html;q=0.9",
 			"-m", String(CURL_TIMEOUT_SECS),
 			"--max-redirs", String(MAX_REDIRECTS),
@@ -90,11 +104,12 @@ function fetchUrl(url: string, signal?: AbortSignal): Promise<{ html: string; ca
 		child.on("close", (code) => {
 			signal?.removeEventListener("abort", onAbort);
 			if (aborted) { resolve({ html: "", error: "fetch aborted" }); return; }
+			const { message, status } = parseCurlStderr(stderr);
 			if (code !== 0 && !capped) {
-				resolve({ html: "", error: `fetch failed: ${stderr.trim() || `curl exited with code ${code}`}` });
+				resolve({ html: "", error: `fetch failed: ${message.replace(/^curl: /, "") || `curl exited with code ${code}`}` });
 				return;
 			}
-			resolve({ html: Buffer.concat(chunks).subarray(0, MAX_FETCH_BYTES).toString("utf-8"), capped });
+			resolve({ html: Buffer.concat(chunks).subarray(0, MAX_FETCH_BYTES).toString("utf-8"), status, capped });
 		});
 	});
 }
@@ -167,8 +182,13 @@ export function createReadWebPageTool(config: ReadWebPageConfig = {}): ToolDefin
 				route = resolved;
 			}
 
-			const { html, capped, error } = await fetchUrl(url, signal);
+			const { html, status, capped, error } = await fetchUrl(url, signal);
 			if (error) return toolError(error);
+			if (status !== undefined && status >= 400) {
+				const body = (htmlToMarkdown(html) ?? html).replace(/\s+/g, " ").trim();
+				const excerpt = body ? `\n\nthe error page says: ${body.length > 400 ? `${body.slice(0, 400)}…` : body}` : "";
+				return toolError(`HTTP ${status} from ${url} — the server did not return the page.${excerpt}`);
+			}
 
 			if (!html.trim()) {
 				return {

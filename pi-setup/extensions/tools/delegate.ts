@@ -22,7 +22,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { requireParam, resolveParam } from "./lib/params";
-import { resolveAliases, SUB_AGENT_SESSION_DIR } from "./lib/pi-spawn";
+import { resolveAliases, SUB_AGENT_SESSION_DIR, unresumableReason } from "./lib/pi-spawn";
 import { emptyAgentModels, modelParams, resolveRoute, type AgentModels } from "./lib/agent-models";
 import { runSubAgent, toolError } from "./lib/run-sub-agent";
 import { clip, firstLine, renderSubAgentResult } from "./lib/sub-agent-render";
@@ -109,6 +109,8 @@ export function createDelegateTool(config: DelegateConfig = {}): ToolDefinition 
 			const prompt = requireParam(params, PROMPT_PARAMS, "delegate");
 			if ("error" in prompt) return prompt.error as any;
 			const continueId = resolveParam(params, ["continueId", "continue_id", "sessionId"]);
+			const unresumable = continueId && unresumableReason(continueId, ctx.cwd, "delegate");
+			if (unresumable) return toolError(unresumable);
 			const route = resolveRoute(models, "delegate", params, ctx.modelRegistry, !!continueId);
 			if ("error" in route) return toolError(route.error);
 

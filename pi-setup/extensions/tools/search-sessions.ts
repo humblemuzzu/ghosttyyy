@@ -221,9 +221,11 @@ function matchesFile(branch: BranchResult, fileQuery: string): boolean {
   return branch.filesTouched.some((f) => f.toLowerCase().includes(lower));
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+
 function parseDate(dateStr: string): Date | null {
   // support ISO dates and relative (7d, 2w)
-  const relMatch = dateStr.match(/^(\d+)([dw])$/);
+  const relMatch = dateStr.trim().match(/^(\d+)([dw])$/);
   if (relMatch && relMatch[1] && relMatch[2]) {
     const n = parseInt(relMatch[1], 10);
     const unit = relMatch[2];
@@ -232,26 +234,18 @@ function parseDate(dateStr: string): Date | null {
     else if (unit === "w") now.setDate(now.getDate() - n * 7);
     return now;
   }
-  const d = new Date(dateStr);
+  if (!ISO_DATE.test(dateStr.trim())) return null;
+  const d = new Date(dateStr.trim());
   return isNaN(d.getTime()) ? null : d;
 }
 
 function matchesDateRange(
   branch: BranchResult,
-  after?: string,
-  before?: string,
+  after: Date | null,
+  before: Date | null,
 ): boolean {
-  const branchEnd = new Date(branch.timestampEnd);
-  const branchStart = new Date(branch.timestampStart);
-
-  if (after) {
-    const afterDate = parseDate(after);
-    if (afterDate && branchEnd < afterDate) return false;
-  }
-  if (before) {
-    const beforeDate = parseDate(before);
-    if (beforeDate && branchStart > beforeDate) return false;
-  }
+  if (after && new Date(branch.timestampEnd) < after) return false;
+  if (before && new Date(branch.timestampStart) > before) return false;
   return true;
 }
 
@@ -279,7 +273,10 @@ function rgFilterFiles(
 
 // --- format results ---
 
-function formatBranchResults(branches: BranchResult[]): {
+function formatBranchResults(
+  branches: BranchResult[],
+  total = branches.length,
+): {
   text: string;
   headerLineIndices: number[];
 } {
@@ -289,8 +286,12 @@ function formatBranchResults(branches: BranchResult[]): {
   const lines: string[] = [];
   const headerLineIndices: number[] = [];
 
+  const half = Math.floor(branches.length / 2);
   lines.push(
-    `found ${branches.length} matching branch${branches.length !== 1 ? "es" : ""}:`,
+    total > branches.length
+      ? `found ${total} matching branches; showing the ${half} newest and ${branches.length - half} oldest ` +
+          `(${total - branches.length} in between omitted — narrow with keyword, file, after or before):`
+      : `found ${total} matching branch${total !== 1 ? "es" : ""}:`,
   );
   lines.push("");
 
@@ -473,6 +474,21 @@ export function createSearchSessionsTool(
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const p = params as SearchSessionsParams;
+      const dates: Record<"after" | "before", Date | null> = { after: null, before: null };
+      for (const key of ["after", "before"] as const) {
+        const raw = p[key];
+        if (!raw) continue;
+        dates[key] = parseDate(raw);
+        if (!dates[key]) {
+          return {
+            content: [{
+              type: "text" as const,
+              text: `invalid ${key} date ${JSON.stringify(raw)}: use an ISO date (2026-02-20, 2026-02-20T14:30) or a relative age (7d, 2w).`,
+            }],
+            isError: true,
+          } as any;
+        }
+      }
       const existingDirs = sessionsDirs.filter((sessionsDir) =>
         fs.existsSync(sessionsDir),
       );
@@ -526,22 +542,19 @@ export function createSearchSessionsTool(
         }
       }
 
-      // 3. filename-based date pre-filter (timestamps are in filenames)
-      if (p.after || p.before) {
+      // 3. cheap date pre-filter. `after` is about the LAST activity, which the
+      // filename (session start) cannot tell, so it uses the file's mtime.
+      if (dates.after || dates.before) {
         sessionFiles = sessionFiles.filter((f) => {
-          const basename = path.basename(f);
-          // format: 2026-02-20T14-50-17-926Z_uuid.jsonl
-          const tsMatch = basename.match(/^(\d{4}-\d{2}-\d{2})T/);
-          if (!tsMatch || !tsMatch[1]) return true; // keep if can't parse
-          const fileDate = new Date(tsMatch[1]);
-
-          if (p.after) {
-            const afterDate = parseDate(p.after);
-            if (afterDate && fileDate < afterDate) return false;
+          if (dates.after) {
+            try {
+              if (fs.statSync(f).mtimeMs < dates.after.getTime()) return false;
+            } catch {}
           }
-          if (p.before) {
-            const beforeDate = parseDate(p.before);
-            if (beforeDate && fileDate > beforeDate) return false;
+          if (dates.before) {
+            // format: 2026-02-20T14-50-17-926Z_uuid.jsonl
+            const tsMatch = path.basename(f).match(/^(\d{4}-\d{2}-\d{2})T/);
+            if (tsMatch?.[1] && new Date(tsMatch[1]) > dates.before) return false;
           }
           return true;
         });
@@ -586,7 +599,7 @@ export function createSearchSessionsTool(
       }
       if (p.after || p.before) {
         filtered = filtered.filter((b) =>
-          matchesDateRange(b, p.after, p.before),
+          matchesDateRange(b, dates.after, dates.before),
         );
       }
 
@@ -610,7 +623,7 @@ export function createSearchSessionsTool(
           ? filtered.length - shown.length
           : 0;
 
-      const { text: output } = formatBranchResults(shown);
+      const { text: output } = formatBranchResults(shown, filtered.length);
       const resultSections = branchesToSections(shown);
 
       return {

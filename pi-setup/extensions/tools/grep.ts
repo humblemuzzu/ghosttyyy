@@ -154,7 +154,7 @@ export function createGrepTool(): ToolDefinition {
 			),
 			context: Type.Optional(
 				Type.Number({
-					description: `Context lines around each match (default ${DEFAULT_CONTEXT_LINES}, max ${MAX_CONTEXT_LINES}).`,
+					description: `Context lines around each match (default ${DEFAULT_CONTEXT_LINES}, max ${MAX_CONTEXT_LINES}), shown as \`path-N-\` where matches are \`path:N:\`.`,
 				}),
 			),
 			limit: Type.Optional(
@@ -380,7 +380,9 @@ export function createGrepTool(): ToolDefinition {
 							}
 
 							const idx = outputLines.length;
-							outputLines.push(`${displayPath}:${ev.lineNumber}: ${truncateLine(ev.lineText)}`);
+							// rg/grep convention: `path:N:` is a match, `path-N-` is context.
+							const mark = ev.kind === "match" ? ":" : "-";
+							outputLines.push(`${displayPath}${mark}${ev.lineNumber}${mark} ${truncateLine(ev.lineText)}`);
 							lastOutputLineNum = ev.lineNumber;
 
 							grepFile.matches.push({

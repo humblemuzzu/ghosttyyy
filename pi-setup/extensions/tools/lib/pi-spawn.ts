@@ -216,6 +216,57 @@ function resolveSessionArgs(session: SpawnSessionConfig | undefined): {
 	return { args, meta: { continueId: id, sessionId: id, sessionDir: session.dir } };
 }
 
+function readSessionHeader(file: string): { id?: unknown; cwd?: unknown } | undefined {
+	let fd: number | undefined;
+	try {
+		fd = fs.openSync(file, "r");
+		const buf = Buffer.alloc(4096);
+		const n = fs.readSync(fd, buf, 0, buf.length, 0);
+		const firstLine = buf.subarray(0, n).toString("utf-8").split("\n")[0] ?? "";
+		const header = JSON.parse(firstLine);
+		return header?.type === "session" ? header : undefined;
+	} catch {
+		return undefined;
+	} finally {
+		if (fd !== undefined) fs.closeSync(fd);
+	}
+}
+
+/**
+ * why `--session-id <id>` would NOT reopen an existing conversation, or
+ * undefined when it would. pi reopens only a session in `dir` whose header has
+ * this id AND this cwd; anything else it silently creates as a new, empty one.
+ */
+export function unresumableReason(
+	id: string,
+	cwd: string,
+	agent: string,
+	dir: string = SUB_AGENT_SESSION_DIR,
+): string | undefined {
+	let files: string[] = [];
+	try {
+		files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+	} catch {}
+	const named = files.filter((f) => f.includes(id));
+	const candidates = (named.length > 0 ? named : files)
+		.map((f) => readSessionHeader(path.join(dir, f)))
+		.filter((h) => h?.id === id);
+
+	if (candidates.length === 0) {
+		return (
+			`unknown continueId "${id}": no saved ${agent} conversation has that id. ` +
+			`Pass the continueId exactly as a previous ${agent} result printed it, or omit it to start a new ${agent}.`
+		);
+	}
+	const here = path.resolve(cwd);
+	if (candidates.some((h) => typeof h!.cwd === "string" && path.resolve(h!.cwd) === here)) return undefined;
+	const started = candidates.map((h) => h!.cwd).find((c) => typeof c === "string");
+	return (
+		`continueId "${id}" belongs to a ${agent} started in ${started ?? "another directory"}, and pi resumes it ` +
+		`only from there (this session is in ${here}). Omit continueId to start a new ${agent} here.`
+	);
+}
+
 function writePromptToTempFile(label: string, prompt: string): { dir: string; filePath: string } {
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	const safeName = label.replace(/[^\w.-]+/g, "_");

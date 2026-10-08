@@ -18,6 +18,8 @@ import { Type } from "@sinclair/typebox";
 import {
 	parseRepoUrl,
 	repoSlug,
+	canonicalRepoSlug,
+	renameNote,
 	ghApi,
 	decodeBase64Content,
 	addLineNumbers,
@@ -246,8 +248,10 @@ export function createSearchGithubTool(): ToolDefinition {
 				const repo = requireRepository(params as any, "search_github", "grep");
 				if ("error" in repo) return repo.error;
 				const ref = parseRepoUrl(repo.value);
+				const slug = canonicalRepoSlug(ref);
+				const note = renameNote(ref, slug);
 				const limit = params.limit ?? 30;
-				let query = `${params.pattern} repo:${repoSlug(ref)}`;
+				let query = `${params.pattern} repo:${slug}`;
 				const pathQualifier = params.path ? searchPathQualifier(params.path) : "";
 				if (pathQualifier) query += ` ${pathQualifier}`;
 
@@ -266,14 +270,15 @@ export function createSearchGithubTool(): ToolDefinition {
 						content: [{
 							type: "text" as const,
 							text:
-								`No results for "${params.pattern}" in ${repoSlug(ref)} (query: ${query}). ` +
+								note +
+								`No results for "${params.pattern}" in ${slug} (query: ${query}). ` +
 								"GitHub code search covers only the default branch and skips large files, so a miss " +
 								"is not proof of absence — read_github the file to confirm.",
 						}],
 					};
 				}
 
-				const results: string[] = [`Found ${total} results (showing ${items.length}):\n`];
+				const results: string[] = [`${note}Found ${total} results (showing ${items.length}):\n`];
 
 				for (const item of items) {
 					results.push(`## ${item.path}`);
@@ -289,7 +294,7 @@ export function createSearchGithubTool(): ToolDefinition {
 					results.push("");
 				}
 
-				return { content: [{ type: "text" as const, text: truncate(results.join("\n"), 64_000) }], details: { header: `/${params.pattern}/ in ${repoSlug(ref)}` } };
+				return { content: [{ type: "text" as const, text: truncate(results.join("\n"), 64_000) }], details: { header: `/${params.pattern}/ in ${slug}` } };
 			} catch (e: any) {
 				return { content: [{ type: "text" as const, text: e.message }], isError: true };
 			}
@@ -539,6 +544,13 @@ export function createGlobGithubTool(): ToolDefinition {
 
 // --- commit_search ---
 
+// commit search returns local offsets with milliseconds, the commits list returns UTC: show one format.
+function utcDate(raw: unknown): string {
+	if (typeof raw !== "string" || !raw) return "";
+	const d = new Date(raw);
+	return Number.isNaN(d.getTime()) ? raw : d.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 export function createCommitSearchTool(): ToolDefinition {
 	return {
 		name: "commit_search",
@@ -583,8 +595,11 @@ export function createCommitSearchTool(): ToolDefinition {
 				}
 
 				let commits: any[];
+				let note = "";
 				if (params.query) {
-					const q = [params.query, `repo:${repoSlug(ref)}`];
+					const slug = canonicalRepoSlug(ref);
+					note = renameNote(ref, slug);
+					const q = [params.query, `repo:${slug}`];
 					if (params.author) q.push(`author:${params.author}`);
 					if (params.since) q.push(`committer-date:>=${params.since}`);
 					if (params.until) q.push(`committer-date:<=${params.until}`);
@@ -606,14 +621,14 @@ export function createCommitSearchTool(): ToolDefinition {
 				}
 
 				if (commits.length === 0) {
-					return { content: [{ type: "text" as const, text: "No commits found." }] };
+					return { content: [{ type: "text" as const, text: `${note}No commits found.` }] };
 				}
 
-				const lines: string[] = [`Found ${commits.length} commits:\n`];
+				const lines: string[] = [`${note}Found ${commits.length} commits:\n`];
 				for (const c of commits) {
 					const sha = c.sha?.slice(0, 7) ?? "???????";
 					const author = c.commit?.author?.name ?? c.author?.login ?? "unknown";
-					const date = c.commit?.author?.date ?? "";
+					const date = utcDate(c.commit?.author?.date);
 					const msg = c.commit?.message?.split("\n")[0] ?? "";
 					lines.push(`${sha} ${date} (${author}) ${msg}`);
 				}

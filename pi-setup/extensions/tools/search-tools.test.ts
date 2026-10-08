@@ -99,11 +99,11 @@ describe("grep", () => {
 		expect((await grep({ pattern: "gamma", path: "src/notes.md", context: 0 })).text).toBe("notes.md:3: gamma");
 		const wide = (await grep({ pattern: "gamma", path: "src/notes.md", context: 2 })).text;
 		expect(wide.split("\n")).toEqual([
-			"notes.md:1: alpha",
-			"notes.md:2: beta",
+			"notes.md-1- alpha",
+			"notes.md-2- beta",
 			"notes.md:3: gamma",
-			"notes.md:4: delta",
-			"notes.md:5: epsilon",
+			"notes.md-4- delta",
+			"notes.md-5- epsilon",
 		]);
 	});
 

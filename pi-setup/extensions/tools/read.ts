@@ -128,19 +128,41 @@ interface ReadResult {
 	shownEnd: number;
 }
 
+/** a final "\n" ends the last line; it does not start an empty one. */
+export function splitFileLines(raw: string): string[] {
+	if (raw === "") return [];
+	const lines = raw.split("\n");
+	if (raw.endsWith("\n")) lines.pop();
+	return lines;
+}
+
+/** why `readRange` cannot be served from a file of `totalLines` lines, or undefined. */
+export function rangeError(readRange: [number, number], totalLines: number): string | undefined {
+	const [start, end] = readRange;
+	if (!Number.isFinite(start) || !Number.isFinite(end)) return `read_range must be two line numbers, got [${start}, ${end}].`;
+	if (end < start) return `read_range [${start}, ${end}] is backwards: the end line comes before the start line.`;
+	if (end < 1) return `read_range [${start}, ${end}] is before line 1; line numbers start at 1.`;
+	if (Math.max(1, start) > totalLines) {
+		return `read_range starts at line ${start}, but the file has only ${totalLines} line${totalLines === 1 ? "" : "s"}.`;
+	}
+	return undefined;
+}
+
 function readFileContent(
 	filePath: string,
 	limits: ReadLimits,
 	readRange?: [number, number],
-): ReadResult {
-	const raw = fs.readFileSync(filePath, "utf-8");
-	const allLines = raw.split("\n");
+): ReadResult | { error: string } {
+	const allLines = splitFileLines(fs.readFileSync(filePath, "utf-8"));
 	const totalLines = allLines.length;
+	if (totalLines === 0) return { text: "(empty file)", totalLines: 0, shownStart: 0, shownEnd: 0 };
 
-	// determine the range to show
-	const start = Math.max(1, readRange?.[0] ?? 1);
-	const end = Math.min(totalLines, readRange?.[1] ?? start + limits.maxLines - 1);
-	const requestedLines = end - start + 1;
+	if (readRange) {
+		const error = rangeError(readRange, totalLines);
+		if (error) return { error };
+	}
+	const start = Math.max(1, Math.floor(readRange?.[0] ?? 1));
+	const end = Math.min(totalLines, Math.floor(readRange?.[1] ?? start + limits.maxLines - 1));
 
 	// number lines and truncate long lines
 	const numbered: string[] = [];
@@ -335,12 +357,25 @@ export function createReadTool(limits: ReadLimits): ToolDefinition {
 			try {
 				// resolve range: prefer read_range, fall back to offset/limit (pi default)
 				let readRange = params.read_range as [number, number] | undefined;
-				if (!readRange && (params.offset || params.limit)) {
-					const start = params.offset ?? 1;
-					const end = params.limit ? start + params.limit - 1 : start + limits.maxLines - 1;
+				if (!readRange && (params.offset !== undefined || params.limit !== undefined)) {
+					if (params.limit !== undefined && params.limit < 1) {
+						return {
+							content: [{ type: "text" as const, text: `limit must be at least 1, got ${params.limit}.` }],
+							isError: true,
+						} as any;
+					}
+					const start = Math.max(1, params.offset ?? 1);
+					const end = params.limit !== undefined ? start + params.limit - 1 : start + limits.maxLines - 1;
 					readRange = [start, end];
 				}
-				const { text, totalLines, shownStart, shownEnd } = readFileContent(resolved, limits, readRange);
+				const read = readFileContent(resolved, limits, readRange);
+				if ("error" in read) {
+					return {
+						content: [{ type: "text" as const, text: `${read.error} (${resolved})` }],
+						isError: true,
+					} as any;
+				}
+				const { text, totalLines, shownStart, shownEnd } = read;
 
 				let output = text;
 				let notice: string | undefined;

@@ -40,6 +40,37 @@ export function repoSlug(ref: RepoRef): string {
 	return `${ref.owner}/${ref.repo}`;
 }
 
+const canonicalSlugs = new Map<string, string>();
+
+/**
+ * the repository's current "owner/repo". `repos/*` endpoints follow a rename,
+ * but search's `repo:` qualifier does not: an old name finds nothing (code
+ * search) or fails with HTTP 422 (commit search).
+ */
+export function canonicalRepoSlug(ref: RepoRef): string {
+	const slug = repoSlug(ref);
+	const cached = canonicalSlugs.get(slug.toLowerCase());
+	if (cached) return cached;
+	let data: { full_name?: string };
+	try {
+		data = ghApi<{ full_name?: string }>(`repos/${slug}`);
+	} catch (e: any) {
+		if (/HTTP 404/.test(e.message)) {
+			throw new Error(`repository ${slug} not found, or not visible to your gh login`);
+		}
+		throw e;
+	}
+	const canonical = data.full_name || slug;
+	canonicalSlugs.set(slug.toLowerCase(), canonical);
+	return canonical;
+}
+
+/** one line telling the model the name it used is outdated, or "" when it is current. */
+export function renameNote(ref: RepoRef, canonical: string): string {
+	const asked = repoSlug(ref);
+	return asked.toLowerCase() === canonical.toLowerCase() ? "" : `(${asked} was renamed to ${canonical}; searched ${canonical})\n\n`;
+}
+
 /**
  * call `gh api` and return parsed JSON.
  * throws on non-zero exit or JSON parse failure.

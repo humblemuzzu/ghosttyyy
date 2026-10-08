@@ -23,6 +23,8 @@ const TAIL_LINES = 50;
 /** the line window alone lets one minified line through whole. */
 const MAX_OUTPUT_CHARS = 50_000;
 const SIGKILL_DELAY_MS = 3000;
+/** how long after the shell exits a still-open output pipe is taken to mean a background process holds it. */
+const BACKGROUND_GRACE_MS = 1500;
 const STREAM_UPDATE_INTERVAL_MS = 150;
 
 /** pi's built-in bash output contract, so codemode scripts get data, not a throw, on a non-zero exit. */
@@ -148,6 +150,23 @@ function killGracefully(pid: number): void {
 			// already dead
 		}
 	}, SIGKILL_DELAY_MS);
+}
+
+/** groups a finished call left running in the background; each dies at its deadline or when pi exits. */
+const backgroundGroups = new Set<number>();
+let exitHookInstalled = false;
+
+function trackBackgroundGroup(pid: number): void {
+	backgroundGroups.add(pid);
+	if (exitHookInstalled) return;
+	exitHookInstalled = true;
+	process.once("exit", () => {
+		for (const pgid of backgroundGroups) {
+			try {
+				process.kill(-pgid, "SIGTERM");
+			} catch {}
+		}
+	});
 }
 
 /** command lines shown in the call header before eliding; ctrl+o shows the rest */
@@ -707,7 +726,13 @@ async function runCommand(
 		child.stdout?.on("data", handleData(stdoutDecoder));
 		child.stderr?.on("data", handleData(stderrDecoder));
 
+		let settled = false;
+		let backgroundHandle: ReturnType<typeof setTimeout> | undefined;
+
 		child.on("error", (err) => {
+			if (settled) return;
+			settled = true;
+			if (backgroundHandle) clearTimeout(backgroundHandle);
 			if (timeoutHandle) clearTimeout(timeoutHandle);
 			if (idleHandle) clearInterval(idleHandle);
 			if (pendingUpdate) clearTimeout(pendingUpdate);
@@ -719,11 +744,31 @@ async function runCommand(
 			} as any);
 		});
 
-		child.on("close", (code, killSignal) => {
-			if (timeoutHandle) clearTimeout(timeoutHandle);
+		/*
+		 * `close` waits for every holder of the output pipes, so a backgrounded
+		 * grandchild would hold the call open until the timeout kill. `background`
+		 * finishes on the shell's own exit instead and leaves the timeout armed:
+		 * the background process still dies at the declared deadline.
+		 */
+		const finish = (code: number | null, killSignal: NodeJS.Signals | null, background: boolean) => {
+			if (settled) return;
+			settled = true;
+			if (backgroundHandle) clearTimeout(backgroundHandle);
+			if (timeoutHandle) {
+				if (background) timeoutHandle.unref?.();
+				else clearTimeout(timeoutHandle);
+			}
 			if (idleHandle) clearInterval(idleHandle);
 			if (pendingUpdate) clearTimeout(pendingUpdate);
 			signal?.removeEventListener("abort", onAbort);
+			if (background) {
+				if (child.pid) trackBackgroundGroup(child.pid);
+				for (const stream of [child.stdout, child.stderr]) {
+					stream?.removeAllListeners("data");
+					stream?.on("data", () => {});
+					(stream as any)?.unref?.();
+				}
+			}
 
 			const finalCarry = sanitizeForDisplay(controlCarry + stdoutDecoder.end() + stderrDecoder.end());
 			if (finalCarry) {
@@ -784,6 +829,12 @@ async function runCommand(
 			let result = `$ ${command}\n\n${outputText || "(no output)"}`;
 			if (finished.error && modelViewCut) result += `\n\n(full output not kept: ${finished.error})`;
 			if (finished.capped) result += `\n\n(the full-output file stops at ${MAX_FILE_BYTES / 1024 / 1024} MiB; the command printed more)`;
+			if (background) {
+				result +=
+					"\n\n(the shell exited, but a background process it started still holds the output pipe, so " +
+					`nothing it prints from now on is captured. It will be killed when the ${timeout}s timeout expires or pi exits. ` +
+					"To keep a process running, redirect its output (`cmd > /tmp/cmd.log 2>&1 &`) or run it in tmux.)";
+			}
 
 			if (code === null) {
 				resolve({
@@ -821,6 +872,19 @@ async function runCommand(
 					structuredContent,
 				} as any);
 			}
+		};
+
+		child.on("exit", (code, killSignal) => {
+			if (settled) return;
+			backgroundHandle = setTimeout(() => finish(code, killSignal, true), BACKGROUND_GRACE_MS);
+		});
+		child.on("close", (code, killSignal) => {
+			if (settled) {
+				if (timeoutHandle) clearTimeout(timeoutHandle);
+				if (child.pid) backgroundGroups.delete(child.pid);
+				return;
+			}
+			finish(code, killSignal, false);
 		});
 	});
 }
