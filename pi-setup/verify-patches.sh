@@ -9,23 +9,30 @@
 # Fix commands assume the repo root as cwd.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PI_DIST="/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist"
 PI_AGENT="$HOME/.pi/agent"
 FAIL=0
 
 pass() { printf '\033[32mPASS\033[0m  %s\n' "$1"; }
 fail() { printf '\033[31mFAIL\033[0m  %s\n    fix: %s\n' "$1" "$2"; FAIL=1; }
 
+PI_BIN="" PI_PKG="" PI_DIST="" PI_PREFIX=""
+# shellcheck source=pi-location.sh
+if source "$SCRIPT_DIR/pi-location.sh" 2>/dev/null && pi_locate; then
+    pass "pi located: $PI_PKG"
+else
+    fail "cannot locate pi's package directory from \`pi\` on PATH" \
+         "install pi (npm install -g @earendil-works/pi-coding-agent), or rerun with PI_PKG_DIR=/path/to/@earendil-works/pi-coding-agent"
+fi
+
 # ── pi entrypoint: modular CLI, not the bundled runtime ──
 # dist/bundle/cli.js inlines its own resource-loader, keybindings,
 # session-selector and pi-tui, so under the bundle every core patch below is
 # inert while its check still passes.
-PI_BIN_TARGET="$(readlink "$(command -v pi)" 2>/dev/null || command -v pi)"
-if [[ "$PI_BIN_TARGET" != *"dist/bundle/cli.js" ]]; then
-    pass "pi entrypoint: modular CLI (dist/cli.js — patches load)"
-else
+if declare -F pi_bin_is_bundle >/dev/null && pi_bin_is_bundle; then
     fail "pi entrypoint: bundled runtime — every core patch is inert" \
-         "ln -sfn ../lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js /opt/homebrew/bin/pi && bash pi-setup/verify-patches.sh"
+         "ln -sfn '$PI_PKG/dist/cli.js' '$PI_BIN' && bash pi-setup/verify-patches.sh"
+else
+    pass "pi entrypoint: modular CLI (dist/cli.js — patches load)"
 fi
 
 # ── pi core: tool-conflict suppression (pi won't START without it) ──
@@ -67,7 +74,6 @@ else
 fi
 
 # ── pi-server: some pi versions import it without declaring the dependency ──
-PI_PKG="$(dirname "$PI_DIST")"
 if ! grep -q "@earendil-works/pi-server" "$PI_DIST/experimental/server.js" 2>/dev/null; then
     pass "pi core: pi-server not needed (not imported by this pi)"
 elif [ -d "$PI_PKG/node_modules/@earendil-works/pi-server" ]; then
@@ -87,7 +93,7 @@ REMOVED_PKGS=(
 NPM_GLOBAL="$(npm root -g 2>/dev/null || true)"
 removed_found=""
 for pkg in "${REMOVED_PKGS[@]}"; do
-    for root in "$PI_AGENT/npm/node_modules" /opt/homebrew/lib/node_modules ${NPM_GLOBAL:+"$NPM_GLOBAL"}; do
+    for root in "$PI_AGENT/npm/node_modules" ${PI_PREFIX:+"$PI_PREFIX/lib/node_modules"} ${NPM_GLOBAL:+"$NPM_GLOBAL"}; do
         [ -d "$root/$pkg" ] && removed_found+=" $root/$pkg"
     done
     git_hit=$(find "$PI_AGENT/git" -mindepth 3 -maxdepth 3 -type d -name "${pkg##*/}" 2>/dev/null)

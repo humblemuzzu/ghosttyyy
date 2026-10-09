@@ -3,8 +3,12 @@ set -euo pipefail
 
 VERSION="${1:?usage: update-pi.sh <version>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PREFIX=/opt/homebrew
-PKG=@earendil-works/pi-coding-agent
+# shellcheck source=pi-location.sh
+source "$SCRIPT_DIR/pi-location.sh"
+pi_locate || { echo "cannot locate pi's package directory; set PI_PKG_DIR and rerun"; exit 1; }
+[ -n "$PI_PREFIX" ] || { echo "pi at $PI_PKG is not under <prefix>/lib/node_modules; update it by hand"; exit 1; }
+PREFIX="$PI_PREFIX"
+PKG="$PI_PACKAGE"
 PI_DIR="$PREFIX/lib/node_modules/$PKG"
 BASE="$(tr -d '[:space:]' < "$SCRIPT_DIR/pi-core-patches/base-version")"
 PATCHED=(
@@ -50,7 +54,7 @@ node "$SCRIPT_DIR/pi-core-patches/apply-pi-tui-width-patch.mjs"
 
 bash "$SCRIPT_DIR/verify-patches.sh"
 
-reply="$(pi --mode json -p --model xai/grok-4.6 --thinking low "Reply with exactly UPDATE_OK and nothing else." 2>/dev/null)"
+reply="$(pi --mode json -p --thinking low "Reply with exactly UPDATE_OK and nothing else." 2>/dev/null)"
 if ! grep -q '"text":"UPDATE_OK"' <<<"$reply"; then
     echo "FAIL  headless smoke test did not reply UPDATE_OK"
     echo "rollback: rm -rf '$PI_DIR' && cp -R '$BACKUP' '$PI_DIR' && ln -sfn ../lib/node_modules/$PKG/dist/cli.js $PREFIX/bin/pi"

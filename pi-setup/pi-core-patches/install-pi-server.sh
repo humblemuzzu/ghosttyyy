@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-PI="/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent"
+# shellcheck source=../pi-location.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../pi-location.sh"
+pi_locate || { echo "pi dist not found"; exit 2; }
+PI="$PI_PKG"
 [ -f "$PI/dist/cli.js" ] || { echo "pi dist not found"; exit 2; }
 grep -q "@earendil-works/pi-server" "$PI/dist/experimental/server.js" || { echo "not imported — nothing to do"; exit 0; }
 DEST="$PI/node_modules/@earendil-works/pi-server"
