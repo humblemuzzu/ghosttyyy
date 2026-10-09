@@ -182,8 +182,8 @@ export function checkModel(config: AgentModels, name: string, catalog: ModelCata
 
 /**
  * the model and thinking level one call runs on. an explicit `model` /
- * `thinking` wins over the agent's default; a missing default leaves the flag
- * off so the child uses pi's own default.
+ * `thinking` wins over the agent's default; a missing default, or one with no
+ * credentials, leaves the flag off so the child uses pi's own default.
  *
  * `resuming` skips the defaults: pi restores a resumed child's own model and
  * thinking level when no flag is passed, and a default would silently move a
@@ -226,6 +226,8 @@ export function resolveRoute(
 	if (!name) return { thinking };
 	if (catalog) {
 		const problem = checkModel(config, name, catalog);
+		// a default the user cannot run (no DeepSeek key, say) must not take the agent down; the footer names the model that ran
+		if (problem && !present(params.model)) return { thinking };
 		if (problem) return { error: `${problem}. Or pick another \`model\`.` };
 	}
 	return { model: config.models[name].id, thinking };

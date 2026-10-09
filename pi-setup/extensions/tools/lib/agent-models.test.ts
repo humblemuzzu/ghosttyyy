@@ -205,8 +205,9 @@ describe("resolveRoute", () => {
 		expect(errorOf(route)).toContain("/login deepseek");
 	});
 
-	test("the default model is checked too, not only an explicit one", () => {
-		expect(errorOf(resolveRoute(CONFIG, "chad", {}, catalog({ noAuth: ["xai"] })))).toContain("/login xai");
+	test("a default model without credentials falls back to pi's default instead of failing", () => {
+		expect(resolveRoute(CONFIG, "chad", {}, catalog({ noAuth: ["xai"] }))).toEqual({ thinking: "high" });
+		expect(resolveRoute(CONFIG, "chad", {}, catalog({ missing: ["xai/grok-4.6"] }))).toEqual({ thinking: "high" });
 	});
 
 	test("ids with a slash in the model part split at the first slash", () => {
