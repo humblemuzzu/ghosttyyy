@@ -4,5 +4,3 @@ bun.lock
 package-lock.json
 .tmp-*/
 
-# personal investigation notes, never commit
-PI-CACHE-PLAYBOOK.md

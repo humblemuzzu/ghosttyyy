@@ -1,7 +1,7 @@
 # Analysis: pi `/login anthropic`, `@benvargas/pi-claude-code-use`, and Claude Code CLI
 
 **Date:** 2026-06-15  
-**Workspace:** `/Users/muzammil/Documents/Code stuff/ghosttyyy`  
+**Workspace:** this repository  
 **pi version:** 0.79.2 (`@earendil-works/pi-coding-agent`)  
 **`@benvargas/pi-claude-code-use` version:** 1.0.4  
 **Claude Code CLI version:** 2.1.173 (`~/.local/bin/claude`)

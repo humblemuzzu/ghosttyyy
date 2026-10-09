@@ -1,21 +1,23 @@
-# Pi Setup — Custom Pi Agent Configuration
+# muzzpi · pi-setup
 
-Everything needed to reproduce the full pi ("Amp") agent setup on a new Mac.
+The full inventory of the [muzzpi](../README.md) harness: every extension, tool,
+prompt, config file and patch, and where each one is installed.
 
 > **`AGENTS.md` (repo root) is the authoritative, maintained reference.** It documents every
 > patch, provider, migration, and gotcha in depth. This README is a concise overview — when in
 > doubt, read `AGENTS.md`.
 
-## Quick Install
+## Install
 
 ```bash
-cd pi-setup
-chmod +x install.sh
-./install.sh
+./install.sh pi --dry-run   # from the repo root: every change, nothing written
+./install.sh pi
 ```
 
-The script backs up any existing config before overwriting, copies everything into place,
-installs npm deps, re-applies all patches, and runs `verify-patches.sh` at the end.
+The script finds pi from the `pi` on `PATH` (`pi-location.sh`; Homebrew, nvm or any npm
+prefix), backs up everything it overwrites (pi's own stock files are kept as `*.stock`),
+re-links `pi` off the bundled build so the core patches load, installs npm deps and the pi
+packages, re-applies all patches, and runs `verify-patches.sh` at the end.
 
 After **any** pi/package update, re-run the audit first:
 
@@ -140,8 +142,9 @@ for the packages that were taken out on purpose (`verify-patches.sh` fails if on
 
 ```
 pi-setup/
-├── install.sh                  # One-command installer (deploys + re-applies patches)
+├── install.sh                  # One-command installer (deploys + re-applies patches; --dry-run)
 ├── update-pi.sh                # The only supported way to update pi itself
+├── pi-location.sh              # Finds pi's package dir from the `pi` on PATH (sourced by the scripts)
 ├── settings.json               # Pi settings (provider: anthropic, model: claude-opus-5-5)
 ├── agent-models.json           # Sub-agent model list + per-agent default model/thinking
 ├── keybindings.json            # Custom keybindings
@@ -169,6 +172,8 @@ pi-setup/
 ├── config-skills/              # config skills (→ ~/.config/agents/skills/)
 ├── pi-core-patches/            # resource-loader + session-pinning + pi-tui width patches
 ├── pi-sub-patches/             # grok usage provider; manifest.txt maps files to destinations
+├── pi-migrations.md            # Per-update record. Read before updating pi
+├── 2026-*.md                   # Investigations: migrations, the bdsqqq port, MCP, cache, login
 └── README.md                   # This file
 ```
 

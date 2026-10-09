@@ -1,10 +1,11 @@
-# AGENTS.md — Pi Setup Reference
+# AGENTS.md — muzzpi reference
 
 Read by pi and other coding agents at session start. Facts and rules only.
 
-This repo is two things: Ghostty terminal config (themes, fonts, scripts — see
-README.md) and a portable pi setup in `pi-setup/`, deployed to `~/.pi/agent/`
-by `pi-setup/install.sh`.
+This repo is muzzpi: a portable pi harness in `pi-setup/`, deployed to
+`~/.pi/agent/` by `./install.sh pi` (→ `pi-setup/install.sh`), plus Ghostty
+config in `ghostty/` (`./install.sh ghostty`). README.md is the public pitch;
+keep its numbers true when the facts change.
 
 ## Rules for editing this file
 
@@ -107,7 +108,7 @@ bash pi-setup/verify-patches.sh     # read-only audit; each FAIL prints its fix
 ### Quick re-patch
 
 ```bash
-PI=/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent
+source pi-setup/pi-location.sh && pi_locate && PI=$PI_PKG   # wherever `pi` really lives
 cp pi-setup/pi-core-patches/resource-loader.js  $PI/dist/core/resource-loader.js
 cp pi-setup/pi-core-patches/session-selector.js $PI/dist/modes/interactive/components/session-selector.js
 cp pi-setup/pi-core-patches/keybindings.js      $PI/dist/core/keybindings.js
@@ -122,7 +123,10 @@ while read -r s d; do cp "pi-setup/pi-sub-patches/$s" ~/.pi/agent/npm/node_modul
 node pi-setup/pi-sub-patches/apply-sub-core-stale-guard.mjs          # idempotent; --check audits
 ```
 
-`install.sh` applies all of these and runs `verify-patches.sh` last.
+`install.sh` applies all of these and runs `verify-patches.sh` last. **Never
+hardcode `/opt/homebrew` in a script**: `install.sh`, `verify-patches.sh`,
+`update-pi.sh` and `install-pi-server.sh` all locate pi via `pi-location.sh`
+(strangers run pi from nvm and Intel prefixes too).
 
 ### pi-tool-display config (required)
 
@@ -453,7 +457,10 @@ edit there, deployed by `install.sh`, read at session start.
 - **pi runs an unknown `--model` anyway** (warning, then a made-up id), so the
   resolver checks `modelRegistry.find` + `hasConfiguredAuth` before spawning. It
   cannot see an expired token or a lapsed sub; those come back as the child's
-  error, with the footer naming the model.
+  error, with the footer naming the model. A failing **default** drops
+  `--model` (the child runs on pi's default, so a missing `DEEPSEEK_API_KEY`
+  degrades instead of breaking five agents); a failing **explicit** model is
+  refused.
 - **Ids must be provider-qualified** (a bare id is ambiguous across providers
   since pi 0.84); the loader refuses one. No default → `--model` omitted → pi's
   default. A `continueId` resume skips the defaults: pi restores the child's
@@ -547,6 +554,7 @@ Per-version record: `pi-setup/pi-migrations.md`. Read it before `pi update`.
 - **Don't simplify the pi-mcp-adapter package entry to the string form.**
 - **Don't run `install.sh` without checking what changed** — it overwrites live
   tweaks (after backing them up); it only seeds the two pi-sub settings files.
+  `--dry-run` prints every write first.
 
 ## Where the detail lives
 
@@ -555,6 +563,9 @@ Per-version record: `pi-setup/pi-migrations.md`. Read it before `pi update`.
   trap, apply_patch lanes. **Read before touching tools/subagents.**
 - `pi-setup/2026-08-13-cloudflare-mcp.md` — the 16 Cloudflare servers, auth flow
 - `pi-setup/2026-10-04-you-should-know.md` — the `/ysk` side agent and its cache-cost maths
+- `pi-setup/2026-10-03-cache-playbook.md` — the Max-plan cache drain: measurement, root
+  cause, fix, every wrong turn. **Read before touching anything that shapes the prompt.**
+- `pi-setup/2026-06-15-anthropic-login-analysis.md` — `/login anthropic` vs Claude Code OAuth
 - `pi-setup/pi-migrations.md` — per-update record. **Read before `pi update`.**
 - `pi-setup/README.md` — setup docs
 - `git log -p AGENTS.md` — everything ever cut from this file
