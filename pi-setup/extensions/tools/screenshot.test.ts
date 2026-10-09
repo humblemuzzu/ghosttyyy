@@ -248,7 +248,7 @@ describe("permissions.json routes the shell workaround to this tool", () => {
 describe("window listing tells identical-looking windows apart", () => {
 	/*
 	 * A test run hit five Ghostty windows whose displayed titles were
-	 * byte-identical (`…/Documents/Code stuff/stripema`) because Ghostty
+	 * byte-identical (`…/Documents/Code stuff/my-app`) because Ghostty
 	 * left-truncates the path itself — the distinguishing prefix was already
 	 * gone before we saw it. Without coordinates the candidate list is five
 	 * indistinguishable rows.
@@ -256,7 +256,7 @@ describe("window listing tells identical-looking windows apart", () => {
 	const w = (over: Partial<WindowInfo>): WindowInfo => ({
 		id: 1,
 		app: "Ghostty",
-		title: "…/Documents/Code stuff/stripema",
+		title: "…/Documents/Code stuff/my-app",
 		layer: 0,
 		onScreen: true,
 		x: 0,
@@ -296,7 +296,7 @@ describe("ambiguous window matches give advice that can actually work", () => {
 	const w = (over: Partial<WindowInfo>): WindowInfo => ({
 		id: 1,
 		app: "Ghostty",
-		title: "…/Documents/Code stuff/stripema",
+		title: "…/Documents/Code stuff/my-app",
 		layer: 0,
 		onScreen: false,
 		x: 0,
@@ -315,7 +315,7 @@ describe("ambiguous window matches give advice that can actually work", () => {
 
 	test("identical titles: it says window_title CANNOT help, and asks for window_id", () => {
 		try {
-			resolveWindow({ app: "ghostty", window_title: "stripema" }, identical);
+			resolveWindow({ app: "ghostty", window_title: "my-app" }, identical);
 			throw new Error("should have refused");
 		} catch (e: any) {
 			expect(e.message).toContain("window_id");
@@ -352,7 +352,7 @@ describe("ambiguous window matches give advice that can actually work", () => {
 
 	test("the candidate list carries the ids needed to act on the advice", () => {
 		try {
-			resolveWindow({ app: "ghostty", window_title: "stripema" }, identical);
+			resolveWindow({ app: "ghostty", window_title: "my-app" }, identical);
 		} catch (e: any) {
 			for (const id of [15251, 14093, 16303, 14408, 13707]) {
 				expect(e.message).toContain(String(id));

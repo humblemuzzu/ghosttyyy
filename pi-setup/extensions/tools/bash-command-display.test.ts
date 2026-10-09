@@ -14,7 +14,7 @@ function render(args: any, expanded = false): string {
 }
 
 describe("bash call header", () => {
-	const REPORTED = `cd "/Users/muzammil/Documents/Code stuff"\nrg 'DATABASE_URL' --glob '*.ts'`;
+	const REPORTED = `cd "/Users/me/Documents/Code stuff"\nrg 'DATABASE_URL' --glob '*.ts'`;
 
 	it("shows the command under the cd, not just the cd", () => {
 		expect(render({ cmd: REPORTED, timeout: 120 })).toContain(`rg 'DATABASE_URL' --glob '*.ts'`);
