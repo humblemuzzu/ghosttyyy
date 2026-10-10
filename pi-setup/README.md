@@ -42,7 +42,7 @@ loader level turns one off.
 | `system-prompt.ts` | Injects the full Amp system prompt with runtime template vars (parent sessions); a sub-agent instead gets a short generated prompt naming exactly its own `--tools` allowlist |
 | `mentions.ts` | `@mention` resolution (`@session`, `@commit`, `@handoff`) + agent directives (`@oracle`, `@finder`, `@codereview`, `@task` → `delegate`) |
 | `session-name.ts` | Auto-generates session names from the first message (Claude Haiku) |
-| `session-breakdown.ts` | `/session-breakdown` — visual analytics (sessions/day, cost, tokens, model breakdown) |
+| `stats/` | `/stats` or `Ctrl+Shift+S` — usage analytics over every session: cost, tokens, cache hits and busts, models, tools, sub-agents, projects and commits, work rhythm, and a wrapped card, with ▲/▼ vs the previous window, `p`/`o` project and provider filters, a model leaderboard, cache-bust log and context pressure. `/stats export [range]` writes markdown, `/stats wrapped [range]` a PNG, `/stats budget <usd>` sets a monthly budget with a linear projection, `/stats widget on` shows today's spend under the editor |
 | `md-export.ts` | `/md` — exports the current session branch to readable markdown (clipboard or file) |
 | `notify.ts` | Desktop notification when the agent finishes (OSC 777) |
 | `command-palette/` | `Ctrl+Shift+P` command-palette overlay |
@@ -164,7 +164,8 @@ pi-setup/
 │   ├── you-should-know/        # /ysk — side agent (off until asked)
 │   ├── tools/                  # custom tools + shared lib/ (tests run here: bun test)
 │   ├── pi-tool-display/        # config.json (all tool overrides false — required)
-│   ├── system-prompt.ts  mentions.ts  session-name.ts  session-breakdown.ts
+│   ├── stats/                  # /stats — usage analytics dashboard
+│   ├── system-prompt.ts  mentions.ts  session-name.ts
 │   └── md-export.ts  notify.ts  local-model.ts
 ├── agents/                     # system prompt, rules, sub-agent prompts
 ├── themes/                     # pi themes

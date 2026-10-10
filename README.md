@@ -98,8 +98,10 @@ the tools it has. Pick by what you need back:
 - `Ctrl+Shift+A` opens any sub-agent's live transcript.
 - `/studio` previews pi themes **and** your Ghostty theme, font and opacity live.
   Esc reverts, Enter keeps.
-- `Ctrl+Shift+P` command palette, `/session-breakdown` cost analytics, `/md`
-  export, desktop notifications, auto-named sessions, a DeepSeek peak-pricing
+- `/stats` (`Ctrl+Shift+S`): a nine-tab usage dashboard covering cost, tokens,
+  cache hits and busts, models, tools, sub-agents, projects matched to commits,
+  your work rhythm, and a wrapped card.
+- `Ctrl+Shift+P` command palette, `/md` export, desktop notifications, auto-named sessions, a DeepSeek peak-pricing
   clock, and `/ysk`, an opt-in side agent that flags what you might have missed.
 - Pin sessions with `Ctrl+B` in `/resume`.
 - A patched pi-tui that never undercounts character widths, so Hindi, Bengali

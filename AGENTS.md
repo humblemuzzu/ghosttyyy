@@ -246,7 +246,7 @@ installed by herdr, not from this repo; leave it.
 | `system-prompt.ts` | parent template / sub-agent generated prompt |
 | `mentions.ts` | @mentions + agent directives |
 | `session-name.ts` | auto session naming (haiku, deliberately; a direct model call, not a sub-agent) |
-| `session-breakdown.ts` | `/session-breakdown` |
+| `stats/` | `/stats`, Ctrl+Shift+S — analytics over `sessions/` + git; caches, `settings.json` (widget, budget) and wrapped PNGs in `<agent dir>/cache/stats`. The widget only reads an existing index, never a cold parse |
 | `notify.ts` | OSC 777 desktop notifications |
 | `md-export.ts` | `/md` session → markdown |
 | `command-palette/` | Ctrl+Shift+P |
